@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+- **清理上传历史时排行榜数据被一并删除**（[#127](https://github.com/juliantanx/aiusage/pull/127)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `leaderboard_metrics` 以 `ON DELETE CASCADE` 引用上传请求，因此清理任务删除早于“保留上传历史”设置（默认 180 天）的上传请求时，这些请求写入的排行榜数据也被删除。站点迁移 v16 将该列改为可空，并将外键改为 `ON DELETE SET NULL`；迁移在首次启动时自动执行，此后清理不再影响排行榜。
+- **排行榜审核结果被下一次上传覆盖**（[#127](https://github.com/juliantanx/aiusage/pull/127)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 管理员隐藏某个周期后，用户再次上传该周期会让数据重新公开；对已被后续上传取代的快照执行通过、拒绝或隐藏时，实际没有任何变更却返回成功。现在隐藏的数据在再次上传后保持隐藏；快照操作按用户和周期匹配，返回变更的行数，并在快照不存在时报错。通过快照时只公开由该次上传或同一周期内已接受、已通过的上传写入的数据，同一用户的上传与审核操作串行执行。
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 修正缓存输入 token 统计，并恢复新版 Git for Windows 上的 GitHub 同步。

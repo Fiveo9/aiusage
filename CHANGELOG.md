@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Leaderboard rows deleted when upload history was pruned** ([#127](https://github.com/juliantanx/aiusage/pull/127) by [@aaroncchung](https://github.com/aaroncchung)) — `leaderboard_metrics` referenced its upload request with `ON DELETE CASCADE`, so the cleanup job that removes upload requests older than the "Keep upload history" setting (180 days by default) deleted the leaderboard rows those requests had written. Site migration v16 makes the column nullable and the key `ON DELETE SET NULL`; it runs by itself at the first startup, and pruning now leaves the leaderboard alone.
+- **Leaderboard moderation undone by the next upload** ([#127](https://github.com/juliantanx/aiusage/pull/127) by [@aaroncchung](https://github.com/aaroncchung)) — a new upload of a period an admin had hidden made its rows public again, and approve, reject and hide on a snapshot that a later upload had superseded changed nothing while reporting success. Hidden rows now stay hidden across uploads; the snapshot actions match on user and period, report how many rows changed, and fail for a snapshot that does not exist. Approving a snapshot publishes only rows written by that upload or by an accepted or approved upload of the same period, and uploads and moderation of one user are serialized.
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 Fix cached-input accounting and restore GitHub sync on current Git for Windows releases.

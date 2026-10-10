@@ -25,4 +25,9 @@ describe('sessions page', () => {
     expect(reset).toBeGreaterThan(-1)
     expect(load).toBeGreaterThan(reset)
   })
+
+  it('ignores responses that are not for the latest request', () => {
+    expect(pageSource).toContain('const isLatest = beginRequest()')
+    expect(pageSource).toMatch(/await fetchSessions\([^)]*\)\s*if \(!isLatest\(\)\) return\s*data = response/)
+  })
 })

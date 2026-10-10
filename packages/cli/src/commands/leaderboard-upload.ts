@@ -1,6 +1,6 @@
 import { LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { createDatabase } from '../db/index.js'
-import { getState } from '../init.js'
+import { getState, setState } from '../init.js'
 import { AIUSAGE_DIR } from '../config.js'
 import { generateSummary } from './summary.js'
 import { uploadSnapshots, LeaderboardApiError, UploadBreakdown, UploadRequest, UploadSnapshot } from '../leaderboard/api.js'
@@ -345,12 +345,30 @@ export function wasLeaderboardUploadStored(result: LeaderboardUploadResult): boo
   return result.response != null && result.response.status !== 'rejected'
 }
 
+/**
+ * Stores the time of an upload the site took in state.json, where the
+ * auto-upload schedule of `aiusage serve` reads it. Returns that time, or
+ * undefined when the upload was not stored on the site.
+ */
+export function recordLeaderboardUpload(result: LeaderboardUploadResult, aiusageDir: string = AIUSAGE_DIR): number | undefined {
+  if (!wasLeaderboardUploadStored(result)) return undefined
+  const uploadedAt = Date.now()
+  try {
+    setState(aiusageDir, { lastLeaderboardUploadAt: uploadedAt })
+  } catch (err) {
+    // The upload itself went through; a failed write must not report it as failed.
+    console.error('[leaderboard] storing the last upload time failed:', err)
+  }
+  return uploadedAt
+}
+
 export async function runLeaderboardUpload(): Promise<void> {
   const db = createDatabase(DB_PATH)
   const state = getState(AIUSAGE_DIR)
 
   try {
     const result = await uploadLeaderboardData(db, state?.deviceInstanceId, message => console.log(message))
+    recordLeaderboardUpload(result)
 
     if (result.totalTokens === 0 || !result.response) {
       console.log('No token usage data to upload.')

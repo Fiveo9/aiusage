@@ -110,6 +110,7 @@ export function serve(options: ServeOptions): void {
     onSyncStart: () => syncRuntime.start(),
     getSyncStatus: () => syncRuntime.getStatus(),
     onConfigUpdated: () => runtimeSettings.reload(),
+    onLeaderboardUploaded: (uploadedAt) => runtimeSettings.noteLeaderboardUpload(uploadedAt),
     runDbWrite,
     getDbWriteQueueStatus: () => dbWriteQueue.getStatus(),
   })

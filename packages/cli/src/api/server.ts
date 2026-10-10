@@ -30,7 +30,7 @@ import { getSiteUrl } from '../site-url.js'
 import { startDeviceAuth, completeDeviceAuth, fetchLeaderboardStatus } from '../leaderboard/api.js'
 import { clearCredentials, hasCredentials, loadCredentials, saveCredentials } from '../leaderboard/credentials.js'
 import { base64url, sha256Buffer } from '../leaderboard/crypto.js'
-import { uploadLeaderboardData } from '../commands/leaderboard-upload.js'
+import { recordLeaderboardUpload, uploadLeaderboardData } from '../commands/leaderboard-upload.js'
 import { runParseKelivo } from '../commands/parse-kelivo.js'
 import { insertRecord, LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
@@ -395,6 +395,7 @@ export interface ApiServerOptions {
   onSyncStart?: () => SyncStartResult
   getSyncStatus?: () => SyncStatusSnapshot | null
   onConfigUpdated?: () => void
+  onLeaderboardUploaded?: (uploadedAt: number) => void
   runDbWrite?: <T>(task: () => T | Promise<T>) => Promise<T>
   getDbWriteQueueStatus?: () => AsyncTaskQueueStatus
 }
@@ -1678,6 +1679,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       if (url.pathname === '/api/leaderboard/upload' && req.method === 'POST') {
         try {
           const result = await uploadLeaderboardData(db, options?.currentDeviceInstanceId)
+          const uploadedAt = recordLeaderboardUpload(result)
+          if (uploadedAt != null) options?.onLeaderboardUploaded?.(uploadedAt)
           json(res, {
             totalTokens: result.totalTokens,
             response: result.response,

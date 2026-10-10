@@ -84,6 +84,19 @@ export class RuntimeSettingsController {
     this.leaderboardUploadInterval = null
   }
 
+  /**
+   * Tells the schedule about a leaderboard upload made outside it, such as one
+   * started from the dashboard, so the next automatic upload comes one
+   * interval after that one.
+   */
+  noteLeaderboardUpload(uploadedAt: number): void {
+    if (Number.isFinite(uploadedAt) && uploadedAt > this.lastLeaderboardUploadAt) {
+      this.lastLeaderboardUploadAt = uploadedAt
+    }
+    this.leaderboardUploadRetryAt = 0
+    this.scheduleLeaderboardUpload()
+  }
+
   private applyConfig(): void {
     if (this.parseTimer) clearInterval(this.parseTimer)
     if (this.cleanupTimer) clearInterval(this.cleanupTimer)

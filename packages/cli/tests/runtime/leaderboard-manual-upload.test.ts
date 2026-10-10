@@ -217,6 +217,48 @@ describe('manual leaderboard uploads and the auto-upload schedule', () => {
     expect(getState(dir)?.lastLeaderboardUploadAt).toBe(START + HOUR)
   })
 
+  it('keeps a manual upload made after the clock was set back, even when it could not be stored', async () => {
+    vi.setSystemTime(START + 365 * DAY)
+    const controller = createController(false)
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+
+    vi.setSystemTime(START)
+    controller.noteLeaderboardUpload(START)
+
+    await vi.advanceTimersByTimeAsync(WEEK - 1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports the next sync time the clamped sync timer will actually use', async () => {
+    const MAX_TIMER_DELAY = 2 ** 31 - 1
+    config = { syncInterval: 2592000000, sync: { backend: 'cloud' } }
+    const runSync = vi.fn()
+    const onSyncScheduleChanged = vi.fn()
+    const controller = new RuntimeSettingsController({
+      db: {} as any,
+      loadConfig: () => config as any,
+      runParse: runParse as any,
+      runCleanup: (() => {}) as any,
+      runSync,
+      onSyncScheduleChanged,
+    })
+    controllers.push(controller)
+
+    controller.start()
+    expect(onSyncScheduleChanged).toHaveBeenLastCalledWith(START + MAX_TIMER_DELAY)
+
+    await vi.advanceTimersByTimeAsync(MAX_TIMER_DELAY - 1)
+    expect(runSync).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runSync).toHaveBeenCalledTimes(1)
+    expect(onSyncScheduleChanged).toHaveBeenLastCalledWith(START + 2 * MAX_TIMER_DELAY)
+  })
+
   it('does not start a timer for a manual upload when auto upload is off or the controller is stopped', async () => {
     config = { leaderboardAutoUpload: false }
     const controller = createController()

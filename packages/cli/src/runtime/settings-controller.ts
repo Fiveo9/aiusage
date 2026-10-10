@@ -90,7 +90,8 @@ export class RuntimeSettingsController {
    * interval after that one.
    */
   noteLeaderboardUpload(uploadedAt: number): void {
-    if (Number.isFinite(uploadedAt) && uploadedAt > this.lastLeaderboardUploadAt) {
+    // A time kept from before the clock was set back is no longer valid, so the new one replaces it.
+    if (Number.isFinite(uploadedAt) && (uploadedAt > this.lastLeaderboardUploadAt || this.lastLeaderboardUploadAt > Date.now())) {
       this.lastLeaderboardUploadAt = uploadedAt
     }
     this.leaderboardUploadRetryAt = 0
@@ -132,7 +133,8 @@ export class RuntimeSettingsController {
     }
     this.scheduleLeaderboardUpload()
 
-    const syncInterval = Number(config?.syncInterval ?? 0)
+    // The reported next sync time uses the same clamped delay as the timer.
+    const syncInterval = Math.min(Number(config?.syncInterval ?? 0), MAX_TIMER_DELAY_MS)
     if (syncInterval > 0 && config?.sync?.backend && this.runSyncFn) {
       const updateNextSyncAt = () => {
         this.onSyncScheduleChangedFn?.(Date.now() + syncInterval)
@@ -141,7 +143,7 @@ export class RuntimeSettingsController {
       this.syncTimer = setInterval(() => {
         this.runSyncFn!()
         updateNextSyncAt()
-      }, Math.min(syncInterval, MAX_TIMER_DELAY_MS))
+      }, syncInterval)
     } else {
       this.onSyncScheduleChangedFn?.(undefined)
     }

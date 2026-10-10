@@ -24,13 +24,33 @@ export interface InitOptions {
 export function runInit(options: InitOptions): { success: boolean; message: string } {
   const existingConfig = loadConfig()
 
-  if (options.backend === 'skip' || !options.backend) {
+  if (!options.backend) {
+    // No backend named: the sync setup stays as it is, and only what was
+    // passed (the device alias) changes.
     const config: Config = {
+      ...existingConfig,
       device: options.device ?? existingConfig?.device,
       platform: existingConfig?.platform ?? platform(),
-      retentionDays: existingConfig?.retentionDays,
-      refreshInterval: existingConfig?.refreshInterval,
-      credentials: existingConfig?.credentials,
+    }
+    saveConfig(config)
+    if (config.sync) {
+      return {
+        success: true,
+        message: `Configuration saved. Sync settings unchanged (${config.sync.backend}).\nRun "aiusage init --backend cloud|github|s3" to change them, or "aiusage init --backend skip" to remove them.`,
+      }
+    }
+    return {
+      success: true,
+      message: 'Configuration saved without cloud sync.\nRun "aiusage init --backend cloud|github|s3" to configure it.',
+    }
+  }
+
+  if (options.backend === 'skip') {
+    const { sync: _sync, ...withoutSync } = existingConfig ?? {}
+    const config: Config = {
+      ...withoutSync,
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
     }
     saveConfig(config)
     return { success: true, message: 'Configuration saved without cloud sync.' }
@@ -42,14 +62,12 @@ export function runInit(options: InitOptions): { success: boolean; message: stri
     }
 
     const config: Config = {
+      ...existingConfig,
       sync: {
         backend: 'cloud',
       },
       device: options.device ?? existingConfig?.device,
       platform: existingConfig?.platform ?? platform(),
-      retentionDays: existingConfig?.retentionDays,
-      refreshInterval: existingConfig?.refreshInterval,
-      credentials: existingConfig?.credentials,
     }
 
     saveConfig(config)
@@ -120,6 +138,7 @@ export function runInit(options: InitOptions): { success: boolean; message: stri
     }
 
     const config: Config = {
+      ...existingConfig,
       sync: {
         backend: 's3',
         bucket: options.bucket,
@@ -130,8 +149,6 @@ export function runInit(options: InitOptions): { success: boolean; message: stri
       },
       device: options.device ?? existingConfig?.device,
       platform: existingConfig?.platform ?? platform(),
-      retentionDays: existingConfig?.retentionDays,
-      refreshInterval: existingConfig?.refreshInterval,
       credentials: {
         ...existingConfig?.credentials,
         [`s3/${options.bucket}/accessKeyId`]: options.accessKeyId,

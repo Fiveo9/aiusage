@@ -31,6 +31,10 @@
         page,
         pageSize,
       })
+      // The list shrank under a later page: go to the last page that exists
+      if (data && !data.sessions.length && data.total > 0 && page > 1) {
+        page = Math.ceil(data.total / pageSize)
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
@@ -39,7 +43,7 @@
     }
   }
 
-  $: $selectedTool, (page = 1)
+  $: $dateRange, $selectedDevice, $selectedTool, (page = 1)
   $: $dateRange, $selectedDevice, $selectedTool, page, loadData()
 
   function nextPage() {

@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+- **云端未收到的记录被标记为已同步**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 上传完成后，云同步会重新读取待上传记录并全部标记，因此上传期间新解析的记录未被发送就被标记，上传期间被改写的记录也被视为已同步，而它的新版本并未发送。现在每个批次在云端接受后立即确认，且只有仍是已发送版本的记录才会被标记。
+- **云端被清空后不再上传任何数据**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 清空云端会开启新的同步代，但已同步过的设备保留了原有同步状态，不会向新一代上传任何内容。现在按同步目标保存同步代，拉取到不同的同步代时设备会重新上传记录。云端在本版本之前已被清空的设备会在首次同步时重新上传一次历史记录；云端已有的记录保持不变。每个安装同一时间只运行一个云同步。
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 修正缓存输入 token 统计，并恢复新版 Git for Windows 上的 GitHub 同步。

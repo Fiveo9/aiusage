@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Records marked as synced that the cloud never received** ([#129](https://github.com/juliantanx/aiusage/pull/129) by [@aaroncchung](https://github.com/aaroncchung)) — after uploading, cloud sync read the uploadable records again and marked all of them, so a record parsed during the upload was marked without being sent, and a record rewritten during the upload counted as synced although its newer version was not. Each batch is now acknowledged when the cloud accepts it, and a record is marked only if it still is the version that was sent.
+- **Nothing uploaded after the cloud was cleared** ([#129](https://github.com/juliantanx/aiusage/pull/129) by [@aaroncchung](https://github.com/aaroncchung)) — clearing the cloud starts a new sync generation, but a device that had already synced kept its sync state and uploaded nothing to it. The generation is now stored per sync target, and when a pull reports a different one the device uploads its records again. A device whose cloud was cleared before this release uploads its history once more on the first sync; records the cloud already has are left as they are. Only one cloud sync runs at a time per installation.
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 Fix cached-input accounting and restore GitHub sync on current Git for Windows releases.

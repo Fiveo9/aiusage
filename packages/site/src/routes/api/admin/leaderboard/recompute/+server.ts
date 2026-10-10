@@ -101,7 +101,7 @@ export const POST: RequestHandler = async (event) => {
   `
 
   for (const row of aggregateRows) {
-    const metric = row as CostMetricRow & { upload_request_id: string; user_id: string; period_type: string; period_start: string }
+    const metric = row as CostMetricRow & { upload_request_id: string | null; user_id: string; period_type: string; period_start: string }
     let children
     if (metric.scope_type === 'all') {
       children = await sql`

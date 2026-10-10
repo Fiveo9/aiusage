@@ -411,6 +411,13 @@
       })
       if (res.ok) {
         actionFeedback = successMsg
+        // Snapshot actions report how many leaderboard rows they changed.
+        const result = await res.json().catch(() => ({}))
+        if (result.metrics_updated === 0) {
+          actionError = result.superseded
+            ? (zh ? '该周期有更新的被标记上传尚未通过，排行榜未变更' : 'A newer flagged upload of this period has not been approved, so the leaderboard was not changed')
+            : (zh ? '没有匹配的排行榜数据，排行榜未变更' : 'No leaderboard rows matched, so the leaderboard was not changed')
+        }
         return true
       }
       const data = await res.json().catch(() => ({}))

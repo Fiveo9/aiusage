@@ -630,8 +630,20 @@ export async function processUpload(
         reason_message: risk.reasonMessage,
       })
 
-      // Flagged snapshots get 'flagged' visibility; accepted get 'public'
-      const metricVisibility = snapshotStatus === 'flagged' ? 'flagged' : 'public'
+      // Flagged snapshots get 'flagged' visibility; accepted get 'public'.
+      // Admin moderation outlives the upload: a row that is hidden stays hidden
+      // in the upsert below, and a row this upload adds (a tool or model the
+      // period did not have before) starts hidden when every existing row of
+      // the period is hidden.
+      const periodRows = await tx`
+        SELECT COALESCE(BOOL_AND(visibility = 'hidden'), FALSE) AS hidden
+        FROM leaderboard_metrics
+        WHERE user_id = ${userId}
+          AND period_type = ${snapshot.period_type}
+          AND period_start = ${snapshot.period_start}
+      `
+      const periodHidden = (periodRows[0] as { hidden: boolean }).hidden === true
+      const metricVisibility = periodHidden ? 'hidden' : snapshotStatus === 'flagged' ? 'flagged' : 'public'
 
       const { costs, unknownModels } = buildCostMap(snapshot, pricing)
       for (const row of snapshot.breakdowns) {
@@ -668,7 +680,7 @@ export async function processUpload(
             thinking_tokens = ${row.thinking_tokens},
             total_tokens = ${row.total_tokens},
             total_cost_usd = ${cost},
-            visibility = ${metricVisibility},
+            visibility = CASE WHEN leaderboard_metrics.visibility = 'hidden' THEN leaderboard_metrics.visibility ELSE EXCLUDED.visibility END,
             has_unknown_cost = ${hasUnknownCost},
             updated_at = NOW()
         `

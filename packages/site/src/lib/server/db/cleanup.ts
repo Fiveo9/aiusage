@@ -21,7 +21,8 @@ export function startCleanupCron(): void {
       const nonces = await sql`DELETE FROM upload_nonces WHERE created_at < ${nonceCutoff}`
       console.log(`[cleanup] Removed ${nonces.count} old nonces`)
 
-      // Clean old upload_requests
+      // Clean old upload_requests. Their upload_snapshots go with them;
+      // leaderboard_metrics rows stay (the foreign key is ON DELETE SET NULL).
       const uploadCutoff = new Date(now.getTime() - uploadDays * 24 * 60 * 60 * 1000)
       const uploads = await sql`DELETE FROM upload_requests WHERE created_at < ${uploadCutoff}`
       console.log(`[cleanup] Removed ${uploads.count} old upload requests`)

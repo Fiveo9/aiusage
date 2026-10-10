@@ -6,7 +6,11 @@ export interface RuntimeSettingsControllerOptions {
   loadConfig: () => Config | null
   runParse: (db: Database.Database) => Promise<unknown>
   runCleanup: (db: Database.Database, retentionDays: number) => unknown | Promise<unknown>
+  /** Resolves to `false` when there was nothing to upload. Rejects when the upload failed. */
   runLeaderboardUpload?: (db: Database.Database) => Promise<unknown>
+  /** Time of the last successful leaderboard upload, kept across restarts. */
+  getLastLeaderboardUploadAt?: () => number | undefined
+  setLastLeaderboardUploadAt?: (ts: number) => void
   runSync?: () => void
   onSyncScheduleChanged?: (nextSyncAt: number | undefined) => void
   cleanupIntervalMs?: number
@@ -14,6 +18,11 @@ export interface RuntimeSettingsControllerOptions {
 
 const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 const DEFAULT_LEADERBOARD_UPLOAD_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
+const MIN_LEADERBOARD_UPLOAD_INTERVAL_MS = 60 * 60 * 1000
+const LEADERBOARD_UPLOAD_RETRY_MS = 60 * 60 * 1000
+// Node keeps a timer delay in a 32-bit signed integer. It replaces a longer
+// delay with 1 ms, so a 30-day setInterval fires continuously.
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 
 export class RuntimeSettingsController {
   private readonly db: Database.Database
@@ -21,16 +30,21 @@ export class RuntimeSettingsController {
   private readonly runParseFn: RuntimeSettingsControllerOptions['runParse']
   private readonly runCleanupFn: RuntimeSettingsControllerOptions['runCleanup']
   private readonly runLeaderboardUploadFn: RuntimeSettingsControllerOptions['runLeaderboardUpload']
+  private readonly getLastLeaderboardUploadAtFn: RuntimeSettingsControllerOptions['getLastLeaderboardUploadAt']
+  private readonly setLastLeaderboardUploadAtFn: RuntimeSettingsControllerOptions['setLastLeaderboardUploadAt']
   private readonly runSyncFn: RuntimeSettingsControllerOptions['runSync']
   private readonly onSyncScheduleChangedFn: RuntimeSettingsControllerOptions['onSyncScheduleChanged']
   private readonly cleanupIntervalMs: number
   private parseTimer: ReturnType<typeof setInterval> | null = null
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
-  private leaderboardUploadTimer: ReturnType<typeof setInterval> | null = null
+  private leaderboardUploadTimer: ReturnType<typeof setTimeout> | null = null
   private syncTimer: ReturnType<typeof setInterval> | null = null
   private parseInFlight = false
   private cleanupInFlight = false
   private leaderboardUploadInFlight = false
+  private leaderboardUploadInterval: number | null = null
+  private lastLeaderboardUploadAt = 0
+  private leaderboardUploadRetryAt = 0
   private started = false
 
   constructor(options: RuntimeSettingsControllerOptions) {
@@ -39,6 +53,8 @@ export class RuntimeSettingsController {
     this.runParseFn = options.runParse
     this.runCleanupFn = options.runCleanup
     this.runLeaderboardUploadFn = options.runLeaderboardUpload
+    this.getLastLeaderboardUploadAtFn = options.getLastLeaderboardUploadAt
+    this.setLastLeaderboardUploadAtFn = options.setLastLeaderboardUploadAt
     this.runSyncFn = options.runSync
     this.onSyncScheduleChangedFn = options.onSyncScheduleChanged
     this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS
@@ -59,18 +75,19 @@ export class RuntimeSettingsController {
     this.started = false
     if (this.parseTimer) clearInterval(this.parseTimer)
     if (this.cleanupTimer) clearInterval(this.cleanupTimer)
-    if (this.leaderboardUploadTimer) clearInterval(this.leaderboardUploadTimer)
+    if (this.leaderboardUploadTimer) clearTimeout(this.leaderboardUploadTimer)
     if (this.syncTimer) clearInterval(this.syncTimer)
     this.parseTimer = null
     this.cleanupTimer = null
     this.leaderboardUploadTimer = null
     this.syncTimer = null
+    this.leaderboardUploadInterval = null
   }
 
   private applyConfig(): void {
     if (this.parseTimer) clearInterval(this.parseTimer)
     if (this.cleanupTimer) clearInterval(this.cleanupTimer)
-    if (this.leaderboardUploadTimer) clearInterval(this.leaderboardUploadTimer)
+    if (this.leaderboardUploadTimer) clearTimeout(this.leaderboardUploadTimer)
     if (this.syncTimer) clearInterval(this.syncTimer)
     this.parseTimer = null
     this.cleanupTimer = null
@@ -85,7 +102,7 @@ export class RuntimeSettingsController {
     if (parseInterval > 0) {
       this.parseTimer = setInterval(() => {
         void this.runParseSafely()
-      }, parseInterval)
+      }, Math.min(parseInterval, MAX_TIMER_DELAY_MS))
     }
 
     if (retentionDays > 0) {
@@ -94,11 +111,13 @@ export class RuntimeSettingsController {
       }, this.cleanupIntervalMs)
     }
 
-    if (config?.leaderboardAutoUpload === true && leaderboardUploadInterval > 0 && this.runLeaderboardUploadFn) {
-      this.leaderboardUploadTimer = setInterval(() => {
-        void this.runLeaderboardUploadSafely()
-      }, leaderboardUploadInterval)
+    if (config?.leaderboardAutoUpload === true && Number.isFinite(leaderboardUploadInterval) && leaderboardUploadInterval > 0 && this.runLeaderboardUploadFn) {
+      this.leaderboardUploadInterval = Math.max(leaderboardUploadInterval, MIN_LEADERBOARD_UPLOAD_INTERVAL_MS)
+    } else {
+      this.leaderboardUploadInterval = null
+      this.leaderboardUploadRetryAt = 0
     }
+    this.scheduleLeaderboardUpload()
 
     const syncInterval = Number(config?.syncInterval ?? 0)
     if (syncInterval > 0 && config?.sync?.backend && this.runSyncFn) {
@@ -109,7 +128,7 @@ export class RuntimeSettingsController {
       this.syncTimer = setInterval(() => {
         this.runSyncFn!()
         updateNextSyncAt()
-      }, syncInterval)
+      }, Math.min(syncInterval, MAX_TIMER_DELAY_MS))
     } else {
       this.onSyncScheduleChangedFn?.(undefined)
     }
@@ -141,17 +160,77 @@ export class RuntimeSettingsController {
     }
   }
 
+  // The upload is due one interval after the last successful one. That time is
+  // stored, so a config save or a restart continues the wait instead of
+  // starting it again, and an upload that came due while stopped runs on start.
+  private scheduleLeaderboardUpload(): void {
+    if (this.leaderboardUploadTimer) clearTimeout(this.leaderboardUploadTimer)
+    this.leaderboardUploadTimer = null
+    // An upload in flight schedules the next one when it settles.
+    if (!this.started || this.leaderboardUploadInterval == null || this.leaderboardUploadInFlight) return
+
+    // A wait longer than one timer can hold is split into a chain of timers.
+    const delay = Math.min(this.getLeaderboardUploadDelay(this.leaderboardUploadInterval), MAX_TIMER_DELAY_MS)
+    this.leaderboardUploadTimer = setTimeout(() => {
+      this.leaderboardUploadTimer = null
+      if (this.leaderboardUploadInterval == null) return
+      if (this.getLeaderboardUploadDelay(this.leaderboardUploadInterval) > 0) {
+        this.scheduleLeaderboardUpload()
+        return
+      }
+      void this.runLeaderboardUploadSafely()
+    }, delay)
+  }
+
+  private getLeaderboardUploadDelay(interval: number): number {
+    const now = Date.now()
+    const lastUploadAt = this.getLastLeaderboardUploadAt(now)
+    const untilDue = lastUploadAt == null ? 0 : lastUploadAt + interval - now
+    return Math.max(0, untilDue, this.leaderboardUploadRetryAt - now)
+  }
+
+  private getLastLeaderboardUploadAt(now: number): number | undefined {
+    let stored: unknown
+    try {
+      stored = this.getLastLeaderboardUploadAtFn?.()
+    } catch (err) {
+      console.error('[settings-controller] reading the last leaderboard upload time failed:', err)
+    }
+    const storedAt = typeof stored === 'number' && Number.isFinite(stored) ? stored : 0
+    const lastUploadAt = Math.max(storedAt, this.lastLeaderboardUploadAt)
+    // A time in the future comes from a clock that was wrong when it was
+    // stored. Waiting on it could postpone the upload indefinitely.
+    return lastUploadAt > 0 && lastUploadAt <= now ? lastUploadAt : undefined
+  }
+
   private async runLeaderboardUploadSafely(): Promise<void> {
     if (this.leaderboardUploadInFlight) return
     this.leaderboardUploadInFlight = true
+    let uploaded = false
     try {
       await this.runParseFn(this.db)
-      await this.runLeaderboardUploadFn?.(this.db)
+      uploaded = (await this.runLeaderboardUploadFn?.(this.db)) !== false
     } catch (err) {
       // Keep scheduling active after individual upload failures.
       console.error('[settings-controller] leaderboard upload failed:', err)
     } finally {
       this.leaderboardUploadInFlight = false
     }
+
+    const now = Date.now()
+    if (uploaded) {
+      this.leaderboardUploadRetryAt = 0
+      // Kept in memory as well, so a failed write cannot make the upload due again at once.
+      this.lastLeaderboardUploadAt = now
+      try {
+        this.setLastLeaderboardUploadAtFn?.(now)
+      } catch (err) {
+        console.error('[settings-controller] storing the last leaderboard upload time failed:', err)
+      }
+    } else {
+      // Nothing is stored for a failed or empty upload, so it stays due. Wait before trying again.
+      this.leaderboardUploadRetryAt = now + LEADERBOARD_UPLOAD_RETRY_MS
+    }
+    this.scheduleLeaderboardUpload()
   }
 }

@@ -5,12 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.20] - 2026-10-10
+
+Fix cached-input accounting and restore GitHub sync on current Git for Windows releases.
 
 ### Fixed
 - **Codex cached input tokens counted and billed twice** ([#73](https://github.com/juliantanx/aiusage/pull/73) by [@aaroncchung](https://github.com/aaroncchung)) — Codex logs `input_tokens` inclusive of `cached_input_tokens`, and the parser stored both as-is. Every other tool stores input as the uncached part only and pricing charges input and cache-read separately, so cached Codex tokens appeared in both the input and the cache-read column and were charged once at the input price and again at the cache-read price, overstating Codex input tokens, total tokens and cost. The parser now stores `input_tokens - cached_input_tokens` as input. Database migration v15 applies the same correction to the Codex records this device already parsed and marks them changed so the corrected values are published on the next sync; costs that came from pricing are recomputed right after the migration, once the curated prices are seeded and the runtime price table (registry, aliases and legacy `config.priceOverrides`) is loaded, so they match what the parser would compute. Logged costs are kept. Codex records pulled from another device are corrected when that device upgrades and syncs.
 - **CodeFuse embedded Codex sessions counted and billed cached input tokens twice** ([#74](https://github.com/juliantanx/aiusage/pull/74) by [@aaroncchung](https://github.com/aaroncchung)) — sessions CodeFuse runs through its embedded Codex engine log `input_tokens` inclusive of `cached_input_tokens`, and the parser stored both as-is, so cached tokens appeared in both the input and the cache-read column and were charged once at the input price and again at the cache-read price. The parser now stores `input_tokens - cached_input_tokens` as input for those sessions; CodeFuse's Claude Code and native formats were already correct. CodeFuse parsing is versioned in `watermark.json`: the upgrade re-imports every CodeFuse log once, and since record ids do not depend on the token counts, the corrected input tokens and cost replace the old rows in place and are published on the next sync. Records whose log file no longer exists cannot be re-imported and keep their old values.
 - **Corrections from another device ignored after a local pricing recalculation** ([#73](https://github.com/juliantanx/aiusage/pull/73) by [@aaroncchung](https://github.com/aaroncchung)) — *Recalculate pricing* stamped every record it repriced with the local time, including copies of records pulled from other devices. Such a copy then looked newer than anything its owner published afterwards, so a later correction reached `synced_records` but never the merged copy that summaries and exports read. Recalculation now marks only locally parsed records as changed, and a merged copy whose token counts differ from its owner's current record is refreshed regardless of timestamps, which also repairs copies an earlier recalculation had already stamped.
+- **GitHub sync failed on Git for Windows 2.56** ([#72](https://github.com/juliantanx/aiusage/pull/72) by [@aaroncchung](https://github.com/aaroncchung)) — Git for Windows 2.56 rejects `GIT_CONFIG_GLOBAL=NUL`, causing every isolated Git command to fail before syncing. Windows now uses an AIUsage-owned empty regular file for the global Git config while system config, inherited Git settings, credential persistence and hooks remain disabled. Git failures now include a sanitized actionable summary without copying server-controlled output or leaking credentials.
 
 ---
 
@@ -528,6 +531,7 @@ Fix multi-device sync correctness across GitHub, S3/R2, and Cloud.
 
 ---
 
+[1.5.20]: https://github.com/juliantanx/aiusage/compare/v1.5.19...v1.5.20
 [1.5.19]: https://github.com/juliantanx/aiusage/compare/v1.5.18...v1.5.19
 [1.5.18]: https://github.com/juliantanx/aiusage/compare/v1.5.17...v1.5.18
 [1.5.17]: https://github.com/juliantanx/aiusage/compare/v1.5.16...v1.5.17

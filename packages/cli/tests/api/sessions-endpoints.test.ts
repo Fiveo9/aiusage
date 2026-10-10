@@ -164,6 +164,29 @@ describe('sessions endpoints', () => {
       expect(body.sessions[0]).toMatchObject({ inputTokens: 100, cost: 1, toolCallCount: 2 })
     })
 
+    it('leaves records merged from other devices out of the totals and the tool-call count', async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      server = createApiServer(db, { currentDeviceInstanceId: 'local-uuid-0000' })
+      await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', () => {
+          baseUrl = `http://127.0.0.1:${(server.address() as any).port}`
+          resolve()
+        })
+      })
+      insertRecord(db, { id: 'l1', input_tokens: 100, cost: 1 })
+      insertRecord(db, { id: 'm1', ts: BASE_TS + 1000, input_tokens: 900, cost: 9, device_instance_id: 'other-uuid' })
+      db.prepare("UPDATE records SET origin = 'synced' WHERE id = 'm1'").run()
+      insertToolCalls(db, 'l1', 2)
+      insertToolCalls(db, 'm1', 7)
+
+      for (const query of ['', '&device=local-uuid-0000']) {
+        const { body } = await getJson(`/api/sessions?range=all${query}`)
+
+        expect(body.total).toBe(1)
+        expect(body.sessions[0]).toMatchObject({ sessionId: 's1', inputTokens: 100, cost: 1, duration: 0, toolCallCount: 2 })
+      }
+    })
+
     it('pages over sessions, not over joined tool-call rows', async () => {
       for (let i = 0; i < 5; i++) {
         insertRecord(db, { id: `p${i}`, session_id: `sess-${i}`, ts: BASE_TS + i * 1000, input_tokens: i + 1 })

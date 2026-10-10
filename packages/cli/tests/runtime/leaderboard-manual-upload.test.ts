@@ -18,13 +18,14 @@ describe('manual leaderboard uploads and the auto-upload schedule', () => {
   let dir: string
   let config: Record<string, unknown>
   let runLeaderboardUpload: ReturnType<typeof vi.fn>
+  let runParse: ReturnType<typeof vi.fn>
   const controllers: RuntimeSettingsController[] = []
 
   function createController(persisted = true): RuntimeSettingsController {
     const controller = new RuntimeSettingsController({
       db: {} as any,
       loadConfig: () => config as any,
-      runParse: (async () => {}) as any,
+      runParse: runParse as any,
       runCleanup: (() => {}) as any,
       runLeaderboardUpload: runLeaderboardUpload as any,
       getLastLeaderboardUploadAt: persisted ? () => getState(dir)?.lastLeaderboardUploadAt : () => undefined,
@@ -39,6 +40,7 @@ describe('manual leaderboard uploads and the auto-upload schedule', () => {
     ensureAiusageDir(dir)
     config = { leaderboardAutoUpload: true, leaderboardUploadInterval: WEEK }
     runLeaderboardUpload = vi.fn(async () => true)
+    runParse = vi.fn(async () => {})
     vi.useFakeTimers()
     vi.setSystemTime(START)
   })
@@ -154,6 +156,65 @@ describe('manual leaderboard uploads and the auto-upload schedule', () => {
     expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(runLeaderboardUpload).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips an auto upload when a manual one lands while it waits for the parse', async () => {
+    setState(dir, { lastLeaderboardUploadAt: START - WEEK })
+    let finishParse!: () => void
+    runParse.mockImplementationOnce(() => new Promise<void>((resolve) => { finishParse = resolve }))
+    const controller = createController()
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(HOUR)
+    expect(runParse).toHaveBeenCalledTimes(1)
+    controller.noteLeaderboardUpload(recordLeaderboardUpload(stored, dir)!)
+
+    finishParse()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runLeaderboardUpload).not.toHaveBeenCalled()
+    expect(getState(dir)?.lastLeaderboardUploadAt).toBe(START + HOUR)
+
+    await vi.advanceTimersByTimeAsync(WEEK - 1)
+    expect(runLeaderboardUpload).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips an auto upload when auto upload is turned off while it waits for the parse', async () => {
+    let finishParse!: () => void
+    runParse.mockImplementationOnce(() => new Promise<void>((resolve) => { finishParse = resolve }))
+    const controller = createController()
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runParse).toHaveBeenCalledTimes(1)
+    config = { leaderboardAutoUpload: false }
+    controller.reload()
+
+    finishParse()
+    await vi.advanceTimersByTimeAsync(2 * WEEK)
+    expect(runLeaderboardUpload).not.toHaveBeenCalled()
+    expect(getState(dir)?.lastLeaderboardUploadAt).toBeUndefined()
+  })
+
+  it('retries within hours when the clock was ahead during a failed upload', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    runLeaderboardUpload.mockRejectedValueOnce(new Error('offline'))
+    vi.setSystemTime(START + 365 * DAY)
+    const controller = createController()
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+
+    // The clock is corrected. A config save must not help or hurt.
+    vi.setSystemTime(START)
+    controller.reload()
+    await vi.advanceTimersByTimeAsync(HOUR - 1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(2)
+    expect(getState(dir)?.lastLeaderboardUploadAt).toBe(START + HOUR)
   })
 
   it('does not start a timer for a manual upload when auto upload is off or the controller is stopped', async () => {

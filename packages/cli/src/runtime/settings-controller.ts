@@ -199,6 +199,11 @@ export class RuntimeSettingsController {
     const now = Date.now()
     const lastUploadAt = this.getLastLeaderboardUploadAt(now)
     const untilDue = lastUploadAt == null ? 0 : lastUploadAt + interval - now
+    // A retry time set while the clock was ahead would outlast its hour once
+    // the clock is corrected. Pull it back to an hour from now.
+    if (this.leaderboardUploadRetryAt - now > LEADERBOARD_UPLOAD_RETRY_MS) {
+      this.leaderboardUploadRetryAt = now + LEADERBOARD_UPLOAD_RETRY_MS
+    }
     return Math.max(0, untilDue, this.leaderboardUploadRetryAt - now)
   }
 
@@ -223,9 +228,14 @@ export class RuntimeSettingsController {
     if (this.leaderboardUploadInFlight) return
     this.leaderboardUploadInFlight = true
     let uploaded = false
+    let skipped = false
     try {
       await this.runParseFn(this.db)
-      uploaded = (await this.runLeaderboardUploadFn?.(this.db)) !== false
+      // The parse can wait behind other work. A manual upload may have landed
+      // meanwhile, or auto upload may have been turned off.
+      const interval = this.leaderboardUploadInterval
+      skipped = interval == null || this.getLeaderboardUploadDelay(interval) > 0
+      if (!skipped) uploaded = (await this.runLeaderboardUploadFn?.(this.db)) !== false
     } catch (err) {
       // Keep scheduling active after individual upload failures.
       console.error('[settings-controller] leaderboard upload failed:', err)
@@ -234,7 +244,9 @@ export class RuntimeSettingsController {
     }
 
     const now = Date.now()
-    if (uploaded) {
+    if (skipped) {
+      // Nothing was attempted, so there is nothing to store or to retry.
+    } else if (uploaded) {
       this.leaderboardUploadRetryAt = 0
       // Kept in memory as well, so a failed write cannot make the upload due again at once.
       this.lastLeaderboardUploadAt = now

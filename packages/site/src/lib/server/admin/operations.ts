@@ -18,28 +18,53 @@ export async function unbanUser(adminUserId: string, targetUserId: string): Prom
 export interface SnapshotModerationResult {
   /** leaderboard_metrics rows the action changed. 0 means the boards are unchanged. */
   metricsUpdated: number
-  /** approve only: a newer flagged upload of the same period has not been approved, so nothing was published. */
-  superseded?: boolean
+  /** approve only: rows of the period that are still not public afterwards, because the approval does not cover them. */
+  metricsHeld?: number
 }
 
 type SnapshotReviewStatus = 'approved' | 'rejected' | 'hidden'
+type Sql = typeof sql
 
-async function reviewSnapshot(adminUserId: string, snapshotId: string, reviewStatus: SnapshotReviewStatus, note?: string): Promise<void> {
-  const reviewed = await sql`
-    UPDATE upload_snapshots
-    SET review_status = ${reviewStatus}::snapshot_review_status, reviewed_by = ${adminUserId}, reviewed_at = NOW(), review_note = ${note || null}
-    WHERE id = ${snapshotId}
-    RETURNING id
-  `
-  if (reviewed.length === 0) throw new Error('Snapshot not found')
+// pool.ts types `sql` as the query function alone; `begin` is forwarded to the
+// postgres.js client at run time.
+function transaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T> {
+  return (sql as unknown as { begin(fn: (tx: Sql) => Promise<T>): Promise<T> }).begin(fn)
+}
+
+// Marks the snapshot reviewed and applies `apply` to the leaderboard in one
+// transaction, holding the snapshot owner's leaderboard lock. processUpload
+// takes the same lock (uploads/verify.ts), so an upload of that user either
+// committed before the action reads anything or starts after it committed.
+async function moderateSnapshot<T>(
+  adminUserId: string,
+  snapshotId: string,
+  reviewStatus: SnapshotReviewStatus,
+  note: string | undefined,
+  apply: (tx: Sql) => Promise<T>
+): Promise<T> {
+  return transaction(async (tx) => {
+    const locked = await tx`
+      SELECT pg_advisory_xact_lock(hashtextextended('leaderboard_metrics:' || user_id, 0))
+      FROM upload_snapshots WHERE id = ${snapshotId}
+    `
+    if (locked.length === 0) throw new Error('Snapshot not found')
+
+    await tx`
+      UPDATE upload_snapshots
+      SET review_status = ${reviewStatus}::snapshot_review_status, reviewed_by = ${adminUserId}, reviewed_at = NOW(), review_note = ${note || null}
+      WHERE id = ${snapshotId}
+    `
+    return apply(tx)
+  })
 }
 
 // Hides every metric row of the snapshot's user and period. The rows are
 // matched on (user, period_type, period_start), not on the snapshot's
-// upload_request_id: each later upload of the period re-points the rows at its
-// own request, so a request id only matches until the next upload.
-async function hideSnapshotPeriod(snapshotId: string): Promise<number> {
-  const rows = await sql`
+// upload_request_id: each later upload of the period re-points the rows it
+// contains at its own request, so a request id only matches until the next
+// upload.
+async function hideSnapshotPeriod(tx: Sql, snapshotId: string): Promise<SnapshotModerationResult> {
+  const rows = await tx`
     UPDATE leaderboard_metrics lm
     SET visibility = 'hidden', updated_at = NOW()
     FROM upload_snapshots s
@@ -49,17 +74,19 @@ async function hideSnapshotPeriod(snapshotId: string): Promise<number> {
       AND lm.period_start = s.period_start
     RETURNING lm.id
   `
-  return rows.length
+  return { metricsUpdated: rows.length }
 }
 
-export async function approveSnapshot(adminUserId: string, snapshotId: string, note?: string): Promise<SnapshotModerationResult> {
-  await reviewSnapshot(adminUserId, snapshotId, 'approved', note)
-
-  // Restore leaderboard visibility for the snapshot's user and period. The
-  // rows hold the newest upload of that period, so they stay as they are while
-  // a newer flagged upload is unreviewed, rejected or hidden: approving an
-  // older snapshot must not publish numbers that were not approved.
-  const restored = await sql`
+// Publishes the metric rows of the snapshot's user and period that an approval
+// covers. A row carries the request of the upload that last wrote it, which
+// need not be this snapshot's: a later upload re-points the rows it contains,
+// and leaves alone the rows of tools and models it does not mention. A row is
+// published when it was written by this snapshot's upload, or by an upload of
+// the period that was accepted or has been approved. A row written by another
+// flagged upload that is not approved stays as it is, and so does a row whose
+// upload history has been pruned (upload_request_id IS NULL).
+async function publishSnapshotPeriod(tx: Sql, snapshotId: string): Promise<SnapshotModerationResult> {
+  const published = await tx`
     UPDATE leaderboard_metrics lm
     SET visibility = 'public', updated_at = NOW()
     FROM upload_snapshots s
@@ -67,51 +94,48 @@ export async function approveSnapshot(adminUserId: string, snapshotId: string, n
       AND lm.user_id = s.user_id
       AND lm.period_type = s.period_type
       AND lm.period_start = s.period_start
-      AND NOT EXISTS (
-        SELECT 1 FROM upload_snapshots newer
-        WHERE newer.user_id = s.user_id
-          AND newer.period_type = s.period_type
-          AND newer.period_start = s.period_start
-          AND newer.created_at > s.created_at
-          AND newer.status = 'flagged'
-          AND newer.review_status IS DISTINCT FROM 'approved'
+      AND (
+        lm.upload_request_id = s.upload_request_id
+        OR EXISTS (
+          SELECT 1 FROM upload_snapshots src
+          WHERE src.upload_request_id = lm.upload_request_id
+            AND src.user_id = s.user_id
+            AND src.period_type = s.period_type
+            AND src.period_start = s.period_start
+            AND (src.status <> 'flagged' OR src.review_status = 'approved')
+        )
       )
     RETURNING lm.id
   `
-  const result: SnapshotModerationResult = { metricsUpdated: restored.length }
-  if (restored.length === 0) {
-    const newer = await sql`
-      SELECT 1 FROM upload_snapshots s
-      JOIN upload_snapshots newer
-        ON newer.user_id = s.user_id
-       AND newer.period_type = s.period_type
-       AND newer.period_start = s.period_start
-       AND newer.created_at > s.created_at
-      WHERE s.id = ${snapshotId}
-        AND newer.status = 'flagged'
-        AND newer.review_status IS DISTINCT FROM 'approved'
-      LIMIT 1
-    `
-    result.superseded = newer.length > 0
-  }
+  const held = await tx`
+    SELECT COUNT(*)::INTEGER AS count
+    FROM leaderboard_metrics lm
+    JOIN upload_snapshots s ON s.id = ${snapshotId}
+    WHERE lm.user_id = s.user_id
+      AND lm.period_type = s.period_type
+      AND lm.period_start = s.period_start
+      AND lm.visibility <> 'public'
+  `
+  return { metricsUpdated: published.length, metricsHeld: (held[0] as { count: number }).count }
+}
 
+export async function approveSnapshot(adminUserId: string, snapshotId: string, note?: string): Promise<SnapshotModerationResult> {
+  const result = await moderateSnapshot(adminUserId, snapshotId, 'approved', note, (tx) => publishSnapshotPeriod(tx, snapshotId))
   await logAdminAction(adminUserId, 'approve_snapshot', 'upload_snapshots', snapshotId, note || 'Snapshot approved', moderationMetadata(result))
   invalidateLeaderboardCache()
   return result
 }
 
 export async function rejectSnapshot(adminUserId: string, snapshotId: string, note?: string): Promise<SnapshotModerationResult> {
-  await reviewSnapshot(adminUserId, snapshotId, 'rejected', note)
   // Cascade: hide all derived leaderboard_metrics for this snapshot's period
-  const result: SnapshotModerationResult = { metricsUpdated: await hideSnapshotPeriod(snapshotId) }
+  const result = await moderateSnapshot(adminUserId, snapshotId, 'rejected', note, (tx) => hideSnapshotPeriod(tx, snapshotId))
   await logAdminAction(adminUserId, 'reject_snapshot', 'upload_snapshots', snapshotId, note || 'Snapshot rejected', moderationMetadata(result))
   invalidateLeaderboardCache()
   return result
 }
 
 export async function hideSnapshot(adminUserId: string, snapshotId: string, note?: string): Promise<SnapshotModerationResult> {
-  await reviewSnapshot(adminUserId, snapshotId, 'hidden', note)
-  const result: SnapshotModerationResult = { metricsUpdated: await hideSnapshotPeriod(snapshotId) }
+  const result = await moderateSnapshot(adminUserId, snapshotId, 'hidden', note, (tx) => hideSnapshotPeriod(tx, snapshotId))
   await logAdminAction(adminUserId, 'hide_snapshot', 'upload_snapshots', snapshotId, note || 'Snapshot hidden', moderationMetadata(result))
   invalidateLeaderboardCache()
   return result
@@ -120,7 +144,7 @@ export async function hideSnapshot(adminUserId: string, snapshotId: string, note
 function moderationMetadata(result: SnapshotModerationResult): Record<string, unknown> {
   return {
     metrics_updated: result.metricsUpdated,
-    ...(result.superseded ? { superseded: true } : {}),
+    ...(result.metricsHeld ? { metrics_held: result.metricsHeld } : {}),
   }
 }
 

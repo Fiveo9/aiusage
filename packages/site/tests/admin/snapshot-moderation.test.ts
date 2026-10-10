@@ -5,17 +5,20 @@ vi.mock('../../src/lib/server/db/pool.js', async () => ({ sql: (await import('..
 
 import { approveSnapshot, hideSnapshot, rejectSnapshot } from '../../src/lib/server/admin/operations.js'
 
+const isLock = (q: RecordedQuery) => q.text.startsWith('SELECT pg_advisory_xact_lock(')
 const isReview = (q: RecordedQuery) => q.text.startsWith('UPDATE upload_snapshots')
 const isMetricUpdate = (q: RecordedQuery) => q.text.startsWith('UPDATE leaderboard_metrics')
-const isNewerLookup = (q: RecordedQuery) => q.text.startsWith('SELECT 1 FROM upload_snapshots')
+const isHeldCount = (q: RecordedQuery) => q.text.startsWith('SELECT COUNT(*)::INTEGER AS count FROM leaderboard_metrics')
 const isAudit = (q: RecordedQuery) => q.text.startsWith('INSERT INTO admin_audit_logs')
 
-function database(options: { snapshotExists?: boolean; metricRows?: number; newerUnapproved?: boolean } = {}) {
-  const { snapshotExists = true, metricRows = 4, newerUnapproved = false } = options
+const SAME_USER_AND_PERIOD = 'lm.user_id = s.user_id AND lm.period_type = s.period_type AND lm.period_start = s.period_start'
+
+function database(options: { snapshotExists?: boolean; metricRows?: number; heldRows?: number } = {}) {
+  const { snapshotExists = true, metricRows = 4, heldRows = 0 } = options
   respondWith((q) => {
-    if (isReview(q)) return snapshotExists ? [{ id: 'snap_1' }] : []
+    if (isLock(q)) return snapshotExists ? [{ pg_advisory_xact_lock: '' }] : []
     if (isMetricUpdate(q)) return Array.from({ length: metricRows }, (_, i) => ({ id: `metric_${i}` }))
-    if (isNewerLookup(q)) return newerUnapproved ? [{}] : []
+    if (isHeldCount(q)) return [{ count: heldRows }]
     return undefined
   })
 }
@@ -33,84 +36,99 @@ beforeEach(() => {
 describe.each([
   ['rejectSnapshot', rejectSnapshot, 'rejected'],
   ['hideSnapshot', hideSnapshot, 'hidden'],
+  ['approveSnapshot', approveSnapshot, 'approved'],
 ] as const)('%s', (_name, action, reviewStatus) => {
-  it('hides the metric rows of the snapshot\'s user and period, not of its upload request', async () => {
+  it('takes the leaderboard lock of the snapshot owner before it reads or writes anything else', async () => {
+    database()
+
+    await action('admin_1', 'snap_1')
+
+    expect(queries[0].text).toBe(
+      "SELECT pg_advisory_xact_lock(hashtextextended('leaderboard_metrics:' || user_id, 0)) FROM upload_snapshots WHERE id = ?"
+    )
+    expect(queries[0].values).toEqual(['snap_1'])
+    expect(queries.findIndex(isReview)).toBe(1)
+    expect(queries[1].values[0]).toBe(reviewStatus)
+    expect(queries.findIndex(isMetricUpdate)).toBe(2)
+  })
+
+  it('matches the metric rows on the user and period of the snapshot', async () => {
     database()
 
     await action('admin_1', 'snap_1')
 
     const update = queries.find(isMetricUpdate)!
-    expect(update.text).toContain("SET visibility = 'hidden'")
-    expect(update.text).toContain('FROM upload_snapshots s WHERE s.id = ?')
-    expect(update.text).toContain('lm.user_id = s.user_id AND lm.period_type = s.period_type AND lm.period_start = s.period_start')
-    // Later uploads of the period re-point the rows at their own request, so a
-    // match on the snapshot's request id would hit nothing.
-    expect(update.text).not.toContain('upload_request_id')
+    expect(update.text).toContain(`FROM upload_snapshots s WHERE s.id = ? AND ${SAME_USER_AND_PERIOD}`)
     expect(update.values).toEqual(['snap_1'])
-    expect(queries.find(isReview)!.values[0]).toBe(reviewStatus)
   })
 
-  it('reports how many metric rows it changed, to the caller and in the audit log', async () => {
-    database({ metricRows: 4 })
-
-    await expect(action('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 4 })
-    expect(auditMetadata()).toEqual({ metrics_updated: 4 })
-  })
-
-  it('reports when no metric row matched', async () => {
+  it('reports when no metric row matched, to the caller and in the audit log', async () => {
     database({ metricRows: 0 })
 
-    await expect(action('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 0 })
+    const result = await action('admin_1', 'snap_1')
+
+    expect(result.metricsUpdated).toBe(0)
     expect(auditMetadata()).toEqual({ metrics_updated: 0 })
   })
 
-  it('fails for a snapshot that does not exist, without touching metrics or the audit log', async () => {
+  it('fails for a snapshot that does not exist, without touching anything', async () => {
     database({ snapshotExists: false })
 
     await expect(action('admin_1', 'missing')).rejects.toThrow('Snapshot not found')
-    expect(queries.some(isMetricUpdate)).toBe(false)
-    expect(queries.some(isAudit)).toBe(false)
+    expect(queries.filter(q => !isLock(q))).toEqual([])
+  })
+})
+
+describe.each([
+  ['rejectSnapshot', rejectSnapshot],
+  ['hideSnapshot', hideSnapshot],
+] as const)('%s', (_name, action) => {
+  it('hides every metric row of the period, whichever upload wrote it', async () => {
+    database({ metricRows: 4 })
+
+    await expect(action('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 4 })
+
+    const update = queries.find(isMetricUpdate)!
+    expect(update.text).toContain("SET visibility = 'hidden'")
+    // Later uploads of the period re-point the rows at their own request, so a
+    // match on the request id of the snapshot would hit nothing.
+    expect(update.text).not.toContain('upload_request_id')
+    expect(auditMetadata()).toEqual({ metrics_updated: 4 })
   })
 })
 
 describe('approveSnapshot', () => {
-  it('publishes the metric rows of the snapshot\'s user and period', async () => {
+  it('publishes only rows written by this upload or by an accepted or approved upload of the period', async () => {
     database({ metricRows: 4 })
 
-    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 4 })
+    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 4, metricsHeld: 0 })
 
     const update = queries.find(isMetricUpdate)!
     expect(update.text).toContain("SET visibility = 'public'")
-    expect(update.text).toContain('lm.user_id = s.user_id AND lm.period_type = s.period_type AND lm.period_start = s.period_start')
-    expect(update.text).not.toContain('upload_request_id')
+    expect(update.text).toContain(
+      'AND ( lm.upload_request_id = s.upload_request_id OR EXISTS ( SELECT 1 FROM upload_snapshots src WHERE src.upload_request_id = lm.upload_request_id'
+    )
+    expect(update.text).toContain(
+      "AND src.user_id = s.user_id AND src.period_type = s.period_type AND src.period_start = s.period_start AND (src.status <> 'flagged' OR src.review_status = 'approved') ) )"
+    )
     expect(auditMetadata()).toEqual({ metrics_updated: 4 })
   })
 
-  it('does not publish while a newer flagged upload of the period is not approved', async () => {
-    database({ metricRows: 0, newerUnapproved: true })
+  it('reports the rows of the period it left unpublished', async () => {
+    database({ metricRows: 4, heldRows: 2 })
 
-    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 0, superseded: true })
+    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 4, metricsHeld: 2 })
 
-    // The guard is part of the update itself, so there is no gap between the
-    // check and the write.
-    const update = queries.find(isMetricUpdate)!
-    expect(update.text).toContain('AND NOT EXISTS ( SELECT 1 FROM upload_snapshots newer')
-    expect(update.text).toContain("newer.created_at > s.created_at AND newer.status = 'flagged' AND newer.review_status IS DISTINCT FROM 'approved'")
-    expect(auditMetadata()).toEqual({ metrics_updated: 0, superseded: true })
+    const held = queries.find(isHeldCount)!
+    expect(held.text).toContain(`JOIN upload_snapshots s ON s.id = ? WHERE ${SAME_USER_AND_PERIOD} AND lm.visibility <> 'public'`)
+    expect(queries.indexOf(held)).toBeGreaterThan(queries.findIndex(isMetricUpdate))
+    expect(auditMetadata()).toEqual({ metrics_updated: 4, metrics_held: 2 })
   })
 
-  it('reports when no metric row matched and nothing newer is in the way', async () => {
-    database({ metricRows: 0, newerUnapproved: false })
+  it('reports when every row of the period belongs to another upload that is not approved', async () => {
+    database({ metricRows: 0, heldRows: 4 })
 
-    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 0, superseded: false })
-    expect(auditMetadata()).toEqual({ metrics_updated: 0 })
-  })
-
-  it('fails for a snapshot that does not exist', async () => {
-    database({ snapshotExists: false })
-
-    await expect(approveSnapshot('admin_1', 'missing')).rejects.toThrow('Snapshot not found')
-    expect(queries.some(isMetricUpdate)).toBe(false)
-    expect(queries.some(isAudit)).toBe(false)
+    await expect(approveSnapshot('admin_1', 'snap_1')).resolves.toEqual({ metricsUpdated: 0, metricsHeld: 4 })
+    expect(auditMetadata()).toEqual({ metrics_updated: 0, metrics_held: 4 })
   })
 })

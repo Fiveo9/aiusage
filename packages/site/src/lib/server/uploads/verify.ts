@@ -604,6 +604,11 @@ export async function processUpload(
   const snapshotResults: SnapshotResult[] = []
 
   await sql.begin(async (tx) => {
+    // One writer of a user's leaderboard rows at a time. The admin snapshot
+    // actions take the same lock (admin/operations.ts), so moderation cannot
+    // land between the visibility lookup below and the rows written after it.
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended('leaderboard_metrics:' || ${userId}::text, 0))`
+
     await tx`
       INSERT INTO upload_requests (id, user_id, device_id, idempotency_key, payload_hash, status, result_summary, client_version, client_platform, schema_version, ip_hash)
       VALUES (${requestId}, ${userId}, ${deviceId}, ${idempotencyKey}, ${payloadHash}, 'accepted', ${JSON.stringify(snapshotResults)}, ${request.client_version}, ${request.client_platform}, ${request.schema_version}, ${ipHash})
@@ -632,9 +637,9 @@ export async function processUpload(
 
       // Flagged snapshots get 'flagged' visibility; accepted get 'public'.
       // Admin moderation outlives the upload: a row that is hidden stays hidden
-      // in the upsert below, and a row this upload adds (a tool or model the
-      // period did not have before) starts hidden when every existing row of
-      // the period is hidden.
+      // in the upsert below, whatever this upload's status, and a row this
+      // upload adds (a tool or model the period did not have before) starts
+      // hidden when every existing row of the period is hidden.
       const periodRows = await tx`
         SELECT COALESCE(BOOL_AND(visibility = 'hidden'), FALSE) AS hidden
         FROM leaderboard_metrics
@@ -643,7 +648,8 @@ export async function processUpload(
           AND period_start = ${snapshot.period_start}
       `
       const periodHidden = (periodRows[0] as { hidden: boolean }).hidden === true
-      const metricVisibility = periodHidden ? 'hidden' : snapshotStatus === 'flagged' ? 'flagged' : 'public'
+      const uploadVisibility = snapshotStatus === 'flagged' ? 'flagged' : 'public'
+      const metricVisibility = periodHidden ? 'hidden' : uploadVisibility
 
       const { costs, unknownModels } = buildCostMap(snapshot, pricing)
       for (const row of snapshot.breakdowns) {
@@ -680,7 +686,7 @@ export async function processUpload(
             thinking_tokens = ${row.thinking_tokens},
             total_tokens = ${row.total_tokens},
             total_cost_usd = ${cost},
-            visibility = CASE WHEN leaderboard_metrics.visibility = 'hidden' THEN leaderboard_metrics.visibility ELSE EXCLUDED.visibility END,
+            visibility = CASE WHEN leaderboard_metrics.visibility = 'hidden' THEN leaderboard_metrics.visibility ELSE ${uploadVisibility} END,
             has_unknown_cost = ${hasUnknownCost},
             updated_at = NOW()
         `

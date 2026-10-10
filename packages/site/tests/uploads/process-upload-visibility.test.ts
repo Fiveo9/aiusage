@@ -46,11 +46,19 @@ function database(options: { periodHidden: boolean | null; flagged: boolean }) {
   })
 }
 
+// Parameters of the upsert: VALUES (id, request, user, device, period_type, period_start, period_end,
+// scope, tool, model, input, output, cache_read, cache_write, thinking, total, cost, visibility, has_unknown_cost)
+// then DO UPDATE SET request, device, period_end, input, output, cache_read, cache_write, thinking, total,
+// cost, visibility (for a row that is not hidden), has_unknown_cost.
+
 /** The `visibility` each upserted row would be inserted with. */
 function insertedVisibilities(): unknown[] {
-  // VALUES (id, request, user, device, period_type, period_start, period_end, scope, tool, model,
-  //         input, output, cache_read, cache_write, thinking, total, cost, visibility, has_unknown_cost, ...)
   return queries.filter(isMetricUpsert).map(q => q.values[17])
+}
+
+/** The `visibility` each upserted row would be updated to, unless it is hidden. */
+function updatedVisibilities(): unknown[] {
+  return queries.filter(isMetricUpsert).map(q => q.values[29])
 }
 
 beforeEach(() => {
@@ -68,9 +76,21 @@ describe('processUpload leaderboard visibility', () => {
     expect(upserts).toHaveLength(2)
     for (const upsert of upserts) {
       expect(upsert.text).toContain(
-        "visibility = CASE WHEN leaderboard_metrics.visibility = 'hidden' THEN leaderboard_metrics.visibility ELSE EXCLUDED.visibility END"
+        "visibility = CASE WHEN leaderboard_metrics.visibility = 'hidden' THEN leaderboard_metrics.visibility ELSE ? END"
       )
     }
+  })
+
+  it('takes the leaderboard lock of the user, the one the admin snapshot actions take, before any other statement of the transaction', async () => {
+    database({ periodHidden: false, flagged: false })
+
+    await processUpload('user_1', 'device_1', 'key_1', uploadRequest(), '127.0.0.1')
+
+    const lock = queries.findIndex(q => q.text.startsWith('SELECT pg_advisory_xact_lock('))
+    expect(queries[lock].text).toBe("SELECT pg_advisory_xact_lock(hashtextextended('leaderboard_metrics:' || ?::text, 0))")
+    expect(queries[lock].values).toEqual(['user_1'])
+    expect(queries.findIndex(q => q.text.startsWith('INSERT INTO upload_requests'))).toBe(lock + 1)
+    expect(lock).toBeLessThan(queries.findIndex(isPeriodLookup))
   })
 
   it('looks up the moderation state of the user and period inside the upload transaction', async () => {
@@ -89,6 +109,7 @@ describe('processUpload leaderboard visibility', () => {
     const accepted = await processUpload('user_1', 'device_1', 'key_1', uploadRequest(), '127.0.0.1')
     expect(accepted.status).toBe('accepted')
     expect(insertedVisibilities()).toEqual(['public', 'public'])
+    expect(updatedVisibilities()).toEqual(['public', 'public'])
 
     resetFakeSql()
     invalidateConfigCache()
@@ -96,6 +117,7 @@ describe('processUpload leaderboard visibility', () => {
     const flagged = await processUpload('user_1', 'device_1', 'key_2', uploadRequest(), '127.0.0.1')
     expect(flagged.status).toBe('flagged')
     expect(insertedVisibilities()).toEqual(['flagged', 'flagged'])
+    expect(updatedVisibilities()).toEqual(['flagged', 'flagged'])
   })
 
   it('treats a period with no rows yet as not moderated', async () => {
@@ -114,5 +136,8 @@ describe('processUpload leaderboard visibility', () => {
     // The upload itself is still judged on its own data.
     expect(result.status).toBe(flagged ? 'flagged' : 'accepted')
     expect(insertedVisibilities()).toEqual(['hidden', 'hidden'])
+    // A row that is not hidden any more by the time it is written (an admin
+    // restored it) gets the upload's own visibility, not the stale 'hidden'.
+    expect(updatedVisibilities()).toEqual(flagged ? ['flagged', 'flagged'] : ['public', 'public'])
   })
 })

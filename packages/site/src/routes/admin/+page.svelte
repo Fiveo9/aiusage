@@ -414,9 +414,13 @@
         // Snapshot actions report how many leaderboard rows they changed.
         const result = await res.json().catch(() => ({}))
         if (result.metrics_updated === 0) {
-          actionError = result.superseded
-            ? (zh ? '该周期有更新的被标记上传尚未通过，排行榜未变更' : 'A newer flagged upload of this period has not been approved, so the leaderboard was not changed')
+          actionError = result.metrics_held > 0
+            ? (zh ? '该周期的排行榜数据来自另一次尚未通过的被标记上传，排行榜未变更' : 'The leaderboard rows of this period come from another flagged upload that has not been approved, so the leaderboard was not changed')
             : (zh ? '没有匹配的排行榜数据，排行榜未变更' : 'No leaderboard rows matched, so the leaderboard was not changed')
+        } else if (result.metrics_held > 0) {
+          actionError = zh
+            ? `该周期有 ${result.metrics_held} 条排行榜数据未公开：它们来自另一次尚未通过的被标记上传`
+            : `${result.metrics_held} leaderboard row(s) of this period were not published: they come from another flagged upload that has not been approved`
         }
         return true
       }

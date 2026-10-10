@@ -7,5 +7,5 @@ export const POST: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
   const body = await event.request.json()
   const result = await approveSnapshot(admin.id, event.params.snapshotId, body.note)
-  return json({ success: true, metrics_updated: result.metricsUpdated, superseded: result.superseded === true })
+  return json({ success: true, metrics_updated: result.metricsUpdated, metrics_held: result.metricsHeld ?? 0 })
 }

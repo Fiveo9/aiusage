@@ -126,7 +126,7 @@ export async function runSync(
     })
 
     const startedAt = Date.now()
-    const result = await orchestrator.sync()
+    const result = await orchestrator.sync(state?.syncTargets?.[target]?.syncGeneration)
 
     const now = Date.now()
     setSyncTargetState(AIUSAGE_DIR, target, {
@@ -136,6 +136,7 @@ export async function runSync(
       lastSyncUploaded: result.uploadedCount,
       lastSyncPulled: result.pulledCount,
       lastSyncDurationMs: now - startedAt,
+      syncGeneration: result.syncGeneration,
     })
 
     return result

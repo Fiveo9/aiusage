@@ -94,6 +94,14 @@ describe('runSync with an unusable state.json or config.json (#104, #103)', () =
     expect(readFileSync(STATE_PATH, 'utf-8')).toBe(GOOD_STATE)
   })
 
+  it('reports the target it syncs before anything can fail for that target', async () => {
+    configure({ backend: 'github', repo: 'user/repo', branch: 'dev' })
+    const targets: string[] = []
+    const result = await runSync(db, { onTarget: target => targets.push(target) })
+    expect(result.status).toBe('failed')
+    expect(targets).toEqual(['github:user/repo?branch=dev'])
+  })
+
   it('still reports a missing config as not configured', async () => {
     const result = await runSync(db)
     expect(result).toMatchObject({ status: 'failed', error: expect.stringMatching(/not configured/i) })

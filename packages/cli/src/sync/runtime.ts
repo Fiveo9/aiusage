@@ -59,14 +59,18 @@ interface SyncRuntimeOptions {
    * status even when it could not be recorded in `state.json`. A throw is
    * caught and shown the same way.
    */
-  runSync: (options: { onProgress?: (progress: SyncProgress) => void }) => Promise<SyncRunOutcome | void>
+  runSync: (options: {
+    onProgress?: (progress: SyncProgress) => void
+    /** Call with the target the run actually syncs; without it, the one configured at the start counts. */
+    onTarget?: (target: string) => void
+  }) => Promise<SyncRunOutcome | void>
   getPersistedState: () => State | null
   getCurrentTarget?: () => string | null
 }
 
 /** A background run that did not end well, kept until the next one starts. */
 interface FailedRun extends SyncRunOutcome {
-  /** The target the run was for, as `getStatus` resolves it; the failure is shown for no other. */
+  /** The target the run was for; the failure is shown for no other. */
   target: string | null
   startedAt: number
   finishedAt: number
@@ -174,8 +178,12 @@ export class SyncRuntimeController {
    * kept for the status instead.
    */
   private async runInBackground(startedAt: number, target: string | undefined): Promise<void> {
+    // The configuration is read again when the sync itself starts, which can
+    // be a while after this run was queued; the sync reports what it used.
+    let runTarget = target ?? null
     try {
       const outcome = await this.runSyncFn({
+        onTarget: (used) => { runTarget = used },
         onProgress: (progress) => {
           this.current = {
             ...this.current,
@@ -190,14 +198,14 @@ export class SyncRuntimeController {
         },
       })
       if (outcome && outcome.status !== 'ok' && outcome.status !== 'conflict_resolved') {
-        this.lastFailedRun = { status: outcome.status, error: outcome.error, target: target ?? null, startedAt, finishedAt: Date.now() }
+        this.lastFailedRun = { status: outcome.status, error: outcome.error, target: runTarget, startedAt, finishedAt: Date.now() }
       }
     } catch (error) {
       console.error('[sync] background sync failed:', error)
       this.lastFailedRun = {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
-        target: target ?? null,
+        target: runTarget,
         startedAt,
         finishedAt: Date.now(),
       }

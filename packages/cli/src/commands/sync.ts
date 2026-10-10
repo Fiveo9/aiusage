@@ -104,7 +104,11 @@ export type RunSyncResult = (SyncResult | CloudSyncResult) & {
 
 export async function runSync(
   db: Database.Database,
-  options?: { onProgress?: (progress: SyncProgress) => void },
+  options?: {
+    onProgress?: (progress: SyncProgress) => void
+    /** Told the target key this run syncs, once the configuration has been read. */
+    onTarget?: (target: string) => void
+  },
 ): Promise<RunSyncResult> {
   const configFile = readConfigFile()
   if (configFile.status === 'invalid') {
@@ -119,6 +123,7 @@ export async function runSync(
   if (!target) {
     return failedResult('Invalid sync configuration.')
   }
+  options?.onTarget?.(target)
   // Syncing needs this device's identity, and nothing here may invent one: a
   // new id next to an existing database makes the device's own history look
   // like another device's.

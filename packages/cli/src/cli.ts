@@ -328,6 +328,7 @@ program
           }
         }
       } catch (err) {
+        if (err instanceof JsonFileError) throw err
         console.error(`  Propagation failed: ${err instanceof Error ? err.message : err}`)
       }
     }

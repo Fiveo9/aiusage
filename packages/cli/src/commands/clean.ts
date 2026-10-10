@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import { unlinkSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { AIUSAGE_DIR, loadConfig } from '../config.js'
+import { JsonFileError } from '../json-file.js'
 import type { SyncRecord } from '@aiusage/core'
 import { cloudClear } from '../sync/cloud.js'
 import type { SyncBackend } from '../sync/index.js'
@@ -301,6 +302,8 @@ export async function propagateClean(options: {
       })
     }
   } catch (err) {
+    // Not a backend that was skipped: the configuration itself cannot be used.
+    if (err instanceof JsonFileError) throw err
     results.push({
       backend: {
         type: config.sync.backend as 'github' | 's3',

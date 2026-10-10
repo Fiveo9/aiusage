@@ -129,6 +129,37 @@ describe('SyncRuntimeController: a background sync that fails (#103)', () => {
     expect(controller.getStatus()).toMatchObject({ lastSyncTarget: a, lastSyncStatus: 'failed' })
   })
 
+  it('ties a failure to the target the sync reports it used, not the one configured when it was queued', async () => {
+    const a = 'github:user/a'
+    const b = 'github:user/b'
+    let current = a
+    persisted = {
+      deviceInstanceId: 'dev', lastSyncStatus: 'ok', lastSyncTarget: a,
+      syncTargets: {
+        [a]: { lastSyncAt: 1000, lastSyncStatus: 'ok', lastSyncTarget: a },
+        [b]: { lastSyncAt: 2000, lastSyncStatus: 'ok', lastSyncTarget: b },
+      },
+    }
+    const controller = new SyncRuntimeController({
+      // The configuration changed while the run waited its turn: it syncs b.
+      runSync: async ({ onTarget }) => {
+        current = b
+        onTarget?.(b)
+        return { status: 'failed', error: 'Could not create sync backend. Check credentials.' }
+      },
+      getPersistedState: () => persisted,
+      getCurrentTarget: () => current,
+    })
+
+    controller.start()
+    await settled(controller)
+    expect(controller.getStatus()).toMatchObject({ lastSyncTarget: b, lastSyncStatus: 'failed', lastSyncError: 'Could not create sync backend. Check credentials.' })
+    current = a
+    const status = controller.getStatus()
+    expect(status).toMatchObject({ lastSyncTarget: a, lastSyncStatus: 'ok', lastSyncAt: 1000 })
+    expect(status.lastSyncError).toBeUndefined()
+  })
+
   it('reports the status even when reading the current target fails', async () => {
     const controller = new SyncRuntimeController({
       runSync: async () => {},

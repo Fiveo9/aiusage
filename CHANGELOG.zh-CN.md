@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+- **会话列表的 token 和费用被放大**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 列表在求和之前先将记录与工具调用关联，因此每条记录的 token 和费用按工具调用次数被重复计算。现在先按会话汇总记录，再附加工具调用次数。
+- **多模型会话的头部只统计了部分数据**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 头部除会话外还按工具和模型分组。现在头部覆盖整个会话，`GET /api/sessions/:id` 以 `session.models` 返回使用过的模型。
+- **会话分页**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 日期范围或设备变化时，会话页面回到第一页，并忽略先前筛选条件的迟到响应。`page` 或 `pageSize` 不是正整数时，`GET /api/sessions` 返回 400 `INVALID_PARAM`，此前会被修正为默认范围或返回 500。
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 修正缓存输入 token 统计，并恢复新版 Git for Windows 上的 GitHub 同步。

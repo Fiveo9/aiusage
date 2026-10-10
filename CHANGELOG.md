@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Sessions list inflated tokens and cost** ([#130](https://github.com/juliantanx/aiusage/pull/130) by [@aaroncchung](https://github.com/aaroncchung)) — the list joined records to tool calls before summing, so a record's tokens and cost were counted once per tool call. Records are now totalled per session first and the tool-call count is attached afterwards.
+- **Session header covered only part of a multi-model session** ([#130](https://github.com/juliantanx/aiusage/pull/130) by [@aaroncchung](https://github.com/aaroncchung)) — the header grouped by tool and model as well as session. It now covers the whole session, and `GET /api/sessions/:id` returns the models used as `session.models`.
+- **Sessions paging** ([#130](https://github.com/juliantanx/aiusage/pull/130) by [@aaroncchung](https://github.com/aaroncchung)) — the Sessions page returns to the first page when the date range or device changes and ignores late responses for an earlier filter. `GET /api/sessions` answers 400 `INVALID_PARAM` for a `page` or `pageSize` that is not a positive integer, where it used to clamp the value or fail with a 500.
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 Fix cached-input accounting and restore GitHub sync on current Git for Windows releases.

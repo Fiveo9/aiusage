@@ -91,6 +91,39 @@ describe('PUT /api/config interval bounds', () => {
     })
   }
 
+  it('does not apply the week start of a save it rejects', async () => {
+    // Wednesday noon, local time. The record is on the Sunday before: inside a
+    // week that starts on Sunday, outside one that starts on Monday.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 0, 7, 12))
+    try {
+      vi.mocked(loadConfig).mockImplementation(() => ({ weekStart: 1 }) as any)
+      db.prepare(`
+        INSERT INTO records (id, ts, ingested_at, synced_at, updated_at, line_offset,
+          tool, model, provider, input_tokens, output_tokens, cache_read_tokens,
+          cache_write_tokens, thinking_tokens, cost, cost_source, session_id,
+          source_file, device, device_instance_id)
+        VALUES ('sunday', @ts, @ts, NULL, @ts, 0,
+          'claude-code', 'claude-sonnet-4-6', 'anthropic', 7, 0, 0,
+          0, 0, 0, 'pricing', 's-sunday',
+          '/tmp/session.jsonl', 'local-device', 'local-uuid-0000')
+      `).run({ ts: new Date(2026, 0, 4, 12).getTime() })
+      const weekTokens = async () => (await (await fetch(`${baseUrl}/api/summary?range=week`)).json()).inputTokens
+
+      expect(await weekTokens()).toBe(0)
+
+      const rejectedSave = await put({ weekStart: 0, refreshInterval: 30 })
+      expect(rejectedSave.status).toBe(400)
+      expect(await weekTokens()).toBe(0)
+
+      const acceptedSave = await put({ weekStart: 0, refreshInterval: 30000 })
+      expect(acceptedSave.status).toBe(200)
+      expect(await weekTokens()).toBe(7)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('accepts the bounds themselves', async () => {
     for (const body of [
       { refreshInterval: 1000, syncInterval: 60000, leaderboardUploadInterval: HOUR },

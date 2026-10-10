@@ -2017,6 +2017,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               if (raw == null || raw === false || raw === '' || raw === 0 || raw === '0') continue
               const value = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
               if (!Number.isFinite(value) || value < min || value > max) {
+                // Nothing is saved, so undo the week start this request may have applied above.
+                weekStart = (loadConfig()?.weekStart ?? 1) as 0 | 1
                 json(res, { error: { code: 'INVALID_INTERVAL', message: `${field} must be a number of milliseconds between ${min} and ${max}` } }, 400)
                 return
               }

@@ -196,11 +196,14 @@ export class RuntimeSettingsController {
     } catch (err) {
       console.error('[settings-controller] reading the last leaderboard upload time failed:', err)
     }
-    const storedAt = typeof stored === 'number' && Number.isFinite(stored) ? stored : 0
-    const lastUploadAt = Math.max(storedAt, this.lastLeaderboardUploadAt)
     // A time in the future comes from a clock that was wrong when it was
-    // stored. Waiting on it could postpone the upload indefinitely.
-    return lastUploadAt > 0 && lastUploadAt <= now ? lastUploadAt : undefined
+    // stored. Waiting on it could postpone the upload indefinitely. Each
+    // source is checked on its own, so a bad stored time cannot hide the one
+    // kept in memory.
+    const lastUploadAt = Math.max(0, ...[stored, this.lastLeaderboardUploadAt].filter(
+      (ts): ts is number => typeof ts === 'number' && Number.isFinite(ts) && ts > 0 && ts <= now,
+    ))
+    return lastUploadAt > 0 ? lastUploadAt : undefined
   }
 
   private async runLeaderboardUploadSafely(): Promise<void> {

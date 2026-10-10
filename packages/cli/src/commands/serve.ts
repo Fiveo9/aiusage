@@ -9,7 +9,7 @@ import { importConfigPriceOverrides, loadPricingRuntime } from '../pricing-regis
 import { runParse } from './parse.js'
 import { runSync } from './sync.js'
 import { cleanOldData } from './clean.js'
-import { uploadLeaderboardData } from './leaderboard-upload.js'
+import { uploadLeaderboardData, wasLeaderboardUploadStored } from './leaderboard-upload.js'
 import { getState, setState } from '../init.js'
 import { AIUSAGE_DIR, loadConfig, saveConfig } from '../config.js'
 import { SyncRuntimeController } from '../sync/runtime.js'
@@ -96,7 +96,7 @@ export function serve(options: ServeOptions): void {
     loadConfig,
     runParse: (db) => runDbWrite(() => runParse(db)),
     runCleanup: (db, retentionDays) => runDbWrite(() => cleanOldData(db, retentionDays)),
-    runLeaderboardUpload: (db) => uploadLeaderboardData(db, getState(AIUSAGE_DIR)?.deviceInstanceId).then((result) => result.response != null),
+    runLeaderboardUpload: (db) => uploadLeaderboardData(db, getState(AIUSAGE_DIR)?.deviceInstanceId).then(wasLeaderboardUploadStored),
     getLastLeaderboardUploadAt: () => getState(AIUSAGE_DIR)?.lastLeaderboardUploadAt,
     setLastLeaderboardUploadAt: (ts) => setState(AIUSAGE_DIR, { lastLeaderboardUploadAt: ts }),
     runSync: () => syncRuntime.start(),

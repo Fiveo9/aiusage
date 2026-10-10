@@ -332,6 +332,26 @@ describe('RuntimeSettingsController leaderboard upload schedule', () => {
     expect(runLeaderboardUpload).toHaveBeenCalledTimes(2)
   })
 
+  it('does not upload back to back when a future stored time cannot be replaced', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const controller = new RuntimeSettingsController({
+      db: {} as any,
+      loadConfig: () => config as any,
+      runParse: runParse as any,
+      runCleanup: runCleanup as any,
+      runLeaderboardUpload: runLeaderboardUpload as any,
+      getLastLeaderboardUploadAt: () => START + 365 * DAY,
+      setLastLeaderboardUploadAt: () => { throw new Error('disk full') },
+    })
+    controllers.push(controller)
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(WEEK - 1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runLeaderboardUpload).toHaveBeenCalledTimes(2)
+  })
+
   it('clamps refresh and sync timers that exceed the 32-bit limit', async () => {
     config = { refreshInterval: MONTH, syncInterval: MONTH, sync: { backend: 'cloud' } }
     const intervalSpy = vi.spyOn(globalThis, 'setInterval')

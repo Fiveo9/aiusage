@@ -336,6 +336,15 @@ export async function uploadLeaderboardData(
   throw new LeaderboardApiError('Upload failed', 'upload_failed')
 }
 
+/**
+ * Whether the leaderboard site took the upload. It did not when there was no
+ * usage to send, or when the site answered with a rejected request, which is
+ * how it reports its own rate limit.
+ */
+export function wasLeaderboardUploadStored(result: LeaderboardUploadResult): boolean {
+  return result.response != null && result.response.status !== 'rejected'
+}
+
 export async function runLeaderboardUpload(): Promise<void> {
   const db = createDatabase(DB_PATH)
   const state = getState(AIUSAGE_DIR)

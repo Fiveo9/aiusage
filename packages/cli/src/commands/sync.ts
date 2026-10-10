@@ -8,7 +8,7 @@ import { GitSyncBackend } from '../sync/git.js'
 import { S3SyncBackend } from '../sync/s3.js'
 import { loadConfig, buildConsentConfig, loadCredential, AIUSAGE_DIR } from '../config.js'
 import { hasCredentials } from '../leaderboard/credentials.js'
-import { acquireLock, releaseLock } from '../lock.js'
+import { acquireCloudSyncLock } from '../sync/cloud-lock.js'
 import type { SyncProgress } from '../sync/runtime.js'
 import { adoptLegacySyncTarget, getLegacySyncTarget, getSyncTarget, knownSyncTargets, otherSyncTargets } from '../sync/target.js'
 import { forgetSyncTarget, repairSyncContamination, type ForgetTargetReport, type RepairReport } from '../sync/repair.js'
@@ -124,8 +124,8 @@ export async function runSync(
     // and the generation in `state.json` they belong to are one piece of
     // state: a run that clears them for a new generation must not have an
     // older run's delayed acknowledgement land among them afterwards.
-    const lock = join(AIUSAGE_DIR, 'cloud-sync.lock')
-    if (!acquireLock(lock)) {
+    const releaseLock = acquireCloudSyncLock(AIUSAGE_DIR)
+    if (!releaseLock) {
       return failedResult('Another cloud sync is running on this device. Try again when it has finished.')
     }
     try {
@@ -153,7 +153,7 @@ export async function runSync(
 
       return result
     } finally {
-      releaseLock(lock)
+      releaseLock()
     }
   }
 

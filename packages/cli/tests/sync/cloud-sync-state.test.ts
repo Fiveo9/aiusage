@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -19,6 +20,7 @@ const { AIUSAGE_DIR, CONFIG_PATH } = await import('../../src/config.js')
 const { getState } = await import('../../src/init.js')
 const { initializeDatabase } = await import('../../src/db/index.js')
 const { insertRecord } = await import('../../src/db/records.js')
+const { acquireCloudSyncLock } = await import('../../src/sync/cloud-lock.js')
 
 const DEVICE = 'device-a'
 const STATE_PATH = join(AIUSAGE_DIR, 'state.json')
@@ -212,40 +214,76 @@ describe('cloud sync state (stubbed fetch, real runSync)', () => {
   describe('one cloud sync at a time', () => {
     const LOCK_PATH = join(AIUSAGE_DIR, 'cloud-sync.lock')
 
+    /** Whether the lock can be taken right now; it is given back at once. */
+    function lockIsFree(): boolean {
+      const release = acquireCloudSyncLock(AIUSAGE_DIR)
+      release?.()
+      return release !== null
+    }
+
     it('refuses to start while another cloud sync holds the lock, and leaves its state alone', async () => {
       insertRecord(db, record(1))
-      // A live process (this one) holds the lock, as a sync still awaiting a response would.
-      writeFileSync(LOCK_PATH, String(process.pid), 'utf-8')
       const before = readFileSync(STATE_PATH, 'utf-8')
+      const release = acquireCloudSyncLock(AIUSAGE_DIR)!
+      try {
+        const result = await runSync(db)
+        expect(result.status).toBe('failed')
+        expect(result.error).toMatch(/Another cloud sync is running/)
+        expect(fetch).not.toHaveBeenCalled()
+        expect(syncedIds(db)).toEqual([])
+        expect(readFileSync(STATE_PATH, 'utf-8')).toBe(before)
+      } finally {
+        release()
+      }
+      expect(await runSync(db)).toMatchObject({ status: 'ok', uploadedCount: 1 })
+    })
 
-      const result = await runSync(db)
-      expect(result.status).toBe('failed')
-      expect(result.error).toMatch(/Another cloud sync is running/)
-      expect(fetch).not.toHaveBeenCalled()
-      expect(syncedIds(db)).toEqual([])
-      expect(readFileSync(STATE_PATH, 'utf-8')).toBe(before)
-      // The lock is the other run's to release.
-      expect(existsSync(LOCK_PATH)).toBe(true)
+    it('lets only one of several contenders in', () => {
+      const releases = [1, 2, 3, 4].map(() => acquireCloudSyncLock(AIUSAGE_DIR))
+      expect(releases.filter(release => release !== null)).toHaveLength(1)
+      for (const release of releases) release?.()
+      expect(lockIsFree()).toBe(true)
     })
 
     it('holds the lock while requests are in flight and releases it afterwards, also when the sync fails', async () => {
       insertRecord(db, record(1))
-      let heldDuringPush = false
-      server.duringPush = () => { heldDuringPush = existsSync(LOCK_PATH) }
+      let freeDuringPush = true
+      server.duringPush = () => { freeDuringPush = lockIsFree() }
       expect((await runSync(db)).status).toBe('ok')
-      expect(heldDuringPush).toBe(true)
-      expect(existsSync(LOCK_PATH)).toBe(false)
+      expect(freeDuringPush).toBe(false)
+      expect(lockIsFree()).toBe(true)
 
       vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
       expect((await runSync(db)).status).toBe('failed')
-      expect(existsSync(LOCK_PATH)).toBe(false)
+      expect(lockIsFree()).toBe(true)
     })
 
-    it('takes over a lock left behind by a process that no longer exists', async () => {
+    it('excludes another process, and is free again as soon as that process is gone', async () => {
       insertRecord(db, record(1))
-      writeFileSync(LOCK_PATH, '2147483646', 'utf-8')
+      // A second process takes the lock the way `acquireCloudSyncLock` does and
+      // is then killed without releasing it, as a crashed sync would be.
+      const holder = spawn(process.execPath, ['-e', `
+        const Database = require('better-sqlite3')
+        const lock = new Database(process.argv[1], { timeout: 0 })
+        lock.exec('BEGIN EXCLUSIVE')
+        process.stdout.write('locked')
+        setInterval(() => {}, 1000)
+      `, LOCK_PATH], { stdio: ['ignore', 'pipe', 'inherit'] })
+      try {
+        await new Promise<void>((resolve, reject) => {
+          holder.stdout.once('data', () => resolve())
+          holder.once('exit', code => reject(new Error(`lock holder exited early (${code})`)))
+        })
+        const blocked = await runSync(db)
+        expect(blocked.status).toBe('failed')
+        expect(blocked.error).toMatch(/Another cloud sync is running/)
+        expect(fetch).not.toHaveBeenCalled()
+      } finally {
+        const gone = new Promise(resolve => holder.once('close', resolve))
+        holder.kill()
+        await gone
+      }
       expect(await runSync(db)).toMatchObject({ status: 'ok', uploadedCount: 1 })
-      expect(existsSync(LOCK_PATH)).toBe(false)
     })
   })
 

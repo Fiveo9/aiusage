@@ -66,6 +66,8 @@ interface SyncRuntimeOptions {
 
 /** A background run that did not end well, kept until the next one starts. */
 interface FailedRun extends SyncRunOutcome {
+  /** The target the run was for, as `getStatus` resolves it; the failure is shown for no other. */
+  target: string | null
   startedAt: number
   finishedAt: number
 }
@@ -101,8 +103,9 @@ export class SyncRuntimeController {
     this.lastFailedRun = undefined
 
     // Yield one tick so the HTTP handler can flush its response before sync work starts.
+    const target = this.statusTarget(this.getPersistedState())
     setImmediate(() => {
-      void this.runInBackground(startedAt)
+      void this.runInBackground(startedAt, target)
     })
 
     return {
@@ -118,7 +121,7 @@ export class SyncRuntimeController {
 
   getStatus(): SyncStatusSnapshot {
     const persisted = this.getPersistedState()
-    const target = this.currentTarget() ?? persisted?.lastSyncTarget
+    const target = this.statusTarget(persisted)
     const targetStatus = target ? persisted?.syncTargets?.[target] : undefined
     const legacyStatus = !target || persisted?.lastSyncTarget === target
       ? {
@@ -136,7 +139,8 @@ export class SyncRuntimeController {
     // threw, or what it returned could not be stored there — would otherwise
     // be invisible: the status would still show the sync before it.
     const failed = this.lastFailedRun
-    if (failed && !(status.lastSyncAt !== undefined && status.lastSyncAt >= failed.startedAt)) {
+    if (failed && failed.target === (target ?? null)
+      && !(status.lastSyncAt !== undefined && status.lastSyncAt >= failed.startedAt)) {
       status.lastSyncAt = failed.finishedAt
       status.lastSyncStatus = failed.status
       status.lastSyncError = failed.error
@@ -152,13 +156,16 @@ export class SyncRuntimeController {
     }
   }
 
-  /** The configured target, or `null` when it cannot be read: the status must not throw. */
-  private currentTarget(): string | null {
+  /**
+   * The target the status is about: the configured one or, when there is none
+   * or it cannot be read (the status must not throw), the one last synced.
+   */
+  private statusTarget(persisted: State | null): string | undefined {
+    let current: string | null = null
     try {
-      return this.getCurrentTarget?.() ?? null
-    } catch {
-      return null
-    }
+      current = this.getCurrentTarget?.() ?? null
+    } catch {}
+    return current ?? persisted?.lastSyncTarget
   }
 
   /**
@@ -166,7 +173,7 @@ export class SyncRuntimeController {
    * unhandled one and end the process. Whatever the sync throws is logged and
    * kept for the status instead.
    */
-  private async runInBackground(startedAt: number): Promise<void> {
+  private async runInBackground(startedAt: number, target: string | undefined): Promise<void> {
     try {
       const outcome = await this.runSyncFn({
         onProgress: (progress) => {
@@ -183,13 +190,14 @@ export class SyncRuntimeController {
         },
       })
       if (outcome && outcome.status !== 'ok' && outcome.status !== 'conflict_resolved') {
-        this.lastFailedRun = { status: outcome.status, error: outcome.error, startedAt, finishedAt: Date.now() }
+        this.lastFailedRun = { status: outcome.status, error: outcome.error, target: target ?? null, startedAt, finishedAt: Date.now() }
       }
     } catch (error) {
       console.error('[sync] background sync failed:', error)
       this.lastFailedRun = {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
+        target: target ?? null,
         startedAt,
         finishedAt: Date.now(),
       }

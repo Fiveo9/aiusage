@@ -98,6 +98,37 @@ describe('SyncRuntimeController: a background sync that fails (#103)', () => {
     expect(controller.getStatus()).toMatchObject({ lastSyncStatus: 'failed', lastSyncError: 'HTTP 500', lastSyncAt: persisted!.lastSyncAt, lastSyncUploaded: 0 })
   })
 
+  it('shows a failure only for the target the run was for', async () => {
+    const a = 'github:user/a'
+    const b = 'github:user/b'
+    let current = a
+    persisted = {
+      deviceInstanceId: 'dev', lastSyncStatus: 'ok', lastSyncTarget: b,
+      syncTargets: {
+        [a]: { lastSyncAt: 1000, lastSyncStatus: 'ok', lastSyncTarget: a },
+        [b]: { lastSyncAt: 2000, lastSyncStatus: 'ok', lastSyncTarget: b, lastSyncUploaded: 7 },
+      },
+    }
+    const controller = new SyncRuntimeController({
+      runSync: async () => { throw new Error('repository a is gone') },
+      getPersistedState: () => persisted,
+      getCurrentTarget: () => current,
+    })
+
+    controller.start()
+    await settled(controller)
+    expect(controller.getStatus()).toMatchObject({ lastSyncTarget: a, lastSyncStatus: 'failed', lastSyncError: 'repository a is gone' })
+
+    // The configuration now points at another target, which last synced fine.
+    current = b
+    const status = controller.getStatus()
+    expect(status).toMatchObject({ lastSyncTarget: b, lastSyncStatus: 'ok', lastSyncAt: 2000, lastSyncUploaded: 7 })
+    expect(status.lastSyncError).toBeUndefined()
+
+    current = a
+    expect(controller.getStatus()).toMatchObject({ lastSyncTarget: a, lastSyncStatus: 'failed' })
+  })
+
   it('reports the status even when reading the current target fails', async () => {
     const controller = new SyncRuntimeController({
       runSync: async () => {},

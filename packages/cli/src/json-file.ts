@@ -68,7 +68,8 @@ function renameWithRetry(from: string, to: string): void {
  *
  * With `exclusive`, the file is only created: when it already exists nothing
  * is written and the result is `false`. Two processes creating it at the same
- * time end up with one file, the content of whichever came first.
+ * time end up with one file, the content of whichever came first; neither
+ * path below ever replaces a file that is there.
  */
 export function writeFileAtomic(path: string, content: string, options: { mode?: number; exclusive?: boolean } = {}): boolean {
   const tmpFile = `${path}.${randomBytes(4).toString('hex')}.tmp`
@@ -82,10 +83,17 @@ export function writeFileAtomic(path: string, content: string, options: { mode?:
       // A hard link is created only if the name is free, complete content and all.
       linkSync(tmpFile, path)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST' || existsSync(path)) return false
-      // A file system without hard links.
-      renameWithRetry(tmpFile, path)
-      return true
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+      // A file system without hard links: create the file in place instead.
+      // `wx` fails when the name is taken, so this cannot replace a file
+      // another process created in the meantime; a reader that catches the
+      // file half written finds it unusable and leaves it alone.
+      try {
+        writeFileSync(path, content, { encoding: 'utf-8', mode: options.mode, flag: 'wx' })
+      } catch (createError) {
+        if ((createError as NodeJS.ErrnoException).code === 'EEXIST') return false
+        throw createError
+      }
     }
     return true
   } finally {

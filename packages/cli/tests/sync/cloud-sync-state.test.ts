@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -206,6 +206,46 @@ describe('cloud sync state (stubbed fetch, real runSync)', () => {
       expect(second).toMatchObject({ status: 'ok', uploadedCount: 1 })
       expect(server.pushes.map(push => push.records.length)).toEqual([500, 1])
       expect(server.records.size).toBe(501)
+    })
+  })
+
+  describe('one cloud sync at a time', () => {
+    const LOCK_PATH = join(AIUSAGE_DIR, 'cloud-sync.lock')
+
+    it('refuses to start while another cloud sync holds the lock, and leaves its state alone', async () => {
+      insertRecord(db, record(1))
+      // A live process (this one) holds the lock, as a sync still awaiting a response would.
+      writeFileSync(LOCK_PATH, String(process.pid), 'utf-8')
+      const before = readFileSync(STATE_PATH, 'utf-8')
+
+      const result = await runSync(db)
+      expect(result.status).toBe('failed')
+      expect(result.error).toMatch(/Another cloud sync is running/)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(syncedIds(db)).toEqual([])
+      expect(readFileSync(STATE_PATH, 'utf-8')).toBe(before)
+      // The lock is the other run's to release.
+      expect(existsSync(LOCK_PATH)).toBe(true)
+    })
+
+    it('holds the lock while requests are in flight and releases it afterwards, also when the sync fails', async () => {
+      insertRecord(db, record(1))
+      let heldDuringPush = false
+      server.duringPush = () => { heldDuringPush = existsSync(LOCK_PATH) }
+      expect((await runSync(db)).status).toBe('ok')
+      expect(heldDuringPush).toBe(true)
+      expect(existsSync(LOCK_PATH)).toBe(false)
+
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+      expect((await runSync(db)).status).toBe('failed')
+      expect(existsSync(LOCK_PATH)).toBe(false)
+    })
+
+    it('takes over a lock left behind by a process that no longer exists', async () => {
+      insertRecord(db, record(1))
+      writeFileSync(LOCK_PATH, '2147483646', 'utf-8')
+      expect(await runSync(db)).toMatchObject({ status: 'ok', uploadedCount: 1 })
+      expect(existsSync(LOCK_PATH)).toBe(false)
     })
   })
 

@@ -1201,10 +1201,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         if (toolParam) filterParams.tool = toolParam
         if (deviceParam) filterParams.device = deviceParam
 
-        // Session metadata
-        const meta = db.prepare(`
+        // Session metadata: one row for the whole session, whatever tools and models it used
+        const totals = db.prepare(`
           SELECT session_id AS sessionId,
-                 tool, model,
                  MIN(ts) AS firstTs,
                  MAX(ts) AS lastTs,
                  MAX(ts) - MIN(ts) AS duration,
@@ -1217,10 +1216,24 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                  COUNT(*) AS recordCount
           FROM records
           WHERE session_id = @sessionId ${toolClause} ${deviceClause}
-          GROUP BY session_id, tool, model
-          ORDER BY MIN(ts) ASC
-          LIMIT 1
+          GROUP BY session_id
         `).get(filterParams) as any
+
+        // Models in order of first use; `tool` and `model` stay single values (the first used)
+        const modelRows = db.prepare(`
+          SELECT tool, model
+          FROM records
+          WHERE session_id = @sessionId ${toolClause} ${deviceClause}
+          GROUP BY tool, model
+          ORDER BY MIN(ts) ASC, MIN(rowid) ASC
+        `).all(filterParams) as any[]
+        const meta = totals && {
+          sessionId: totals.sessionId,
+          tool: modelRows[0]?.tool,
+          model: modelRows[0]?.model,
+          models: [...new Set(modelRows.map(r => r.model))],
+          ...totals,
+        }
 
         // Fetch cwd from the first record that has one
         const cwdRow = db.prepare(`
@@ -1294,8 +1307,26 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
       // ── /api/sessions ─────────────────────────────────────────────
       if (url.pathname === '/api/sessions') {
-        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10))
-        const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get('pageSize') || '50', 10)))
+        // Absent or empty gives the default; anything but a positive integer is rejected
+        const parsePagingParam = (name: string, fallback: number): number | null => {
+          const value = url.searchParams.get(name)
+          if (value === null || value === '') return fallback
+          if (!/^\d+$/.test(value)) return null
+          const n = Number(value)
+          return Number.isSafeInteger(n) && n >= 1 ? n : null
+        }
+        const page = parsePagingParam('page', 1)
+        const requestedPageSize = parsePagingParam('pageSize', 50)
+        if (page === null || requestedPageSize === null) {
+          json(res, { error: { code: 'INVALID_PARAM', message: `Invalid ${page === null ? 'page' : 'pageSize'}` } }, 400)
+          return
+        }
+        const pageSize = Math.min(100, requestedPageSize)
+        const offset = (page - 1) * pageSize
+        if (!Number.isSafeInteger(offset)) {
+          json(res, { error: { code: 'INVALID_PARAM', message: 'Invalid page' } }, 400)
+          return
+        }
 
         const dr = getDateRangeFilter(range, from, to, 'r', weekStart)
         const device = url.searchParams.get('device')
@@ -1321,25 +1352,37 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
         `).get(params) as any
 
+        // Aggregate records per session first: joining tool_calls before the SUMs would count
+        // a record once per tool call. Tool calls are then counted for the page's sessions only.
+        const recordFilter = `${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
         const sessions = db.prepare(`
-          SELECT r.session_id AS sessionId,
-                 r.tool,
-                 r.model,
-                 MIN(r.ts) AS ts,
-                 MAX(r.ts) - MIN(r.ts) AS duration,
-                 SUM(r.input_tokens) AS inputTokens,
-                 SUM(r.output_tokens) AS outputTokens,
-                 SUM(r.cache_read_tokens) AS cacheReadTokens,
-                 SUM(r.cache_write_tokens) AS cacheWriteTokens,
-                 SUM(r.cost) AS cost,
-                 COUNT(DISTINCT tc.id) AS toolCallCount
-          FROM records r
-          LEFT JOIN tool_calls tc ON tc.record_id = r.id
-          WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-          GROUP BY r.session_id
-          ORDER BY MIN(r.ts) DESC
-          LIMIT @limit OFFSET @offset
-        `).all({ ...params, limit: pageSize, offset: (page - 1) * pageSize }) as any[]
+          SELECT s.sessionId, s.tool, s.model, s.ts, s.duration,
+                 s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheWriteTokens, s.cost,
+                 (
+                   SELECT COUNT(*)
+                   FROM records r
+                   JOIN tool_calls tc ON tc.record_id = r.id
+                   WHERE r.session_id = s.sessionId ${recordFilter}
+                 ) AS toolCallCount
+          FROM (
+            SELECT r.session_id AS sessionId,
+                   r.tool,
+                   r.model,
+                   MIN(r.ts) AS ts,
+                   MAX(r.ts) - MIN(r.ts) AS duration,
+                   SUM(r.input_tokens) AS inputTokens,
+                   SUM(r.output_tokens) AS outputTokens,
+                   SUM(r.cache_read_tokens) AS cacheReadTokens,
+                   SUM(r.cache_write_tokens) AS cacheWriteTokens,
+                   SUM(r.cost) AS cost
+            FROM records r
+            WHERE 1=1 ${recordFilter}
+            GROUP BY r.session_id
+            ORDER BY MIN(r.ts) DESC, r.session_id ASC
+            LIMIT @limit OFFSET @offset
+          ) s
+          ORDER BY s.ts DESC, s.sessionId ASC
+        `).all({ ...params, limit: pageSize, offset }) as any[]
 
         json(res, {
           sessions,

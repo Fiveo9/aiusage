@@ -8,6 +8,7 @@ import { GitSyncBackend } from '../sync/git.js'
 import { S3SyncBackend } from '../sync/s3.js'
 import { loadConfig, buildConsentConfig, loadCredential, AIUSAGE_DIR } from '../config.js'
 import { hasCredentials } from '../leaderboard/credentials.js'
+import { acquireCloudSyncLock } from '../sync/cloud-lock.js'
 import type { SyncProgress } from '../sync/runtime.js'
 import { adoptLegacySyncTarget, getLegacySyncTarget, getSyncTarget, knownSyncTargets, otherSyncTargets } from '../sync/target.js'
 import { forgetSyncTarget, repairSyncContamination, type ForgetTargetReport, type RepairReport } from '../sync/repair.js'
@@ -118,27 +119,42 @@ export async function runSync(
       return failedResult('Not logged in. Run "aiusage login" first.')
     }
 
-    const orchestrator = new CloudSyncOrchestrator(db, {
-      deviceInstanceId: state!.deviceInstanceId,
-      target,
-      knownTargets: knownSyncTargets(state, target),
-      onProgress: options?.onProgress,
-    })
+    // One cloud sync at a time per installation (`serve` and `aiusage sync`
+    // are separate processes). The upload acknowledgements in the database
+    // and the generation in `state.json` they belong to are one piece of
+    // state: a run that clears them for a new generation must not have an
+    // older run's delayed acknowledgement land among them afterwards.
+    const releaseLock = acquireCloudSyncLock(AIUSAGE_DIR)
+    if (!releaseLock) {
+      return failedResult('Another cloud sync is running on this device. Try again when it has finished.')
+    }
+    try {
+      const orchestrator = new CloudSyncOrchestrator(db, {
+        deviceInstanceId: state!.deviceInstanceId,
+        target,
+        knownTargets: knownSyncTargets(state, target),
+        onProgress: options?.onProgress,
+      })
 
-    const startedAt = Date.now()
-    const result = await orchestrator.sync()
+      const startedAt = Date.now()
+      // Read under the lock: the previous run stores it just before releasing.
+      const result = await orchestrator.sync(getState(AIUSAGE_DIR)?.syncTargets?.[target]?.syncGeneration)
 
-    const now = Date.now()
-    setSyncTargetState(AIUSAGE_DIR, target, {
-      lastSyncAt: now,
-      lastSyncStatus: result.status === 'ok' ? 'ok' : 'failed',
-      lastSyncError: result.error,
-      lastSyncUploaded: result.uploadedCount,
-      lastSyncPulled: result.pulledCount,
-      lastSyncDurationMs: now - startedAt,
-    })
+      const now = Date.now()
+      setSyncTargetState(AIUSAGE_DIR, target, {
+        lastSyncAt: now,
+        lastSyncStatus: result.status === 'ok' ? 'ok' : 'failed',
+        lastSyncError: result.error,
+        lastSyncUploaded: result.uploadedCount,
+        lastSyncPulled: result.pulledCount,
+        lastSyncDurationMs: now - startedAt,
+        syncGeneration: result.syncGeneration,
+      })
 
-    return result
+      return result
+    } finally {
+      releaseLock()
+    }
   }
 
   // GitHub/S3 sync uses consent system

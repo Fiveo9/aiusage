@@ -9,7 +9,7 @@ import { runSync, runSyncRepair, formatRepairReport, formatForgetTargetReport, s
 import { generateSummary } from './commands/summary.js'
 import { generateStatus } from './commands/status.js'
 import { exportData } from './commands/export.js'
-import { cleanOldData, cleanAll, getRemoteBackends, propagateClean } from './commands/clean.js'
+import { cleanOldData, cleanAll, getRemoteBackends, cleanReachesBackend, propagateClean } from './commands/clean.js'
 import { recalcPricing } from './commands/recalc.js'
 import { runParse } from './commands/parse.js'
 import { ProgressReporter, SyncProgressReporter } from './progress.js'
@@ -210,7 +210,11 @@ program
       days = parseInt(daysMatch[1], 10)
     }
 
-    const remoteBackends = localOnly ? [] : getRemoteBackends()
+    const configuredBackends = localOnly ? [] : getRemoteBackends()
+    // A partial clean cannot reach the cloud backend, which can only be
+    // cleared as a whole. It is named below and otherwise left out.
+    const remoteBackends = configuredBackends.filter(rb => cleanReachesBackend(rb, isAll))
+    const untouchedBackends = configuredBackends.filter(rb => !cleanReachesBackend(rb, isAll))
 
     // Print warning
     if (isAll) {
@@ -230,6 +234,12 @@ program
       for (const rb of remoteBackends) {
         console.log(`  - ${rb.label}`)
       }
+    }
+
+    for (const rb of untouchedBackends) {
+      console.log(`\n${rb.label} has no partial delete: --before leaves its data untouched.`)
+      console.log('  Records removed here stay in the cloud, and the next sync can bring records of other devices back.')
+      console.log('  Use --all to clear the cloud as well.')
     }
 
     // Confirmation
@@ -256,7 +266,10 @@ program
           process.exit(0)
         }
       } else {
-        const answer = await ask('\n? Confirm? [y/N] ')
+        const question = untouchedBackends.length > 0
+          ? '\n? Confirm local deletion (cloud data is left untouched)? [y/N] '
+          : '\n? Confirm? [y/N] '
+        const answer = await ask(question)
         if (answer.toLowerCase() !== 'y') {
           console.log('Cancelled.')
           process.exit(0)
@@ -339,7 +352,7 @@ program
 program
   .command('init')
   .description('Configure cloud sync')
-  .option('--backend <backend>', 'Sync backend (cloud|github|s3|skip)')
+  .option('--backend <backend>', 'Sync backend (cloud|github|s3), or skip to remove the sync configuration')
   .option('--repo <repo>', 'GitHub repository (format: username/repo-name)')
   .option('--token <token>', 'Advanced PAT fallback (prefer AIUSAGE_GITHUB_TOKEN to avoid shell history)')
   .option('--bucket <bucket>', 'S3 bucket name')

@@ -150,6 +150,50 @@ export function markRecordsSynced(db: Database.Database, ids: string[], syncedAt
 }
 
 /**
+ * Acknowledge the versions of records a target has accepted. Each entry names
+ * a record and the `updated_at` it had when it was read for sending.
+ *
+ * The acknowledgement is that `updated_at`, not the time of the call: a
+ * record counts as unsynced while `updated_at > synced_at`, so a version
+ * written after the one that was sent stays unsynced whenever it is written.
+ * A row whose `updated_at` no longer equals the one sent is not marked at
+ * all, and neither is a row deleted in the meantime — the upload awaits the
+ * network, so the parser can rewrite a record between the read and this call.
+ * Returns the number of records acknowledged.
+ */
+export function markRecordVersionsSynced(
+  db: Database.Database,
+  versions: Array<Pick<StatsRecord, 'id' | 'updatedAt'>>,
+  target: string,
+): number {
+  if (versions.length === 0) return 0
+
+  const insertStmt = db.prepare(`
+    INSERT INTO sync_record_state (record_id, target, synced_at)
+    SELECT id, @target, updated_at FROM records WHERE id = @id AND updated_at = @updatedAt
+    ON CONFLICT(record_id, target) DO UPDATE SET synced_at = excluded.synced_at
+  `)
+  const legacyStmt = db.prepare('UPDATE records SET synced_at = updated_at WHERE id = @id AND updated_at = @updatedAt')
+  return db.transaction(() => {
+    let marked = 0
+    for (const { id, updatedAt } of versions) {
+      marked += insertStmt.run({ id, updatedAt, target }).changes
+      legacyStmt.run({ id, updatedAt })
+    }
+    return marked
+  })()
+}
+
+/**
+ * Forget what `target` has acknowledged, so every local record counts as
+ * unsynced for it again. Used when the target's data was replaced by an empty
+ * dataset (a new cloud sync generation). Returns the number of rows removed.
+ */
+export function clearSyncRecordState(db: Database.Database, target: string): number {
+  return db.prepare('DELETE FROM sync_record_state WHERE target = ?').run(target).changes
+}
+
+/**
  * Runtime provenance guard, run at the start of every sync once the current
  * device id is known (migrations cannot know it).
  *

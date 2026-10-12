@@ -27,6 +27,12 @@ export interface SyncTargetState {
   lastSyncUploaded?: number
   lastSyncPulled?: number
   lastSyncDurationMs?: number
+  /**
+   * Cloud target only: the server's sync generation this device last synced
+   * under. The server starts a new, empty generation when the cloud data is
+   * cleared; see `CloudSyncOrchestrator.sync`.
+   */
+  syncGeneration?: number
 }
 
 export function ensureAiusageDir(aiusageDir: string): void {

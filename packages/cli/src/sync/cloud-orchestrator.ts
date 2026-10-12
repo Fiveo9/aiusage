@@ -2,9 +2,10 @@ import type Database from 'better-sqlite3'
 import type { SyncRecord } from '@aiusage/core'
 import {
   backfillUnknownDeviceInstanceId,
+  clearSyncRecordState,
   getUnsyncedRecords,
   isUploadableLocalRecord,
-  markRecordsSynced,
+  markRecordVersionsSynced,
   repairRecordProvenance,
 } from '../db/records.js'
 import {
@@ -47,6 +48,12 @@ export interface CloudSyncResult {
   pulledCount: number
   uploadedCount: number
   mergedCount: number
+  /**
+   * The server generation this target's upload acknowledgements
+   * (`sync_record_state`) belong to: the one the pull observed or, when the
+   * sync failed before it could act on that, the one passed to `sync()`. The
+   * caller stores it and passes it to the next `sync()`.
+   */
   syncGeneration: number
   /**
    * Pulled rows removed because the cloud no longer carries them (a tombstone
@@ -77,7 +84,16 @@ export class CloudSyncOrchestrator {
     return this.options.target ?? 'cloud'
   }
 
+  /**
+   * `syncGeneration` is the server generation this target last synced under
+   * (`CloudSyncResult.syncGeneration` of the previous sync). An installation
+   * that never stored one passes nothing: every dataset starts at generation
+   * 1, so acknowledgements of unknown age are valid exactly while the server
+   * is still there.
+   */
   async sync(syncGeneration: number = 1): Promise<CloudSyncResult> {
+    // The generation the acknowledgements in `sync_record_state` belong to.
+    let ackGeneration = syncGeneration
     try {
       // Step 0: provenance guard — rows stamped with another device's id are
       // never local, whatever their source_file says — then adopt pre-init rows.
@@ -166,15 +182,21 @@ export class CloudSyncOrchestrator {
       // Both go out under the generation the pull just observed: after the
       // server's data was cleared (`aiusage clean --all`) the generation the
       // caller knew about is stale and every push under it would be rejected.
+      //
+      // A generation other than the one last synced under is a dataset this
+      // device has uploaded nothing to: the server starts a new, empty one
+      // when the cloud data is cleared. What the previous one acknowledged
+      // says nothing about it, so those acknowledgements go and the whole
+      // local history is pushed again. From here on the acknowledgements
+      // belong to the new generation, also when a push below fails.
       this.options.onProgress?.({ phase: 'uploading', pulledCount: insertedCount })
+      if (pullResult.syncGeneration !== ackGeneration) {
+        clearSyncRecordState(this.db, this.target)
+        ackGeneration = pullResult.syncGeneration
+      }
+      // Each batch is marked as synced once the server accepted it (see `push`).
       const uploadedCount = await this.push(pullResult.syncGeneration)
       const retiredCount = await this.pushRetiredIds(pullResult.syncGeneration)
-
-      // Step 5: Mark local records as synced
-      const unsynced = this.getUploadableRecords(this.target)
-      if (unsynced.length > 0) {
-        markRecordsSynced(this.db, unsynced.map(r => r.id), Date.now(), this.target)
-      }
 
       this.options.onProgress?.({
         phase: 'finalizing',
@@ -201,7 +223,7 @@ export class CloudSyncOrchestrator {
         pulledCount: 0,
         uploadedCount: 0,
         mergedCount: 0,
-        syncGeneration,
+        syncGeneration: ackGeneration,
         error: message,
       }
     }
@@ -266,18 +288,21 @@ export class CloudSyncOrchestrator {
       .filter(record => isUploadableLocalRecord(record, deviceInstanceId))
   }
 
+  /**
+   * Push every unsynced local record and return how many were sent. Exactly
+   * the versions that were read here are acknowledged, batch by batch as the
+   * server accepts them: a record inserted or rewritten while a request is in
+   * flight was not sent and stays unsynced, and a failure in a later batch
+   * leaves only the batches from there on to send again.
+   */
   private async push(syncGeneration: number): Promise<number> {
     const unsynced = this.getUploadableRecords(this.target)
-    if (unsynced.length === 0) {
-      return 0
-    }
 
-    // Convert to SyncRecord format
-    const syncRecords = unsynced.map(mapStatsRecordToSyncRecord)
-
-    for (let i = 0; i < syncRecords.length; i += BATCH_SIZE) {
-      const batch = syncRecords.slice(i, i + BATCH_SIZE)
-      await cloudPush(batch, [], this.options.deviceInstanceId, syncGeneration)
+    for (let i = 0; i < unsynced.length; i += BATCH_SIZE) {
+      const batch = unsynced.slice(i, i + BATCH_SIZE)
+      // Convert to SyncRecord format
+      await cloudPush(batch.map(mapStatsRecordToSyncRecord), [], this.options.deviceInstanceId, syncGeneration)
+      markRecordVersionsSynced(this.db, batch, this.target)
     }
 
     return unsynced.length

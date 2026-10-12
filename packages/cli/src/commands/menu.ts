@@ -271,9 +271,16 @@ async function dataSubmenu(rl: Interface): Promise<void> {
           }
         } else if (mode === '2') {
           const dur = await prompt(rl, '  Duration to keep (e.g. 30d, 90d): ')
-          runCommand(['clean', '--before', dur || '180d', '--yes'])
+          if (dur) {
+            // No --yes: the clean command asks for its own confirmation.
+            runCommand(['clean', '--before', dur])
+          } else {
+            console.log('  Cancelled.')
+          }
+        } else if (mode === '1') {
+          runCommand(['clean', '--before', '180d'])
         } else {
-          runCommand(['clean', '--before', '180d', '--yes'])
+          console.log('  Cancelled.')
         }
         await prompt(rl, '\n  Press Enter to continue...')
         break

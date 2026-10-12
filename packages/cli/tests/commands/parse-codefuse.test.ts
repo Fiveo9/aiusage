@@ -238,7 +238,8 @@ describe('runParse with CodeFuse data', () => {
     expect(embedded).toMatchObject({
       model: 'gpt-4o',
       input_tokens: 8,
-      output_tokens: 5,
+      // output_tokens 5 includes the 1 reasoning token
+      output_tokens: 4,
       cache_read_tokens: 2,
       thinking_tokens: 1,
     })

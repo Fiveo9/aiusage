@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.5.21] - 2026-10-12
+
+Protect destructive CLI operations, make cloud synchronization generation-aware, correct Sessions analytics, and preserve leaderboard data and moderation.
+
 ### Fixed
 - **Leaderboard rows deleted when upload history was pruned** ([#127](https://github.com/juliantanx/aiusage/pull/127) by [@aaroncchung](https://github.com/aaroncchung)) — `leaderboard_metrics` referenced its upload request with `ON DELETE CASCADE`, so the cleanup job that removes upload requests older than the "Keep upload history" setting (180 days by default) deleted the leaderboard rows those requests had written. Site migration v16 makes the column nullable and the key `ON DELETE SET NULL`; it runs by itself at the first startup, and pruning now leaves the leaderboard alone.
 - **Leaderboard moderation undone by the next upload** ([#127](https://github.com/juliantanx/aiusage/pull/127) by [@aaroncchung](https://github.com/aaroncchung)) — a new upload of a period an admin had hidden made its rows public again, and approve, reject and hide on a snapshot that a later upload had superseded changed nothing while reporting success. Hidden rows now stay hidden across uploads; the snapshot actions match on user and period, report how many rows changed, and fail for a snapshot that does not exist. Approving a snapshot publishes only rows written by that upload or by an accepted or approved upload of the same period, and uploads and moderation of one user are serialized.
@@ -547,6 +553,7 @@ Fix multi-device sync correctness across GitHub, S3/R2, and Cloud.
 
 ---
 
+[1.5.21]: https://github.com/juliantanx/aiusage/compare/v1.5.20...v1.5.21
 [1.5.20]: https://github.com/juliantanx/aiusage/compare/v1.5.19...v1.5.20
 [1.5.19]: https://github.com/juliantanx/aiusage/compare/v1.5.18...v1.5.19
 [1.5.18]: https://github.com/juliantanx/aiusage/compare/v1.5.17...v1.5.18

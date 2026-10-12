@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`clean --before` cleared the whole cloud copy** ([#128](https://github.com/juliantanx/aiusage/pull/128) by [@aaroncchung](https://github.com/aaroncchung)) — the cloud backend has no partial delete, and a clean limited to older records still called its clear endpoint, which removes everything and starts a new sync generation. Only `clean --all` clears the cloud now; `--before` cleans locally and says the cloud is left untouched.
+- **Menu clean ran on any input** ([#128](https://github.com/juliantanx/aiusage/pull/128) by [@aaroncchung](https://github.com/aaroncchung)) — in the menu, Data → Clean deleted records older than 180 days for an empty line or any input other than `2` or `3`, and passed `--yes`, which skipped the confirmation. It now runs only on an explicit `1`, cancels otherwise, and leaves the confirmation to the command.
+- **`aiusage init` dropped existing settings** ([#128](https://github.com/juliantanx/aiusage/pull/128) by [@aaroncchung](https://github.com/aaroncchung)) — `init` rebuilt the config from a few fields, losing every other key, and with no `--backend` it also removed the sync configuration; the menu's Init entry runs exactly that. Every path now keeps the existing config and changes only what was passed. Sync is removed only by an explicit `--backend skip`.
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 Fix cached-input accounting and restore GitHub sync on current Git for Windows releases.

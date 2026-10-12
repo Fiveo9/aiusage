@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 并遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+- **`clean --before` 清空了整个云端数据**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 云端后端不支持部分删除，而只清理较早记录的操作仍会调用云端的清空接口，删除全部数据并开启新的同步代。现在只有 `clean --all` 会清空云端；`--before` 只清理本地，并提示云端数据保持不变。
+- **菜单中的清理对任意输入都会执行**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 在菜单的 数据 → 清理 中，输入空行或 `2`、`3` 以外的任何内容都会删除 180 天前的记录，并附带 `--yes` 跳过确认。现在只有明确输入 `1` 才执行，其余输入一律取消，确认交由命令本身处理。
+- **`aiusage init` 丢失已有设置**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `init` 只用少数字段重建配置，其余键全部丢失；未指定 `--backend` 时还会移除同步配置，而菜单的 Init 入口正是这样调用的。现在所有分支都保留已有配置，只修改传入的项；只有显式指定 `--backend skip` 才会移除同步。
+
+---
+
 ## [1.5.20] - 2026-10-10
 
 修正缓存输入 token 统计，并恢复新版 Git for Windows 上的 GitHub 同步。

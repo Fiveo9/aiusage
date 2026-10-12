@@ -7,6 +7,10 @@
 
 ## [未发布]
 
+### 修复
+- **排行榜按月自动上传会连续不停地上传**（[#131](https://github.com/juliantanx/aiusage/pull/131)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — “每月”间隔（2592000000 毫秒）超过了 Node 定时器能保存的最大延迟，定时器因此每毫秒触发一次，`aiusage serve` 会连续不断地解析并上传。现在自动上传从上一次成功上传的时间起等待一个间隔，该时间保存在 `state.json` 中，保存配置或重启不再重新计时。手动上传也计入该计划，失败或被拒绝的上传会在一小时后重试。已开启自动上传的安装在升级后首次启动 `serve` 时会上传一次。
+- **间隔设置可以保存任意数值**（[#131](https://github.com/juliantanx/aiusage/pull/131)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `refreshInterval` 小于 1 秒、`syncInterval` 小于 1 分钟、`leaderboardUploadInterval` 不在 1 小时到 365 天之间，或刷新、同步间隔超过定时器上限（2^31 − 1 毫秒）时，`PUT /api/config` 现在返回 400 `INVALID_INTERVAL`。留空或填 0 仍会移除该设置。
+
 ---
 
 ## [1.5.21] - 2026-10-12

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Monthly leaderboard auto-upload uploaded continuously** ([#131](https://github.com/juliantanx/aiusage/pull/131) by [@aaroncchung](https://github.com/aaroncchung)) — the Monthly interval (2592000000 ms) is above the largest delay a Node timer holds, so the timer fired every millisecond and `aiusage serve` parsed and uploaded back to back. Auto-upload now waits one interval from the last successful upload, which is stored in `state.json`, so a config save or a restart no longer starts the wait again. Manual uploads count towards the schedule, and a failed or rejected upload is retried after an hour. An installation with auto-upload on uploads once at the first `serve` start after upgrading.
+- **Interval settings accepted any value** ([#131](https://github.com/juliantanx/aiusage/pull/131) by [@aaroncchung](https://github.com/aaroncchung)) — `PUT /api/config` now answers 400 `INVALID_INTERVAL` for a `refreshInterval` below 1 second, a `syncInterval` below 1 minute, a `leaderboardUploadInterval` outside 1 hour to 365 days, or a refresh or sync interval above the timer limit (2^31 − 1 ms). A blank or zero value still removes the setting.
+
 ---
 
 ## [1.5.21] - 2026-10-12

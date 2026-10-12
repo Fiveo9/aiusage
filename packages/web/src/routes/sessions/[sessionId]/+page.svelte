@@ -122,7 +122,7 @@
     <div class="identity card">
       <div class="id-row">
         <span class="id-tool">{session.tool}</span>
-        <span class="id-model mono">{session.model}</span>
+        <span class="id-model mono">{(session.models ?? [session.model]).join(', ')}</span>
       </div>
       <div class="id-time mono">{formatDateTime(session.firstTs)}</div>
       {#if session.cwd}

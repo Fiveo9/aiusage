@@ -474,6 +474,21 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(toolCalls().map(tc => tc.name).sort()).toEqual(['skill__plan', 'skill__review', 'skill__unknown', 'skill__unknown'])
   })
 
+  it('does not name an old-scheme Skill call from a line it did not come from', async () => {
+    writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_skill_1', 'Skill', { skill: 'review' }), '2026-07-06T08:00:02.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    // A call kept from a transcript that no longer exists: same record, but
+    // not the line the record now points at.
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Skill', ts: '2026-07-06T08:00:01.000Z' }])
+
+    await runParse(db, 'claude-code')
+
+    expect(toolCalls().map(tc => ({ id: tc.id, name: tc.name }))).toEqual([{ id: legacyId, name: 'Skill' }])
+  })
+
   it('still names an old-scheme Skill call from its log line', async () => {
     writeLog('session-a.jsonl', [
       line('msg_1', toolUse('toolu_skill_1', 'Skill', { skill: 'review' }), '2026-07-06T08:00:01.000Z'),

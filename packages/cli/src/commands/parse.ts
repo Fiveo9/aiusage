@@ -1466,6 +1466,17 @@ function backfillSkillNames(db: Database.Database): void {
       const parsed = JSON.parse(line)
       if (!Array.isArray(parsed.message?.content)) continue
 
+      if (row.tool === 'claude-code') {
+        // An earlier release stored the call of the last line of its message,
+        // which is the line read here, unless the record has since moved: a
+        // call kept from a transcript that is gone stays with its record when
+        // another transcript takes the record over. Only a row that carries
+        // this line's timestamp is matched against this line's blocks.
+        const rawTs = parsed.message.timestamp ?? parsed.timestamp
+        const lineTs = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+        if (lineTs !== row.ts) continue
+      }
+
       let callIndex = 0
       let skillArg = ''
       for (const block of parsed.message.content) {

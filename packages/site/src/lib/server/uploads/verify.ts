@@ -471,25 +471,39 @@ interface RiskAssessment {
   reasonMessage?: string
 }
 
+type RiskSettings = Awaited<ReturnType<typeof loadRiskSettings>>
+
+/** Read once per upload, before its transaction, and used for every snapshot. */
+async function loadRiskSettings() {
+  return {
+    inconsistencyPct: await getConfigValue(CFG.RISK_INCONSISTENCY_PCT),
+    unknownModelPct: await getConfigValue(CFG.RISK_UNKNOWN_MODEL_PCT),
+    repeatCount: await getConfigValue(CFG.RISK_REPEAT_COUNT),
+    repeatWindowHours: await getConfigValue(CFG.RISK_REPEAT_WINDOW_HOURS),
+    tokenSpikeMultiplier: await getConfigValue(CFG.RISK_TOKEN_SPIKE_MULTIPLIER),
+    tokenSpikeMinAvg: await getConfigValue(CFG.RISK_TOKEN_SPIKE_MIN_AVG),
+    tokenSpikeLookbackDays: await getConfigValue(CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS),
+
+    ruleInconsistency: await getConfigValue(CFG.RISK_RULE_INCONSISTENCY),
+    ruleUnknownModel: await getConfigValue(CFG.RISK_RULE_UNKNOWN_MODEL),
+    ruleRepeat: await getConfigValue(CFG.RISK_RULE_REPEAT),
+    ruleTokenSpike: await getConfigValue(CFG.RISK_RULE_TOKEN_SPIKE),
+  }
+}
+
 async function assessRisk(
   tx: ReturnType<typeof sql>,
   userId: string,
   deviceId: string,
   snapshot: UploadSnapshot,
-  pricing: PricingRegistry
+  pricing: PricingRegistry,
+  settings: RiskSettings
 ): Promise<RiskAssessment> {
-  const inconsistencyPct = await getConfigValue(CFG.RISK_INCONSISTENCY_PCT)
-  const unknownModelPct = await getConfigValue(CFG.RISK_UNKNOWN_MODEL_PCT)
-  const repeatCount = await getConfigValue(CFG.RISK_REPEAT_COUNT)
-  const repeatWindowHours = await getConfigValue(CFG.RISK_REPEAT_WINDOW_HOURS)
-  const tokenSpikeMultiplier = await getConfigValue(CFG.RISK_TOKEN_SPIKE_MULTIPLIER)
-  const tokenSpikeMinAvg = await getConfigValue(CFG.RISK_TOKEN_SPIKE_MIN_AVG)
-  const tokenSpikeLookbackDays = await getConfigValue(CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS)
-
-  const ruleInconsistency = await getConfigValue(CFG.RISK_RULE_INCONSISTENCY)
-  const ruleUnknownModel = await getConfigValue(CFG.RISK_RULE_UNKNOWN_MODEL)
-  const ruleRepeat = await getConfigValue(CFG.RISK_RULE_REPEAT)
-  const ruleTokenSpike = await getConfigValue(CFG.RISK_RULE_TOKEN_SPIKE)
+  const {
+    inconsistencyPct, unknownModelPct, repeatCount, repeatWindowHours,
+    tokenSpikeMultiplier, tokenSpikeMinAvg, tokenSpikeLookbackDays,
+    ruleInconsistency, ruleUnknownModel, ruleRepeat, ruleTokenSpike,
+  } = settings
 
   if (ruleInconsistency) {
     // Rule 1: Breakdown consistency — all-scope total must equal sum of breakdowns
@@ -598,6 +612,8 @@ export async function processUpload(
     return { status: 'rejected', snapshots: [], error: 'Rate limited', error_code: 'rate_limited' }
   }
 
+  const riskSettings = await loadRiskSettings()
+
   const requestId = nanoid()
   const payloadHash = sha256(JSON.stringify(request))
   const ipHash = hashIp(ip)
@@ -618,7 +634,7 @@ export async function processUpload(
 
     for (const snapshot of request.snapshots) {
       // Run risk assessment
-      const risk = await assessRisk(tx, userId, deviceId, snapshot, pricing)
+      const risk = await assessRisk(tx, userId, deviceId, snapshot, pricing, riskSettings)
       const snapshotStatus = risk.status
 
       const snapshotId = nanoid()

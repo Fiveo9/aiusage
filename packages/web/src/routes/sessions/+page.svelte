@@ -1,6 +1,7 @@
 <script>
   import { dateRange, selectedDevice, selectedTool, formatTokens, formatCost, formatDateTime } from '$lib/stores.js'
   import { fetchSessions } from '$lib/api.js'
+  import { createRequestTracker, resolvePage } from '$lib/sessions-paging.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
@@ -11,6 +12,7 @@
   let loading = true
   let page = 1
   const pageSize = 50
+  const beginRequest = createRequestTracker()
 
   function formatDuration(ms) {
     if (!ms || ms < 1000) return '< 1s'
@@ -21,25 +23,33 @@
   }
 
   async function loadData() {
+    // A response only counts while its request is the latest one: a slow answer for
+    // an earlier filter or page must not replace the list or move the page.
+    const isLatest = beginRequest()
+    const requestedPage = page
     loading = true
     error = null
     try {
-      data = await fetchSessions({
+      const response = await fetchSessions({
         ...$dateRange,
         device: $selectedDevice,
         tool: $selectedTool,
-        page,
+        page: requestedPage,
         pageSize,
       })
+      if (!isLatest()) return
+      data = response
+      page = resolvePage(response, requestedPage, pageSize)
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
-  $: $selectedTool, (page = 1)
+  $: $dateRange, $selectedDevice, $selectedTool, (page = 1)
   $: $dateRange, $selectedDevice, $selectedTool, page, loadData()
 
   function nextPage() {

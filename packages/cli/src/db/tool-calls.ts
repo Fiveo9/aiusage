@@ -36,20 +36,28 @@ export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
 }
 
 /**
- * Delete the tool calls of `recordId` that are stored under a positional id
- * (see `hasPositionalToolCallId`). Used when a Claude Code log is read from
- * its start: its calls are about to be written under block-keyed ids, and
- * `insertToolCall` only replaces a row with the same id, so a row left under
- * the old id would count its call twice. Returns the number deleted.
+ * Delete the row an earlier release stored for the same call as `tc` under a
+ * positional id. `tc` is a Claude Code call that is about to be written under
+ * its block-keyed id, and `insertToolCall` only replaces a row with the same
+ * id, so the old row would count the call twice.
+ *
+ * Only the row of this very call is removed: its id is rebuilt from the
+ * call's own record id, timestamp and index. A Skill call may have been
+ * stored as `Skill` (before skill names were read) or `skill__unknown`, so
+ * those names are tried too. Positional rows of the record that the log being
+ * read does not contain are left alone: they may come from a transcript that
+ * no longer exists. Returns the number of rows deleted.
  */
-export function deletePositionalToolCalls(db: Database.Database, recordId: string): number {
-  const rows = db.prepare(
-    'SELECT id, record_id, name, ts, call_index FROM tool_calls WHERE record_id = ?'
-  ).all(recordId) as ToolCallIdRow[]
+export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord): number {
+  if (!tc.recordId) return 0
+  const names = tc.name.startsWith('skill__') ? [tc.name, 'Skill', 'skill__unknown'] : [tc.name]
+  const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id = ?')
   let deleted = 0
-  for (const row of rows) {
-    if (!hasPositionalToolCallId(row)) continue
-    deleted += db.prepare('DELETE FROM tool_calls WHERE id = ?').run(row.id).changes
+  for (const name of new Set(names)) {
+    const id = generateToolCallId(tc.recordId, name, tc.ts, tc.callIndex)
+    // A block without an id of its own is still written under this id.
+    if (id === tc.id) continue
+    deleted += remove.run(id, tc.recordId).changes
   }
   return deleted
 }

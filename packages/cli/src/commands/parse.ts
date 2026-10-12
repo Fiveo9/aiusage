@@ -5,7 +5,7 @@ import { hostname } from 'node:os'
 import { Aggregator, resolveExchangeRate, generateToolCallId, inferProvider, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
 import type { ToolCallRecord } from '@aiusage/core'
 import { insertRecord, LOCAL_RECORDS_WHERE, backfillUnknownDeviceInstanceId } from '../db/records.js'
-import { insertToolCall, deletePositionalToolCalls, hasPositionalToolCallId } from '../db/tool-calls.js'
+import { insertToolCall, deletePositionalCounterpart, hasPositionalToolCallId } from '../db/tool-calls.js'
 import { getState } from '../init.js'
 import { loadConfig, AIUSAGE_DIR } from '../config.js'
 import { WatermarkManager } from '../watermark.js'
@@ -802,14 +802,14 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         const pendingRecords = new Map<string, StatsRecord>()
         const pendingToolCalls: ToolCallRecord[] = []
         // A Claude Code log read from its start writes all of its tool calls
-        // again under block-keyed ids, so the rows earlier releases stored
-        // for the same records under positional ids are removed first. This
-        // is the cleanup half of the one-time re-import (the watermark's
+        // again under block-keyed ids, so the row an earlier release stored
+        // for each of those calls under a positional id is removed with it.
+        // This is the cleanup half of the one-time re-import (the watermark's
         // claudeCodeParserVersion gate resets every file to offset 0). It is
-        // tied to the file being read rather than to that gate, so a record
-        // whose log no longer exists keeps the calls it has, and a re-import
-        // that was interrupted finishes the cleanup file by file.
-        const rebuildsToolCalls = tool === 'claude-code' && offset === 0
+        // tied to the calls a file actually yields rather than to that gate,
+        // so calls that cannot be read again (their log is gone) are kept,
+        // and a re-import that was interrupted finishes file by file.
+        const replacesPositionalToolCalls = tool === 'claude-code' && offset === 0
 
         for (const line of lines) {
           if (!line.trim()) {
@@ -861,11 +861,24 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           byteOffset += Buffer.byteLength(line, 'utf-8') + 1
         }
 
-        for (const record of pendingRecords.values()) {
-          insertRecord(db, record)
-          if (rebuildsToolCalls) deletePositionalToolCalls(db, record.id)
-        }
-        for (const tc of pendingToolCalls) insertToolCall(db, tc)
+        // One transaction: a positional row is deleted only together with
+        // the insert of the row that replaces it.
+        db.transaction(() => {
+          for (const record of pendingRecords.values()) {
+            // A message that Claude Code copied into a second transcript
+            // yields the same record id from both files. The record stays
+            // with the file it is stored under while that file exists:
+            // source_file and line_offset form its sync wire id, and letting
+            // each file claim it in turn would change the row twice on every
+            // re-import and queue an unchanged record for upload.
+            if (tool === 'claude-code' && isOwnedByAnotherLog(db, record.id, filePath)) continue
+            insertRecord(db, record)
+          }
+          for (const tc of pendingToolCalls) {
+            if (replacesPositionalToolCalls) deletePositionalCounterpart(db, tc)
+            insertToolCall(db, tc)
+          }
+        })()
 
         // Handle finalize (orphan tool calls for Codex, deduped fallback records for Copilot OTEL, etc.)
         const orphanResults = aggregator.finalize()
@@ -1385,6 +1398,12 @@ export function backfillHermesSourceFiles(db: Database.Database): void {
       : `${row.source_file}:session:${row.session_id}`
     updateStmt.run(newSourceFile, Date.now(), row.session_id, row.source_file)
   }
+}
+
+/** True when record `id` is stored under a source file other than `filePath` that still exists. */
+function isOwnedByAnotherLog(db: Database.Database, id: string, filePath: string): boolean {
+  const row = db.prepare('SELECT source_file FROM records WHERE id = ?').get(id) as { source_file: string } | undefined
+  return row !== undefined && row.source_file !== filePath && existsSync(row.source_file)
 }
 
 function backfillSkillNames(db: Database.Database): void {

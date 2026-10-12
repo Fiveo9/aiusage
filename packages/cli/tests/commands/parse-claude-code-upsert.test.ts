@@ -241,6 +241,83 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(toolCalls().map(tc => tc.id)).not.toContain(legacyId)
   })
 
+  it('keeps an old-scheme call that the surviving log of its record does not contain', async () => {
+    // The same message was copied into a second transcript without its tool
+    // block; the transcript that had the block is gone.
+    const full = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Read', ts: '2026-07-06T08:00:01.000Z' }])
+    rmSync(full)
+    writeLog('session-b.jsonl', [
+      line('msg_1', { type: 'text', text: 'Looking.' }, '2026-07-06T08:00:00.000Z'),
+    ])
+    dropClaudeCodeParserVersion()
+
+    await runParse(db, 'claude-code')
+
+    expect(toolCalls().map(tc => tc.id)).toEqual([legacyId])
+  })
+
+  it('leaves the old-scheme rows in place when the calls that replace them cannot be written', async () => {
+    writeLog('session-a.jsonl', threeBlockMessage)
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Edit', ts: '2026-07-06T08:00:03.000Z' }])
+    // An unreadable timestamp on an earlier line: its tool call cannot be stored.
+    writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_read', 'Read'), 'not a timestamp'),
+      ...threeBlockMessage.slice(2),
+    ])
+    resetFileWatermarks()
+
+    const result = await runParse(db, 'claude-code')
+
+    expect(result.errors).toHaveLength(1)
+    expect(toolCalls().map(tc => tc.id)).toEqual([legacyId])
+  })
+
+  it('keeps a message that two transcripts share with the file it is stored under', async () => {
+    const shared = [
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z'),
+      line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:02.000Z', 120),
+    ]
+    const first = writeLog('session-a.jsonl', shared)
+    await runParse(db, 'claude-code')
+    // A resumed session: the earlier message is copied in front of a new one.
+    writeLog('session-b.jsonl', [
+      line('pad', { type: 'text', text: 'x' }, '2026-07-06T07:00:00.000Z'),
+      ...shared,
+      line('msg_2', toolUse('toolu_bash', 'Bash'), '2026-07-06T09:00:00.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    expect(records()).toHaveLength(3)
+    expect(toolCalls().map(tc => tc.name)).toEqual(['Read', 'Edit', 'Bash'])
+    const owned = db.prepare('SELECT source_file FROM records WHERE ts = ?').get(new Date('2026-07-06T08:00:02.000Z').getTime())
+    expect(owned).toEqual({ source_file: first })
+
+    markRecordVersionsSynced(db, records().map(r => ({ id: r.id, updatedAt: r.updated_at })), CLOUD)
+    const synced = records()
+    const calls = toolCalls()
+
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+
+    expect(records()).toEqual(synced)
+    expect(toolCalls()).toEqual(calls)
+    expect(getUnsyncedRecords(db, CLOUD, DEVICE)).toEqual([])
+
+    // Once the owning transcript is gone, the other one takes the record over.
+    rmSync(first)
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+    expect(records()).toHaveLength(3)
+    expect(db.prepare('SELECT COUNT(DISTINCT source_file) AS n FROM records').get()).toEqual({ n: 1 })
+    expect(toolCalls()).toEqual(calls)
+  })
+
   it('does not rewrite block-keyed Skill calls when skill names are backfilled', async () => {
     writeLog('session-a.jsonl', [
       // A Skill block without a readable skill name, then a named one, in one message.

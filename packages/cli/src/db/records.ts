@@ -59,9 +59,12 @@ const RECORD_CHANGED = [
  * keeps its `ingested_at` and `synced_at`, and its `updated_at` moves only
  * when a stored field actually changed, so reading a source again leaves an
  * unchanged record synced on every target while a changed one is queued again.
- * A changed row always gets an `updated_at` above the one it had: that value
- * is what a target acknowledges (see `markRecordVersionsSynced`), so a new
- * version must never reuse it, whatever the caller's clock says.
+ * A changed row always gets an `updated_at` above the one it had and above
+ * every acknowledgement stored for it: a cloud target acknowledges the
+ * `updated_at` it was sent (see `markRecordVersionsSynced`) and a file
+ * backend the time of its upload, and a record counts as unsynced only while
+ * `updated_at` is greater. A new version must therefore never reuse or fall
+ * below those values, whatever the caller's clock says.
  */
 export function insertRecord(db: Database.Database, record: StatsRecord): void {
   db.prepare(`
@@ -81,7 +84,12 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
       ${KEPT_WHEN_EMPTY_COLUMNS.map(c => `${c} = CASE WHEN excluded.${c} != '' THEN excluded.${c} ELSE records.${c} END`).join(',\n      ')},
       updated_at = CASE
         WHEN ${RECORD_CHANGED}
-        THEN MAX(excluded.updated_at, records.updated_at + 1)
+        THEN MAX(
+          excluded.updated_at,
+          records.updated_at + 1,
+          COALESCE(records.synced_at, 0) + 1,
+          COALESCE((SELECT MAX(s.synced_at) FROM sync_record_state s WHERE s.record_id = records.id), 0) + 1
+        )
         ELSE records.updated_at
       END
   `).run({

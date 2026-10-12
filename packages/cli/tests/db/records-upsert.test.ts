@@ -153,6 +153,20 @@ describe('insertRecord on an id that already exists (#89)', () => {
     expect(getUnsyncedRecords(db, CLOUD).map(r => r.id)).toEqual(['rec-1'])
   })
 
+  it('moves updated_at past a file backend acknowledgement that is later than the change', () => {
+    insertRecord(db, makeRecord({ updatedAt: 1_000 }))
+    // A file backend acknowledges with the time of its upload.
+    markRecordsSynced(db, ['rec-1'], 2_000, FILE_TARGET)
+    markRecordsSynced(db, ['rec-1'], 2_500)
+
+    // The clock stepped back before the record changed.
+    insertRecord(db, makeRecord({ updatedAt: 1_500, outputTokens: 60 }))
+
+    expect(getRecordById(db, 'rec-1')!.updatedAt).toBe(2_501)
+    expect(getUnsyncedRecords(db, FILE_TARGET).map(r => r.id)).toEqual(['rec-1'])
+    expect(getUnsyncedRecords(db).map(r => r.id)).toEqual(['rec-1'])
+  })
+
   it('still inserts a new record exactly as given', () => {
     insertRecord(db, makeRecord({ id: 'rec-new', ingestedAt: 7_000, updatedAt: 7_500, syncedAt: 7_600, cwd: '/c', platform: 'darwin' }))
 

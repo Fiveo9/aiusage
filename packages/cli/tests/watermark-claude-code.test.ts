@@ -56,6 +56,18 @@ describe('WatermarkManager Claude Code parser version', () => {
     expect(new WatermarkManager(watermarkPath).getEntry('claude-code', '/claude/a.jsonl')).toEqual(entry)
   })
 
+  it('clears Claude Code entries of a legacy flat watermark', () => {
+    writeFileSync(watermarkPath, JSON.stringify({
+      'claude-code': { '/claude/a.jsonl': entry },
+      codex: { '/codex/rollout.jsonl': entry },
+    }), 'utf-8')
+
+    const wm = new WatermarkManager(watermarkPath)
+
+    expect(wm.getEntry('claude-code', '/claude/a.jsonl')).toBeNull()
+    expect(wm.getEntry('codex', '/codex/rollout.jsonl')).toEqual(entry)
+  })
+
   it('writes the version into a new watermark file', () => {
     const wm = new WatermarkManager(watermarkPath)
     wm.save()

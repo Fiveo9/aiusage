@@ -284,6 +284,9 @@ describe('runParse with Claude Code logs (#89)', () => {
   })
 
   it('keeps a call without a block id that shares name, timestamp and index with a block-keyed one', async () => {
+    // Neither is stored under a positional id.
+    const positional = (tc: { id: string; record_id: string; name: string; ts: number; call_index: number }) =>
+      tc.id === generateToolCallId(tc.record_id, tc.name, tc.ts, tc.call_index)
     writeLog('session-a.jsonl', [
       line('msg_1', { type: 'tool_use', name: 'Read', input: {} }, '2026-07-06T08:00:01.000Z'),
       line('msg_1', toolUse('toolu_read_2', 'Read'), '2026-07-06T08:00:01.000Z'),
@@ -291,6 +294,7 @@ describe('runParse with Claude Code logs (#89)', () => {
 
     await runParse(db, 'claude-code')
     expect(toolCalls().map(tc => tc.name)).toEqual(['Read', 'Read'])
+    expect(toolCalls().some(positional)).toBe(false)
 
     resetFileWatermarks()
     await runParse(db, 'claude-code')
@@ -398,6 +402,54 @@ describe('runParse with Claude Code logs (#89)', () => {
     // backfillSkillNames runs at the end of every parse.
     await runParse(db, 'claude-code')
     expect(toolCalls()).toEqual(first)
+  })
+
+  it.each([
+    ['a', 'b'],
+    ['b', 'a'],
+  ])('keeps a call without a block id when another transcript (%s before %s) has a block-keyed call at its position', async (noIdFile, keyedFile) => {
+    // Same message, timestamp and index in both transcripts, different calls.
+    writeLog(`session-${noIdFile}.jsonl`, [
+      line('msg_1', { type: 'tool_use', name: 'Skill', input: {} }, '2026-07-06T08:00:01.000Z'),
+    ])
+    writeLog(`session-${keyedFile}.jsonl`, [
+      line('msg_1', toolUse('toolu_skill', 'Skill', { skill: 'review' }), '2026-07-06T08:00:01.000Z'),
+    ])
+
+    await runParse(db, 'claude-code')
+    const first = toolCalls()
+    expect(first.map(tc => tc.name).sort()).toEqual(['skill__review', 'skill__unknown'])
+
+    for (let i = 0; i < 2; i++) {
+      resetFileWatermarks()
+      await runParse(db, 'claude-code')
+      expect(toolCalls()).toEqual(first)
+    }
+  })
+
+  it('takes the fuller state of a shared message whose lines carry one timestamp', async () => {
+    const first = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+    ])
+    await runParse(db, 'claude-code')
+    writeLog('session-b.jsonl', [
+      line('pad', { type: 'text', text: 'x' }, '2026-07-06T07:00:00.000Z'),
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+      line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:01.000Z', 120),
+    ])
+    await runParse(db, 'claude-code')
+
+    const stored = () => db.prepare("SELECT output_tokens, source_file FROM records WHERE ts = ?").get(new Date('2026-07-06T08:00:01.000Z').getTime())
+    expect(stored()).toEqual({ output_tokens: 120, source_file: first })
+
+    // Reading the shorter transcript again does not take the record back.
+    const settled = records()
+    for (let i = 0; i < 2; i++) {
+      resetFileWatermarks()
+      await runParse(db, 'claude-code')
+      expect(records()).toEqual(settled)
+    }
+    expect(stored()).toEqual({ output_tokens: 120, source_file: first })
   })
 
   it('does not rename a Skill call without a block id after another line of its message', async () => {

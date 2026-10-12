@@ -1,6 +1,6 @@
 import type { Parser, ParseResult, ParseContext } from '../types.js'
 import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
-import { generateRecordId, generateToolCallId, generateBlockToolCallId } from '../record-id.js'
+import { generateRecordId, generateBlockToolCallId } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost } from '../pricing.js'
 
@@ -90,12 +90,16 @@ export class ClaudeCodeParser implements Parser {
           }
           // A message is written as one line per content block and every line
           // restarts callIndex at 0, so the block's own id is the only key
-          // that tells two calls of one message apart.
-          const blockId = typeof block.id === 'string' ? block.id : ''
+          // that tells two calls of one message apart. A block without one
+          // falls back to its name, timestamp and index, under a key no real
+          // block id can equal. Either way the id is never the positional
+          // hash of generateToolCallId, which only rows written by earlier
+          // releases carry.
+          const blockId = typeof block.id === 'string' && block.id
+            ? block.id
+            : `\0no-block-id\0${storedName}\0${ts}\0${callIndex}`
           toolCalls.push({
-            id: blockId
-              ? generateBlockToolCallId(record.id, blockId)
-              : generateToolCallId(record.id, storedName, ts, callIndex),
+            id: generateBlockToolCallId(record.id, blockId),
             recordId: record.id,
             name: storedName,
             ts,

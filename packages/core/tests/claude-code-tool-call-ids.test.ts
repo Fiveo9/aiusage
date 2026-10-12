@@ -54,17 +54,22 @@ describe('Claude Code tool call ids', () => {
     expect(second.toolCalls[0].id).toBe(first.toolCalls[0].id)
   })
 
-  it('falls back to the positional id for a block without an id', () => {
+  it('keys a block without an id on its name, timestamp and index, never on the positional id', () => {
     const result = parser.parseLine(line([
       { type: 'tool_use', name: 'Read', input: {} },
       { type: 'tool_use', id: '', name: 'Edit', input: {} },
     ]), context)!
 
     const ts = new Date('2026-07-06T08:00:01.000Z').getTime()
-    expect(result.toolCalls.map(tc => tc.id)).toEqual([
-      generateToolCallId(result.record.id, 'Read', ts, 0),
-      generateToolCallId(result.record.id, 'Edit', ts, 1),
-    ])
+    const ids = result.toolCalls.map(tc => tc.id)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids).not.toContain(generateToolCallId(result.record.id, 'Read', ts, 0))
+    expect(ids).not.toContain(generateToolCallId(result.record.id, 'Edit', ts, 1))
+    // Stable: the same line gives the same ids again.
+    expect(parser.parseLine(line([
+      { type: 'tool_use', name: 'Read', input: {} },
+      { type: 'tool_use', id: '', name: 'Edit', input: {} },
+    ]), context)!.toolCalls.map(tc => tc.id)).toEqual(ids)
   })
 })
 

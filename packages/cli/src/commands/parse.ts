@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { basename, join, dirname } from 'node:path'
 import { hostname } from 'node:os'
-import { Aggregator, resolveExchangeRate, generateToolCallId, generateBlockToolCallId, inferProvider, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
+import { Aggregator, resolveExchangeRate, generateToolCallId, inferProvider, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
 import type { ToolCallRecord } from '@aiusage/core'
 import { insertRecord, LOCAL_RECORDS_WHERE, backfillUnknownDeviceInstanceId } from '../db/records.js'
 import { insertToolCall, deletePositionalCounterpart, hasPositionalToolCallId } from '../db/tool-calls.js'
@@ -872,12 +872,8 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             // the UPDATE below only reaches rows this pass did not write.
             insertRecord(db, fileCwd && !record.cwd ? { ...record, cwd: fileCwd } : record)
           }
-          // Ids this pass writes are never cleanup candidates: a block without
-          // an id of its own is still stored under a positional id, and it can
-          // share name, timestamp and index with another block of its message.
-          const writtenIds = new Set(pendingToolCalls.map(tc => tc.id))
           for (const tc of pendingToolCalls) {
-            if (replacesPositionalToolCalls) deletePositionalCounterpart(db, tc, writtenIds)
+            if (replacesPositionalToolCalls) deletePositionalCounterpart(db, tc)
             insertToolCall(db, tc)
           }
         })()
@@ -1408,26 +1404,28 @@ export function backfillHermesSourceFiles(db: Database.Database): void {
  * Claude Code can copy a message into a second transcript (a resumed
  * session), so the same record id can come from two files, and either file
  * may hold more of the message's lines than the other. Each line carries its
- * own timestamp and the usage so far, so a later line is the newer state.
+ * own timestamp and the usage so far, so the state of a message is ordered by
+ * timestamp and, between lines on one timestamp, by output tokens.
  *
- * - A pass never replaces the stored state with an earlier line's.
+ * - A pass never replaces the stored state with an earlier one.
  * - While the file the record is stored under still exists, the record stays
  *   with it: `source_file` and `line_offset` form the record's sync wire id,
  *   and `session_id` its session. Letting each file claim the record in turn
  *   would rewrite it twice on every re-import and queue an unchanged record
- *   for upload. Another file's copy is ignored when it is the same line, and
- *   contributes only its content when it holds a later one.
+ *   for upload. Another file's copy is ignored when it is the same state,
+ *   and contributes only its content when it holds a later one.
  *
  * Returns the record to write, or null when nothing is to be written.
  */
 function resolveClaudeCodeRecord(db: Database.Database, record: StatsRecord, filePath: string): StatsRecord | null {
   const stored = db.prepare(
-    'SELECT ts, source_file, line_offset, session_id FROM records WHERE id = ?'
-  ).get(record.id) as { ts: number; source_file: string; line_offset: number; session_id: string } | undefined
+    'SELECT ts, output_tokens, source_file, line_offset, session_id FROM records WHERE id = ?'
+  ).get(record.id) as { ts: number; output_tokens: number; source_file: string; line_offset: number; session_id: string } | undefined
   if (!stored) return record
-  if (record.ts < stored.ts) return null
+  const order = record.ts !== stored.ts ? record.ts - stored.ts : record.outputTokens - stored.output_tokens
+  if (order < 0) return null
   if (stored.source_file === filePath || !existsSync(stored.source_file)) return record
-  if (record.ts === stored.ts) return null
+  if (order === 0) return null
   return { ...record, sourceFile: stored.source_file, lineOffset: stored.line_offset, sessionId: stored.session_id }
 }
 
@@ -1444,17 +1442,17 @@ function backfillSkillNames(db: Database.Database): void {
   if (rows.length === 0) return
 
   const updateStmt = db.prepare('UPDATE tool_calls SET id = ?, name = ? WHERE id = ?')
-  const toolCallExists = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
 
   for (const row of rows) {
-    // A Claude Code call keyed on its tool_use block was named by the parser
-    // from that very block, so there is nothing to backfill, and the lookup
-    // below does not apply to it: it finds a block by call_index in the
-    // record's line, which is the last line of the message and not
-    // necessarily the line the call came from, and it would move the row back
-    // to a positional id. Only rows still under a positional id are legacy.
+    // The parser no longer writes a Claude Code call under a positional id,
+    // so a row that is not under one was named by the current parser from
+    // its own block: there is nothing to backfill, and the lookup below does
+    // not apply to it. It finds a block by call_index in the record's line,
+    // which is the last line of the message and not necessarily the line the
+    // call came from, and it would move the row to a positional id. Rows
+    // still under a positional id were written by an earlier release, always
+    // from that last line.
     if (row.tool === 'claude-code' && !hasPositionalToolCallId(row)) continue
-    let skip = false
     try {
       const fd = openSync(row.source_file, 'r')
       const buf = Buffer.alloc(65536)
@@ -1468,29 +1466,11 @@ function backfillSkillNames(db: Database.Database): void {
       const parsed = JSON.parse(line)
       if (!Array.isArray(parsed.message?.content)) continue
 
-      if (row.tool === 'claude-code') {
-        // The line read here is the last line of the record's message. A row
-        // an earlier release stored always came from that line. A positional
-        // id alone does not prove that, because a block without an id of its
-        // own is still stored under one and can sit on any line: the row must
-        // also carry this line's timestamp.
-        const rawTs = parsed.message.timestamp ?? parsed.timestamp
-        const lineTs = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
-        if (lineTs !== row.ts) continue
-      }
-
       let callIndex = 0
       let skillArg = ''
       for (const block of parsed.message.content) {
         if (block.type !== 'tool_use') continue
         if (callIndex === row.call_index) {
-          // The block found is already stored under its own id, so this row
-          // is another call that merely shares its position.
-          if (row.tool === 'claude-code' && typeof block.id === 'string' && block.id
-            && toolCallExists.get(generateBlockToolCallId(row.record_id, block.id))) {
-            skip = true
-            break
-          }
           if (block.name === 'Skill') {
             const raw = block.input?.skill ?? block.input?.skillName ?? block.input?.name ?? ''
             skillArg = typeof raw === 'string' ? raw.trim() : ''
@@ -1500,7 +1480,6 @@ function backfillSkillNames(db: Database.Database): void {
         callIndex++
       }
 
-      if (skip) continue
       const storedName = skillArg ? `skill__${skillArg}` : 'skill__unknown'
       const newId = generateToolCallId(row.record_id, storedName, row.ts, row.call_index)
       updateStmt.run(newId, storedName, row.id)

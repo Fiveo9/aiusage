@@ -28,8 +28,9 @@ export interface ToolCallIdRow {
 /**
  * True when a tool call's id is the hash of its own record id, name,
  * timestamp and call index: the scheme every Claude Code tool call used
- * before ids were keyed on the `tool_use` block. The row carries everything
- * that hash was built from, so no flag is needed to tell the schemes apart.
+ * before ids were keyed on the `tool_use` block. The Claude Code parser no
+ * longer produces such an id, and the row carries everything that hash was
+ * built from, so no flag is needed to recognise a row an earlier release wrote.
  */
 export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
   return row.id === generateToolCallId(row.record_id, row.name, row.ts, row.call_index)
@@ -50,17 +51,13 @@ export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
  * index shared one positional id, so at most one row ever stood for both;
  * each of them replaces it. Returns the number of rows deleted.
  */
-export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord, keepIds?: ReadonlySet<string>): number {
+export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord): number {
   if (!tc.recordId) return 0
   const names = tc.name.startsWith('skill__') ? [tc.name, 'Skill', 'skill__unknown'] : [tc.name]
   const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id = ?')
   let deleted = 0
   for (const name of new Set(names)) {
     const id = generateToolCallId(tc.recordId, name, tc.ts, tc.callIndex)
-    // A block without an id of its own is still written under a positional
-    // id: neither this call's own row nor another row of the same pass
-    // (`keepIds`) is an old row.
-    if (id === tc.id || keepIds?.has(id)) continue
     deleted += remove.run(id, tc.recordId).changes
   }
   return deleted

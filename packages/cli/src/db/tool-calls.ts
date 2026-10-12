@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { ToolCallRecord } from '@aiusage/core'
+import { generateToolCallId } from '@aiusage/core'
 
 export function insertToolCall(db: Database.Database, tc: ToolCallRecord): void {
   db.prepare(`
@@ -13,6 +14,44 @@ export function insertToolCall(db: Database.Database, tc: ToolCallRecord): void 
     ts: tc.ts,
     callIndex: tc.callIndex,
   })
+}
+
+/** The columns a positional tool-call id is built from. */
+export interface ToolCallIdRow {
+  id: string
+  record_id: string
+  name: string
+  ts: number
+  call_index: number
+}
+
+/**
+ * True when a tool call's id is the hash of its own record id, name,
+ * timestamp and call index: the scheme every Claude Code tool call used
+ * before ids were keyed on the `tool_use` block. The row carries everything
+ * that hash was built from, so no flag is needed to tell the schemes apart.
+ */
+export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
+  return row.id === generateToolCallId(row.record_id, row.name, row.ts, row.call_index)
+}
+
+/**
+ * Delete the tool calls of `recordId` that are stored under a positional id
+ * (see `hasPositionalToolCallId`). Used when a Claude Code log is read from
+ * its start: its calls are about to be written under block-keyed ids, and
+ * `insertToolCall` only replaces a row with the same id, so a row left under
+ * the old id would count its call twice. Returns the number deleted.
+ */
+export function deletePositionalToolCalls(db: Database.Database, recordId: string): number {
+  const rows = db.prepare(
+    'SELECT id, record_id, name, ts, call_index FROM tool_calls WHERE record_id = ?'
+  ).all(recordId) as ToolCallIdRow[]
+  let deleted = 0
+  for (const row of rows) {
+    if (!hasPositionalToolCallId(row)) continue
+    deleted += db.prepare('DELETE FROM tool_calls WHERE id = ?').run(row.id).changes
+  }
+  return deleted
 }
 
 export function getToolCallsByRecordId(db: Database.Database, recordId: string | null): ToolCallRecord[] {

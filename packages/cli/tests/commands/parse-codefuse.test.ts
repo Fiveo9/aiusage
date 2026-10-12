@@ -322,9 +322,9 @@ describe('runParse with CodeFuse data', () => {
     expect(select.get('cc-session')).toMatchObject({ input_tokens: 100, cache_read_tokens: 40 })
     expect(cacheDb.prepare('SELECT COUNT(*) AS n FROM records WHERE tool = ?').get('codefuse')).toMatchObject({ n: 2 })
     expect(cacheDb.prepare('SELECT COUNT(*) AS n FROM tool_calls').get()).toMatchObject({ n: 1 })
-    // The corrected row is published again.
+    // The corrected row is published again: it is newer than what was acknowledged.
     const state = cacheDb.prepare('SELECT synced_at, updated_at FROM records WHERE id = ?').get(fresh.id) as any
-    expect(state.synced_at).toBeNull()
+    expect(state.synced_at).toBe(1)
     expect(state.updated_at).toBeGreaterThan(1)
     expect(JSON.parse(readFileSync(watermarkPath, 'utf-8')).codefuseParserVersion).toBe(1)
   })

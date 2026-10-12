@@ -5,7 +5,7 @@ import { hostname } from 'node:os'
 import { Aggregator, resolveExchangeRate, generateToolCallId, inferProvider, calculateCost, resolvePrice, generateRecordId, normalizeCodeFuseModel, parseTimestamp, type StatsRecord, type Tool } from '@aiusage/core'
 import type { ToolCallRecord } from '@aiusage/core'
 import { insertRecord, LOCAL_RECORDS_WHERE, backfillUnknownDeviceInstanceId } from '../db/records.js'
-import { insertToolCall } from '../db/tool-calls.js'
+import { insertToolCall, deletePositionalToolCalls, hasPositionalToolCallId } from '../db/tool-calls.js'
 import { getState } from '../init.js'
 import { loadConfig, AIUSAGE_DIR } from '../config.js'
 import { WatermarkManager } from '../watermark.js'
@@ -792,6 +792,25 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           deleteCodeFuseSnapshotFallback(db, deviceInstanceId, sessionId)
         }
 
+        // Written once the whole file is read, one write per record id. Claude
+        // Code logs one line per content block of a message and every line
+        // yields the message's record again, each time with that line's
+        // offset, timestamp and running usage; the last line holds the final
+        // values. Writing only that one means a file that is read again
+        // compares final state against final state, so an unchanged record
+        // keeps its updated_at and stays synced.
+        const pendingRecords = new Map<string, StatsRecord>()
+        const pendingToolCalls: ToolCallRecord[] = []
+        // A Claude Code log read from its start writes all of its tool calls
+        // again under block-keyed ids, so the rows earlier releases stored
+        // for the same records under positional ids are removed first. This
+        // is the cleanup half of the one-time re-import (the watermark's
+        // claudeCodeParserVersion gate resets every file to offset 0). It is
+        // tied to the file being read rather than to that gate, so a record
+        // whose log no longer exists keeps the calls it has, and a re-import
+        // that was interrupted finishes the cleanup file by file.
+        const rebuildsToolCalls = tool === 'claude-code' && offset === 0
+
         for (const line of lines) {
           if (!line.trim()) {
             byteOffset += Buffer.byteLength(line, 'utf-8') + 1
@@ -829,18 +848,24 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           const result = aggregator.parseLine(line, context)
           if (result) {
             if (result.record) {
-              insertRecord(db, result.record)
+              pendingRecords.set(result.record.id, result.record)
               parsedCount++
             }
 
             for (const tc of result.toolCalls) {
-              insertToolCall(db, tc)
+              pendingToolCalls.push(tc)
               toolCallCount++
             }
           }
 
           byteOffset += Buffer.byteLength(line, 'utf-8') + 1
         }
+
+        for (const record of pendingRecords.values()) {
+          insertRecord(db, record)
+          if (rebuildsToolCalls) deletePositionalToolCalls(db, record.id)
+        }
+        for (const tc of pendingToolCalls) insertToolCall(db, tc)
 
         // Handle finalize (orphan tool calls for Codex, deduped fallback records for Copilot OTEL, etc.)
         const orphanResults = aggregator.finalize()
@@ -1364,19 +1389,26 @@ export function backfillHermesSourceFiles(db: Database.Database): void {
 
 function backfillSkillNames(db: Database.Database): void {
   const rows = db.prepare(`
-    SELECT tc.id, tc.record_id, tc.ts, tc.call_index,
-           r.source_file, r.line_offset
+    SELECT tc.id, tc.record_id, tc.name, tc.ts, tc.call_index,
+           r.tool, r.source_file, r.line_offset
     FROM tool_calls tc
     JOIN records r ON r.id = tc.record_id
     WHERE (tc.name = 'Skill' OR tc.name = 'skill__unknown')
       AND r.${LOCAL_RECORDS_WHERE}
-  `).all() as { id: string; record_id: string; ts: number; call_index: number; source_file: string; line_offset: number }[]
+  `).all() as { id: string; record_id: string; name: string; ts: number; call_index: number; tool: Tool; source_file: string; line_offset: number }[]
 
   if (rows.length === 0) return
 
   const updateStmt = db.prepare('UPDATE tool_calls SET id = ?, name = ? WHERE id = ?')
 
   for (const row of rows) {
+    // A Claude Code call keyed on its tool_use block was named by the parser
+    // from that very block, so there is nothing to backfill, and the lookup
+    // below does not apply to it: it finds a block by call_index in the
+    // record's line, which is the last line of the message and not
+    // necessarily the line the call came from, and it would move the row back
+    // to a positional id. Only rows still under a positional id are legacy.
+    if (row.tool === 'claude-code' && !hasPositionalToolCallId(row)) continue
     try {
       const fd = openSync(row.source_file, 'r')
       const buf = Buffer.alloc(65536)

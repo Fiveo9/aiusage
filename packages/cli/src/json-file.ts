@@ -1,4 +1,4 @@
-import { existsSync, linkSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, linkSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 
 /**
@@ -66,12 +66,17 @@ function renameWithRetry(from: string, to: string): void {
  * process sees the old file or the new one, never part of one, and a crash
  * mid-write leaves the old file in place.
  *
+ * A file marked read-only is not replaced: the write fails as a write in
+ * place would. A rename alone would go through on POSIX, where it needs
+ * write access to the directory and not to the file.
+ *
  * With `exclusive`, the file is only created: when it already exists nothing
  * is written and the result is `false`. Two processes creating it at the same
  * time end up with one file, the content of whichever came first; neither
  * path below ever replaces a file that is there.
  */
 export function writeFileAtomic(path: string, content: string, options: { mode?: number; exclusive?: boolean } = {}): boolean {
+  if (!options.exclusive && existsSync(path)) accessSync(path, constants.W_OK)
   const tmpFile = `${path}.${randomBytes(4).toString('hex')}.tmp`
   try {
     writeFileSync(tmpFile, content, { encoding: 'utf-8', mode: options.mode })

@@ -46,17 +46,21 @@ export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
  * stored as `Skill` (before skill names were read) or `skill__unknown`, so
  * those names are tried too. Positional rows of the record that the log being
  * read does not contain are left alone: they may come from a transcript that
- * no longer exists. Returns the number of rows deleted.
+ * no longer exists. Two blocks of one message that share name, timestamp and
+ * index shared one positional id, so at most one row ever stood for both;
+ * each of them replaces it. Returns the number of rows deleted.
  */
-export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord): number {
+export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord, keepIds?: ReadonlySet<string>): number {
   if (!tc.recordId) return 0
   const names = tc.name.startsWith('skill__') ? [tc.name, 'Skill', 'skill__unknown'] : [tc.name]
   const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id = ?')
   let deleted = 0
   for (const name of new Set(names)) {
     const id = generateToolCallId(tc.recordId, name, tc.ts, tc.callIndex)
-    // A block without an id of its own is still written under this id.
-    if (id === tc.id) continue
+    // A block without an id of its own is still written under a positional
+    // id: neither this call's own row nor another row of the same pass
+    // (`keepIds`) is an old row.
+    if (id === tc.id || keepIds?.has(id)) continue
     deleted += remove.run(id, tc.recordId).changes
   }
   return deleted

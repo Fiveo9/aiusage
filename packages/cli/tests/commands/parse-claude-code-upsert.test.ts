@@ -261,22 +261,59 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(toolCalls().map(tc => tc.id)).toEqual([legacyId])
   })
 
-  it('leaves the old-scheme rows in place when the calls that replace them cannot be written', async () => {
+  it('rolls a file back as a whole when one of its tool calls cannot be written', async () => {
     writeLog('session-a.jsonl', threeBlockMessage)
     await runParse(db, 'claude-code')
     const [record] = records()
-    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Edit', ts: '2026-07-06T08:00:03.000Z' }])
-    // An unreadable timestamp on an earlier line: its tool call cannot be stored.
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Read', ts: '2026-07-06T08:00:01.000Z' }])
+    // The Read line replaces the old-scheme row, then a line with an
+    // unreadable timestamp yields a tool call that cannot be stored.
     writeLog('session-a.jsonl', [
-      line('msg_1', toolUse('toolu_read', 'Read'), 'not a timestamp'),
-      ...threeBlockMessage.slice(2),
+      threeBlockMessage[1],
+      line('msg_1', toolUse('toolu_grep', 'Grep'), 'not a timestamp'),
+      line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:03.000Z', 999),
     ])
     resetFileWatermarks()
 
     const result = await runParse(db, 'claude-code')
 
     expect(result.errors).toHaveLength(1)
+    // Neither the record update nor the replacement of the Read row was kept.
+    expect(records()[0].output_tokens).toBe(120)
     expect(toolCalls().map(tc => tc.id)).toEqual([legacyId])
+  })
+
+  it('keeps a call without a block id that shares name, timestamp and index with a block-keyed one', async () => {
+    writeLog('session-a.jsonl', [
+      line('msg_1', { type: 'tool_use', name: 'Read', input: {} }, '2026-07-06T08:00:01.000Z'),
+      line('msg_1', toolUse('toolu_read_2', 'Read'), '2026-07-06T08:00:01.000Z'),
+    ])
+
+    await runParse(db, 'claude-code')
+    expect(toolCalls().map(tc => tc.name)).toEqual(['Read', 'Read'])
+
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+    expect(toolCalls().map(tc => tc.name)).toEqual(['Read', 'Read'])
+  })
+
+  it('queues a changed record even when its cwd is filled in and an acknowledgement lies in the future', async () => {
+    const filePath = writeLog('session-a.jsonl', threeBlockMessage.slice(0, 2))
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    // A row from before cwd was recorded, acknowledged by a file backend
+    // whose upload time is ahead of this machine's clock.
+    db.prepare("UPDATE records SET cwd = '' WHERE id = ?").run(record.id)
+    const ahead = Date.now() + 86_400_000
+    markRecordsSynced(db, [record.id], ahead, FILE_TARGET)
+    expect(getUnsyncedRecords(db, FILE_TARGET, DEVICE)).toEqual([])
+
+    appendFileSync(filePath, threeBlockMessage.slice(2).join('\n') + '\n')
+    await runParse(db, 'claude-code')
+
+    expect(records()[0]).toMatchObject({ output_tokens: 120, cwd: '/work/project' })
+    expect(records()[0].updated_at).toBeGreaterThan(ahead)
+    expect(getUnsyncedRecords(db, FILE_TARGET, DEVICE).map(r => r.id)).toEqual([record.id])
   })
 
   it('keeps a message that two transcripts share with the file it is stored under', async () => {
@@ -318,6 +355,35 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(toolCalls()).toEqual(calls)
   })
 
+  it('takes later lines of a shared message from the other transcript without moving the record', async () => {
+    // The first transcript stops after the first block of the message.
+    const first = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+    ])
+    await runParse(db, 'claude-code')
+    const [before] = records()
+    const owner = db.prepare('SELECT session_id FROM records WHERE id = ?').get(before.id) as { session_id: string }
+    writeLog('session-b.jsonl', [
+      line('pad', { type: 'text', text: 'x' }, '2026-07-06T07:00:00.000Z'),
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+      line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:02.000Z', 120),
+    ])
+
+    await runParse(db, 'claude-code')
+
+    const stored = () => db.prepare('SELECT output_tokens, source_file, line_offset, session_id FROM records WHERE id = ?').get(before.id)
+    expect(stored()).toEqual({ output_tokens: 120, source_file: first, line_offset: before.line_offset, session_id: owner.session_id })
+    expect(toolCalls().map(tc => tc.name)).toEqual(['Read', 'Edit'])
+
+    // Reading both files again, in either order, neither moves the record
+    // nor takes it back to the earlier line.
+    const settled = records()
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+    expect(records()).toEqual(settled)
+    expect(stored()).toMatchObject({ output_tokens: 120, source_file: first })
+  })
+
   it('does not rewrite block-keyed Skill calls when skill names are backfilled', async () => {
     writeLog('session-a.jsonl', [
       // A Skill block without a readable skill name, then a named one, in one message.
@@ -332,6 +398,28 @@ describe('runParse with Claude Code logs (#89)', () => {
     // backfillSkillNames runs at the end of every parse.
     await runParse(db, 'claude-code')
     expect(toolCalls()).toEqual(first)
+  })
+
+  it('does not rename a Skill call without a block id after another line of its message', async () => {
+    writeLog('session-a.jsonl', [
+      line('msg_1', { type: 'tool_use', name: 'Skill', input: {} }, '2026-07-06T08:00:01.000Z'),
+      line('msg_1', toolUse('toolu_skill_2', 'Skill', { skill: 'review' }), '2026-07-06T08:00:02.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    const first = toolCalls()
+    expect(first.map(tc => tc.name)).toEqual(['skill__unknown', 'skill__review'])
+
+    await runParse(db, 'claude-code')
+    expect(toolCalls()).toEqual(first)
+
+    // The same with both lines on one timestamp.
+    writeLog('session-b.jsonl', [
+      line('msg_2', { type: 'tool_use', name: 'Skill', input: {} }, '2026-07-06T09:00:00.000Z'),
+      line('msg_2', toolUse('toolu_skill_3', 'Skill', { skill: 'plan' }), '2026-07-06T09:00:00.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    await runParse(db, 'claude-code')
+    expect(toolCalls().map(tc => tc.name).sort()).toEqual(['skill__plan', 'skill__review', 'skill__unknown', 'skill__unknown'])
   })
 
   it('still names an old-scheme Skill call from its log line', async () => {

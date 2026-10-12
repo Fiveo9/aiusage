@@ -11,6 +11,9 @@
 - **会话列表的 token 和费用被放大**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 列表在求和之前先将记录与工具调用关联，因此每条记录的 token 和费用按工具调用次数被重复计算。现在先按会话汇总记录，再附加工具调用次数。
 - **多模型会话的头部只统计了部分数据**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 头部除会话外还按工具和模型分组。现在头部覆盖整个会话，`GET /api/sessions/:id` 以 `session.models` 返回使用过的模型。
 - **会话分页**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 日期范围或设备变化时，会话页面回到第一页，并忽略先前筛选条件的迟到响应。`page` 或 `pageSize` 不是正整数时，`GET /api/sessions` 返回 400 `INVALID_PARAM`，此前会被修正为默认范围或返回 500。
+- **`clean --before` 清空了整个云端数据**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 云端后端不支持部分删除，而只清理较早记录的操作仍会调用云端的清空接口，删除全部数据并开启新的同步代。现在只有 `clean --all` 会清空云端；`--before` 只清理本地，并提示云端数据保持不变。
+- **菜单中的清理对任意输入都会执行**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 在菜单的 数据 → 清理 中，输入空行或 `2`、`3` 以外的任何内容都会删除 180 天前的记录，并附带 `--yes` 跳过确认。现在只有明确输入 `1` 才执行，其余输入一律取消，确认交由命令本身处理。
+- **`aiusage init` 丢失已有设置**（[#128](https://github.com/juliantanx/aiusage/pull/128)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `init` 只用少数字段重建配置，其余键全部丢失；未指定 `--backend` 时还会移除同步配置，而菜单的 Init 入口正是这样调用的。现在所有分支都保留已有配置，只修改传入的项；只有显式指定 `--backend skip` 才会移除同步。
 
 ---
 

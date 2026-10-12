@@ -8,6 +8,8 @@
 ## [未发布]
 
 ### 修复
+- **云端未收到的记录被标记为已同步**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 上传完成后，云同步会重新读取待上传记录并全部标记，因此上传期间新解析的记录未被发送就被标记，上传期间被改写的记录也被视为已同步，而它的新版本并未发送。现在每个批次在云端接受后立即确认，且只有仍是已发送版本的记录才会被标记。
+- **云端被清空后不再上传任何数据**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 清空云端会开启新的同步代，但已同步过的设备保留了原有同步状态，不会向新一代上传任何内容。现在按同步目标保存同步代，拉取到不同的同步代时设备会重新上传记录。云端在本版本之前已被清空的设备会在首次同步时重新上传一次历史记录；云端已有的记录保持不变。每个安装同一时间只运行一个云同步。
 - **会话列表的 token 和费用被放大**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 列表在求和之前先将记录与工具调用关联，因此每条记录的 token 和费用按工具调用次数被重复计算。现在先按会话汇总记录，再附加工具调用次数。
 - **多模型会话的头部只统计了部分数据**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 头部除会话外还按工具和模型分组。现在头部覆盖整个会话，`GET /api/sessions/:id` 以 `session.models` 返回使用过的模型。
 - **会话分页**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 日期范围或设备变化时，会话页面回到第一页，并忽略先前筛选条件的迟到响应。`page` 或 `pageSize` 不是正整数时，`GET /api/sessions` 返回 400 `INVALID_PARAM`，此前会被修正为默认范围或返回 500。

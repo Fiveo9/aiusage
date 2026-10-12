@@ -411,6 +411,17 @@
       })
       if (res.ok) {
         actionFeedback = successMsg
+        // Snapshot actions report how many leaderboard rows they changed.
+        const result = await res.json().catch(() => ({}))
+        if (result.metrics_updated === 0) {
+          actionError = result.metrics_held > 0
+            ? (zh ? '该周期的排行榜数据不在本次通过的范围内，排行榜未变更' : 'The leaderboard rows of this period are not covered by this approval, so the leaderboard was not changed')
+            : (zh ? '没有匹配的排行榜数据，排行榜未变更' : 'No leaderboard rows matched, so the leaderboard was not changed')
+        } else if (result.metrics_held > 0) {
+          actionError = zh
+            ? `该周期有 ${result.metrics_held} 条排行榜数据未公开：它们不在本次通过的范围内`
+            : `${result.metrics_held} leaderboard row(s) of this period were not published: they are not covered by this approval`
+        }
         return true
       }
       const data = await res.json().catch(() => ({}))

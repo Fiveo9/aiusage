@@ -6,6 +6,6 @@ import { approveSnapshot } from '$lib/server/admin/operations.js'
 export const POST: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
   const body = await event.request.json()
-  await approveSnapshot(admin.id, event.params.snapshotId, body.note)
-  return json({ success: true })
+  const result = await approveSnapshot(admin.id, event.params.snapshotId, body.note)
+  return json({ success: true, metrics_updated: result.metricsUpdated, metrics_held: result.metricsHeld ?? 0 })
 }

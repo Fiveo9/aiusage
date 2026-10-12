@@ -8,6 +8,8 @@
 ## [未发布]
 
 ### 修复
+- **清理上传历史时排行榜数据被一并删除**（[#127](https://github.com/juliantanx/aiusage/pull/127)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `leaderboard_metrics` 以 `ON DELETE CASCADE` 引用上传请求，因此清理任务删除早于“保留上传历史”设置（默认 180 天）的上传请求时，这些请求写入的排行榜数据也被删除。站点迁移 v16 将该列改为可空，并将外键改为 `ON DELETE SET NULL`；迁移在首次启动时自动执行，此后清理不再影响排行榜。
+- **排行榜审核结果被下一次上传覆盖**（[#127](https://github.com/juliantanx/aiusage/pull/127)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 管理员隐藏某个周期后，用户再次上传该周期会让数据重新公开；对已被后续上传取代的快照执行通过、拒绝或隐藏时，实际没有任何变更却返回成功。现在隐藏的数据在再次上传后保持隐藏；快照操作按用户和周期匹配，返回变更的行数，并在快照不存在时报错。通过快照时只公开由该次上传或同一周期内已接受、已通过的上传写入的数据，同一用户的上传与审核操作串行执行。
 - **云端未收到的记录被标记为已同步**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 上传完成后，云同步会重新读取待上传记录并全部标记，因此上传期间新解析的记录未被发送就被标记，上传期间被改写的记录也被视为已同步，而它的新版本并未发送。现在每个批次在云端接受后立即确认，且只有仍是已发送版本的记录才会被标记。
 - **云端被清空后不再上传任何数据**（[#129](https://github.com/juliantanx/aiusage/pull/129)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 清空云端会开启新的同步代，但已同步过的设备保留了原有同步状态，不会向新一代上传任何内容。现在按同步目标保存同步代，拉取到不同的同步代时设备会重新上传记录。云端在本版本之前已被清空的设备会在首次同步时重新上传一次历史记录；云端已有的记录保持不变。每个安装同一时间只运行一个云同步。
 - **会话列表的 token 和费用被放大**（[#130](https://github.com/juliantanx/aiusage/pull/130)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 列表在求和之前先将记录与工具调用关联，因此每条记录的 token 和费用按工具调用次数被重复计算。现在先按会话汇总记录，再附加工具调用次数。

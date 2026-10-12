@@ -517,5 +517,38 @@ const migrations = [
       await tx`DROP TABLE IF EXISTS official_price_tables`
       await tx`DROP TYPE IF EXISTS price_table_status`
     }
+  },
+  {
+    version: 16,
+    name: 'keep_leaderboard_metrics_when_upload_history_is_pruned',
+    up: async (tx: typeof sql) => {
+      // The daily cleanup deletes upload_requests older than
+      // retention.upload_request_days. leaderboard_metrics referenced them
+      // with ON DELETE CASCADE, so the leaderboard rows went with them. They
+      // now outlive the upload history: the reference is cleared instead.
+      // Every statement can run again on a table that already has the new shape.
+      await tx`ALTER TABLE leaderboard_metrics ALTER COLUMN upload_request_id DROP NOT NULL`
+
+      // Drop the old constraint by what it is, not by its generated name.
+      await tx`DO $$
+        DECLARE fk RECORD;
+        BEGIN
+          FOR fk IN
+            SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+            WHERE c.conrelid = 'leaderboard_metrics'::regclass
+              AND c.confrelid = 'upload_requests'::regclass
+              AND c.contype = 'f'
+              AND a.attname = 'upload_request_id'
+          LOOP
+            EXECUTE format('ALTER TABLE leaderboard_metrics DROP CONSTRAINT %I', fk.conname);
+          END LOOP;
+        END $$`
+
+      await tx`ALTER TABLE leaderboard_metrics
+        ADD CONSTRAINT leaderboard_metrics_upload_request_id_fkey
+        FOREIGN KEY (upload_request_id) REFERENCES upload_requests(id) ON DELETE SET NULL`
+    }
   }
 ]

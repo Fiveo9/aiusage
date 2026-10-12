@@ -6,6 +6,6 @@ import { rejectSnapshot } from '$lib/server/admin/operations.js'
 export const POST: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
   const body = await event.request.json()
-  await rejectSnapshot(admin.id, event.params.snapshotId, body.note)
-  return json({ success: true })
+  const result = await rejectSnapshot(admin.id, event.params.snapshotId, body.note)
+  return json({ success: true, metrics_updated: result.metricsUpdated })
 }

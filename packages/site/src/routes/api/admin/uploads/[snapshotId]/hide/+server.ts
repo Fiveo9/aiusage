@@ -6,6 +6,6 @@ import { hideSnapshot } from '$lib/server/admin/operations.js'
 export const POST: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
   const body = await event.request.json()
-  await hideSnapshot(admin.id, event.params.snapshotId, body.note)
-  return json({ success: true })
+  const result = await hideSnapshot(admin.id, event.params.snapshotId, body.note)
+  return json({ success: true, metrics_updated: result.metricsUpdated })
 }

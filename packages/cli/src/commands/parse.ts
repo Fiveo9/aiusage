@@ -878,7 +878,8 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             // The cwd is part of the row as it is written, so a record this
             // pass changes gets its new updated_at from insertRecord alone;
             // the UPDATE below only reaches rows this pass did not write.
-            insertRecord(db, fileCwd && !record.cwd ? { ...record, cwd: fileCwd } : record)
+            // A record stored under another transcript keeps that file's cwd.
+            insertRecord(db, fileCwd && !record.cwd && record.sourceFile === filePath ? { ...record, cwd: fileCwd } : record)
           }
           const toolCallExists = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
           for (const { tc, lineOffset } of pendingToolCalls) {

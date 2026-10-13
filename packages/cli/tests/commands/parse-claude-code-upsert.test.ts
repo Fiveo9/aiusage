@@ -419,6 +419,30 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(records()).toEqual(refreshed)
   })
 
+  it('keeps the cwd of the owning transcript when the other one was started elsewhere', async () => {
+    const shared = line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z')
+    writeLog('session-a.jsonl', [shared])
+    await runParse(db, 'claude-code')
+    // The session was resumed from another directory.
+    writeLog('session-b.jsonl', [
+      JSON.stringify({ ...JSON.parse(line('pad', { type: 'text', text: 'x' }, '2026-07-06T07:00:00.000Z')), cwd: '/work/elsewhere' }),
+      shared,
+    ])
+    await runParse(db, 'claude-code')
+    const owned = () => records().find(r => r.cwd !== '/work/elsewhere')
+    expect(owned()).toMatchObject({ cwd: '/work/project' })
+    markRecordVersionsSynced(db, records().map(r => ({ id: r.id, updatedAt: r.updated_at })), CLOUD)
+    const synced = records()
+    expect(synced.map(r => r.cwd)).toEqual(['/work/elsewhere', '/work/project'])
+
+    for (let i = 0; i < 2; i++) {
+      resetFileWatermarks()
+      await runParse(db, 'claude-code')
+      expect(records()).toEqual(synced)
+      expect(getUnsyncedRecords(db, CLOUD, DEVICE)).toEqual([])
+    }
+  })
+
   it('does not rewrite block-keyed Skill calls when skill names are backfilled', async () => {
     writeLog('session-a.jsonl', [
       // A Skill block without a readable skill name, then a named one, in one message.

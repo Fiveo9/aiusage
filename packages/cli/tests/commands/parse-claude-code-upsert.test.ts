@@ -388,6 +388,37 @@ describe('runParse with Claude Code logs (#89)', () => {
     expect(stored()).toMatchObject({ output_tokens: 120, source_file: first })
   })
 
+  it('refreshes derived fields of a shared record whose final state comes from the other transcript', async () => {
+    const first = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+    ])
+    await runParse(db, 'claude-code')
+    writeLog('session-b.jsonl', [
+      line('pad', { type: 'text', text: 'x' }, '2026-07-06T07:00:00.000Z'),
+      line('msg_1', toolUse('toolu_read', 'Read'), '2026-07-06T08:00:01.000Z', 3),
+      line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:02.000Z', 120),
+    ])
+    await runParse(db, 'claude-code')
+    const ts = new Date('2026-07-06T08:00:02.000Z').getTime()
+    const stored = () => db.prepare('SELECT cost, output_tokens, source_file, updated_at FROM records WHERE ts = ?').get(ts) as { cost: number; output_tokens: number; source_file: string; updated_at: number }
+    const settled = stored()
+    expect(settled).toMatchObject({ output_tokens: 120, source_file: first })
+
+    // The record was priced differently when it was stored; the logs are read again.
+    db.prepare('UPDATE records SET cost = ? WHERE ts = ?').run(settled.cost + 1, ts)
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+
+    expect(stored()).toMatchObject({ cost: settled.cost, output_tokens: 120, source_file: first })
+    expect(stored().updated_at).toBeGreaterThan(settled.updated_at)
+
+    // Unchanged from here on.
+    const refreshed = records()
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+    expect(records()).toEqual(refreshed)
+  })
+
   it('does not rewrite block-keyed Skill calls when skill names are backfilled', async () => {
     writeLog('session-a.jsonl', [
       // A Skill block without a readable skill name, then a named one, in one message.

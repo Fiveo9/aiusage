@@ -1435,20 +1435,26 @@ export function backfillHermesSourceFiles(db: Database.Database): void {
  *   with it: `source_file` and `line_offset` form the record's sync wire id,
  *   and `session_id` its session. Letting each file claim the record in turn
  *   would rewrite it twice on every re-import and queue an unchanged record
- *   for upload. Another file's copy is ignored when it is the same state,
- *   and contributes only its content when it holds a later one.
+ *   for upload. Another file's copy contributes only its content, when it
+ *   holds a later state, or the same state as the stored one: the same
+ *   model and usage, whose derived fields (the cost under current prices)
+ *   insertRecord then writes only if they differ.
  *
  * Returns the record to write, or null when nothing is to be written.
  */
 function resolveClaudeCodeRecord(db: Database.Database, record: StatsRecord, filePath: string): StatsRecord | null {
   const stored = db.prepare(
-    'SELECT ts, output_tokens, source_file, line_offset, session_id FROM records WHERE id = ?'
-  ).get(record.id) as { ts: number; output_tokens: number; source_file: string; line_offset: number; session_id: string } | undefined
+    'SELECT ts, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, source_file, line_offset, session_id FROM records WHERE id = ?'
+  ).get(record.id) as { ts: number; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; thinking_tokens: number; source_file: string; line_offset: number; session_id: string } | undefined
   if (!stored) return record
   const order = record.ts !== stored.ts ? record.ts - stored.ts : record.outputTokens - stored.output_tokens
   if (order < 0) return null
   if (stored.source_file === filePath || !existsSync(stored.source_file)) return record
-  if (order === 0) return null
+  // On equal order only the stored state itself is written again; a line
+  // that differs from it in what it reports is neither earlier nor later.
+  if (order === 0 && (record.model !== stored.model || record.inputTokens !== stored.input_tokens
+    || record.cacheReadTokens !== stored.cache_read_tokens || record.cacheWriteTokens !== stored.cache_write_tokens
+    || record.thinkingTokens !== stored.thinking_tokens)) return null
   return { ...record, sourceFile: stored.source_file, lineOffset: stored.line_offset, sessionId: stored.session_id }
 }
 

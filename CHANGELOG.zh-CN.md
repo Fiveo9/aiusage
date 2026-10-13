@@ -7,6 +7,9 @@
 
 ## [未发布]
 
+### 修复
+- **站点对每个未保存的配置项都查询数据库，并且每个请求加载两次会话**（[#134](https://github.com/juliantanx/aiusage/pull/134)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `readConfig` 只在 `site_config` 中存在对应行时才缓存，因此在管理员保存表单之前每次读取都是一次查询，而一次上传会为每个快照读取十一项风控设置（五个快照共 57 次配置查询）。现在不存在的配置项与已保存的值一样缓存 60 秒，风控设置每次上传只读取一次，`requireUser` 和 `requireAdmin` 使用请求钩子已加载的用户。
+
 ---
 
 ## [1.5.21] - 2026-10-12

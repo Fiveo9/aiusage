@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Site queried the database for every unsaved config key and loaded the session twice per request** ([#134](https://github.com/juliantanx/aiusage/pull/134) by [@aaroncchung](https://github.com/aaroncchung)) — `readConfig` cached a value only when `site_config` had a row for the key, so until an admin saved the form every lookup was a query, and an upload read eleven risk settings per snapshot (57 config queries for five snapshots). A missing key is now cached for the same 60 seconds as a stored one, the risk settings are read once per upload, and `requireUser` and `requireAdmin` use the user the request hook already loaded.
+
 ---
 
 ## [1.5.21] - 2026-10-12

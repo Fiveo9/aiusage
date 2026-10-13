@@ -788,9 +788,6 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         const sessionId = tool === 'codefuse' && typeof firstData?.sessionId === 'string' && firstData.sessionId
           ? firstData.sessionId
           : extractSessionId(filePath, tool)
-        if (tool === 'codefuse' && filePath.endsWith('.jsonl')) {
-          deleteCodeFuseSnapshotFallback(db, deviceInstanceId, sessionId)
-        }
 
         // Written once the whole file is read, one write per record id. Claude
         // Code logs one line per content block of a message and every line
@@ -862,8 +859,12 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         }
 
         // One transaction: a positional row is deleted only together with
-        // the insert of the row that replaces it.
+        // the insert of the row that replaces it, and a CodeFuse snapshot
+        // record only together with the records of the log that replaces it.
         db.transaction(() => {
+          if (tool === 'codefuse' && filePath.endsWith('.jsonl')) {
+            deleteCodeFuseSnapshotFallback(db, deviceInstanceId, sessionId)
+          }
           // Where each record was stored under this file before this pass.
           const storedLines = new Map<string, number>()
           const storedLine = db.prepare('SELECT line_offset FROM records WHERE id = ? AND source_file = ?')

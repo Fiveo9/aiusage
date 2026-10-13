@@ -43,17 +43,23 @@ export function hasPositionalToolCallId(row: ToolCallIdRow): boolean {
  * id, so the old row would count the call twice.
  *
  * Only the row of this very call is removed: its id is rebuilt from the
- * call's own record id, timestamp and index. A Skill call may have been
- * stored as `Skill` (before skill names were read) or `skill__unknown`, so
- * those names are tried too. Positional rows of the record that the log being
- * read does not contain are left alone: they may come from a transcript that
- * no longer exists. Two blocks of one message that share name, timestamp and
- * index shared one positional id, so at most one row ever stood for both;
- * each of them replaces it. Returns the number of rows deleted.
+ * call's own record id, name, timestamp and index. Positional rows of the
+ * record that the log being read does not contain are left alone: they may
+ * come from a transcript that no longer exists. Two blocks of one message
+ * that share name, timestamp and index shared one positional id, so at most
+ * one row ever stood for both; each of them replaces it.
+ *
+ * A Skill call may have been stored as `Skill` (before skill names were read)
+ * or `skill__unknown` (before every field holding the name was read). A row
+ * under one of those names is the same call only when it was written from the
+ * very line `tc` comes from; another Skill block of the message can sit at
+ * the same timestamp and index in a transcript that is gone. The caller says
+ * so with `fromStoredLine`; without it only the call's own name is matched.
+ * Returns the number of rows deleted.
  */
-export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord): number {
+export function deletePositionalCounterpart(db: Database.Database, tc: ToolCallRecord, fromStoredLine = false): number {
   if (!tc.recordId) return 0
-  const names = tc.name.startsWith('skill__') ? [tc.name, 'Skill', 'skill__unknown'] : [tc.name]
+  const names = fromStoredLine && tc.name.startsWith('skill__') ? [tc.name, 'Skill', 'skill__unknown'] : [tc.name]
   const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id = ?')
   let deleted = 0
   for (const name of new Set(names)) {

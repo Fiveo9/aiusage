@@ -505,4 +505,117 @@ describe('runParse with Claude Code logs (#89)', () => {
       { id: generateToolCallId(record.id, 'skill__review', ts, 0), record_id: record.id, name: 'skill__review', ts, call_index: 0 },
     ])
   })
+
+  it.each(['Skill', 'skill__unknown'])('replaces an old-scheme %s row with the named call of the line it came from', async (oldName) => {
+    writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_skill_1', 'Skill', { skill: 'review' }), '2026-07-06T08:00:01.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: oldName, ts: '2026-07-06T08:00:01.000Z' }])
+    dropClaudeCodeParserVersion()
+
+    await runParse(db, 'claude-code')
+
+    expect(toolCalls().map(tc => tc.name)).toEqual(['skill__review'])
+    expect(toolCalls().map(tc => tc.id)).not.toContain(legacyId)
+  })
+
+  it.each(['Skill', 'skill__unknown'])('keeps an old-scheme %s call of a transcript that is gone when another transcript has a named skill at its position', async (oldName) => {
+    // Two different Skill blocks of one message, same timestamp and index.
+    const gone = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_skill_a', 'Skill', {}), '2026-07-06T08:00:01.000Z'),
+    ])
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: oldName, ts: '2026-07-06T08:00:01.000Z' }])
+    rmSync(gone)
+    writeLog('session-b.jsonl', [
+      line('msg_1', toolUse('toolu_skill_b', 'Skill', { skill: 'review' }), '2026-07-06T08:00:01.000Z'),
+    ])
+    dropClaudeCodeParserVersion()
+
+    await runParse(db, 'claude-code')
+
+    const kept = [oldName, 'skill__review'].sort()
+    expect(toolCalls().map(tc => tc.name).sort()).toEqual(kept)
+    expect(toolCalls().map(tc => tc.id)).toContain(legacyId)
+
+    // Reading the surviving transcript once more (a lost watermark) changes nothing.
+    const settled = toolCalls()
+    resetFileWatermarks()
+    await runParse(db, 'claude-code')
+    expect(toolCalls()).toEqual(settled)
+  })
+
+  it('does not rename a kept old-scheme Skill call to a block that is already stored', async () => {
+    const gone = writeLog('session-a.jsonl', [
+      line('msg_1', toolUse('toolu_skill_a', 'Skill', {}), '2026-07-06T08:00:01.000Z', 3),
+    ])
+    await runParse(db, 'claude-code')
+    const [record] = records()
+    const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'skill__unknown', ts: '2026-07-06T08:00:01.000Z' }])
+    rmSync(gone)
+    // The surviving transcript takes the record over with a text line...
+    const survivor = writeLog('session-b.jsonl', [
+      line('msg_1', { type: 'text', text: 'Looking.' }, '2026-07-06T08:00:01.000Z', 3),
+    ])
+    await runParse(db, 'claude-code')
+    expect(db.prepare('SELECT source_file FROM records WHERE id = ?').get(record.id)).toEqual({ source_file: survivor })
+    expect(toolCalls().map(tc => tc.id)).toEqual([legacyId])
+
+    // ...and later gains a named Skill block on the same timestamp.
+    appendFileSync(survivor, line('msg_1', toolUse('toolu_skill_b', 'Skill', { skill: 'review' }), '2026-07-06T08:00:01.000Z', 120) + '\n')
+    await runParse(db, 'claude-code')
+
+    expect(toolCalls().map(tc => tc.name).sort()).toEqual(['skill__review', 'skill__unknown'])
+    expect(toolCalls().find(tc => tc.name === 'skill__unknown')?.id).toBe(legacyId)
+  })
+})
+
+describe('runParse after a log file that could not be written (#89)', () => {
+  let db: Database.Database
+  let sessionsDir: string
+
+  beforeEach(() => {
+    rmSync(aiusageDir, { recursive: true, force: true })
+    mkdirSync(aiusageDir, { recursive: true })
+    sessionsDir = mkdtempSync(join(tmpdir(), 'aiusage-codex-upsert-'))
+    writeFileSync(join(aiusageDir, 'state.json'), JSON.stringify({ deviceInstanceId: DEVICE }))
+    writeFileSync(join(aiusageDir, 'config.json'), JSON.stringify({ sources: { codex: sessionsDir } }))
+    db = new Database(':memory:')
+    initializeDatabase(db)
+  })
+
+  afterEach(() => {
+    db.close()
+    rmSync(sessionsDir, { recursive: true, force: true })
+  })
+
+  const tokenCount = (timestamp: string) => JSON.stringify({
+    type: 'event_msg',
+    timestamp,
+    payload: { type: 'token_count', model: 'gpt-5', info: { last_token_usage: { input_tokens: 100, output_tokens: 20 } } },
+  })
+  const functionCall = (timestamp: string) => JSON.stringify({
+    type: 'response_item',
+    timestamp,
+    payload: { type: 'function_call', name: 'shell' },
+  })
+
+  it('does not attach a pending Codex function call of the failed file to the next file', async () => {
+    // The usage line cannot be stored; the function call after it has no usage of its own.
+    writeFileSync(join(sessionsDir, 'rollout-a.jsonl'), [
+      tokenCount('not a timestamp'),
+      functionCall('2026-07-06T08:00:01.000Z'),
+    ].join('\n') + '\n')
+    writeFileSync(join(sessionsDir, 'rollout-b.jsonl'), tokenCount('2026-07-06T09:00:00.000Z') + '\n')
+
+    const result = await runParse(db, 'codex')
+
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('rollout-a.jsonl')
+    expect(db.prepare('SELECT source_file FROM records').all()).toEqual([{ source_file: join(sessionsDir, 'rollout-b.jsonl') }])
+    expect(db.prepare('SELECT name, record_id FROM tool_calls').all()).toEqual([])
+  })
 })

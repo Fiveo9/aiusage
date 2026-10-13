@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **LiteLLM price sync let a reseller's entry replace a model's own price** ([#133](https://github.com/juliantanx/aiusage/pull/133) by [@aaroncchung](https://github.com/aaroncchung)) — the sync drops the provider prefix of an id, so `aihubmix/claude-haiku-4-5`, `vertex_ai/claude-haiku-4-5` and `claude-haiku-4-5` share one price key, and the last entry in the file won. Each key now has one owner: the entry listed under the key itself, otherwise the model developer's own entry, otherwise a fixed provider order with `aihubmix` last; an entry priced at zero does not take a key from a priced one. The result no longer depends on the order of the file. Stored prices are corrected at the next price sync.
+
 ---
 
 ## [1.5.21] - 2026-10-12

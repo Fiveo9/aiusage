@@ -7,6 +7,9 @@
 
 ## [未发布]
 
+### 修复
+- **LiteLLM 价格同步会让转售商的条目覆盖模型自身的价格**（[#133](https://github.com/juliantanx/aiusage/pull/133)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 同步时会去掉 id 的提供商前缀，因此 `aihubmix/claude-haiku-4-5`、`vertex_ai/claude-haiku-4-5` 和 `claude-haiku-4-5` 共用同一个价格键，文件中最后出现的条目生效。现在每个键只有一个来源：优先使用与键同名的条目，其次是模型开发商自己的条目，再按固定的提供商顺序选择（`aihubmix` 排在最后）；价格为零的条目不会覆盖有价格的条目。结果不再取决于文件中的顺序。已保存的价格会在下一次价格同步时更正。
+
 ---
 
 ## [1.5.21] - 2026-10-12

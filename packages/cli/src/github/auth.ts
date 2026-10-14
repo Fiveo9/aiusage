@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { AIUSAGE_DIR, loadConfig, loadCredential, saveConfig, type Config, type SyncConfig } from '../config.js'
+import { AIUSAGE_DIR, loadConfig, loadCredential, updateConfig, type Config, type SyncConfig } from '../config.js'
 import { acquireLock, releaseLock } from '../lock.js'
 import { loadGitHubCredentials, saveGitHubCredentials, type GitHubCredentials } from './credentials.js'
 import { GitHubAuthError } from './errors.js'
@@ -101,10 +101,10 @@ export function connectRepository(creds: GitHubCredentials, login: string, choic
   validateRepo(choice.repo)
   if (creds.method !== 'github-app') throw new GitHubAuthError('GitHub App credentials required.')
   const credentialId = saveGitHubCredentials(creds)
-  const config = loadConfig() ?? {}
-  config.sync = { backend: 'github', repo: choice.repo, branch: choice.branch,
-    githubAuth: { method: 'github-app', credentialId, login, installationId: choice.installationId, clientId: creds.clientId } }
-  saveConfig(config)
+  updateConfig((config) => {
+    config.sync = { backend: 'github', repo: choice.repo, branch: choice.branch,
+      githubAuth: { method: 'github-app', credentialId, login, installationId: choice.installationId, clientId: creds.clientId } }
+  })
 }
 
 /** Refresh is serialized across CLI/dashboard processes; reload after acquiring the lock. */

@@ -5,6 +5,7 @@ import { loadConfig, saveConfig, buildConsentConfig, AIUSAGE_DIR, type Config } 
 import { hasCredentials } from '../leaderboard/credentials.js'
 import { getSyncTarget } from '../sync/target.js'
 import { setPat, validateRepo } from '../github/auth.js'
+import { withSettingsLock } from '../settings-lock.js'
 
 export interface InitOptions {
   backend?: 'github' | 's3' | 'cloud' | 'skip'
@@ -21,7 +22,16 @@ export interface InitOptions {
   secretAccessKey?: string
 }
 
+/**
+ * Builds the new configuration from the one on disk and saves it, with the
+ * consent in state.json, under the settings lock: a change another process
+ * (`aiusage serve`) saves at the same time is not written over.
+ */
 export function runInit(options: InitOptions): { success: boolean; message: string } {
+  return withSettingsLock(AIUSAGE_DIR, () => initConfig(options))
+}
+
+function initConfig(options: InitOptions): { success: boolean; message: string } {
   const existingConfig = loadConfig()
 
   if (!options.backend) {

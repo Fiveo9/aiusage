@@ -30,7 +30,7 @@ import { getSiteUrl } from '../site-url.js'
 import { startDeviceAuth, completeDeviceAuth, fetchLeaderboardStatus } from '../leaderboard/api.js'
 import { clearCredentials, hasCredentials, loadCredentials, saveCredentials } from '../leaderboard/credentials.js'
 import { base64url, sha256Buffer } from '../leaderboard/crypto.js'
-import { uploadLeaderboardData } from '../commands/leaderboard-upload.js'
+import { recordLeaderboardUpload, uploadLeaderboardData } from '../commands/leaderboard-upload.js'
 import { runParseKelivo } from '../commands/parse-kelivo.js'
 import { insertRecord, LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
@@ -395,6 +395,7 @@ export interface ApiServerOptions {
   onSyncStart?: () => SyncStartResult
   getSyncStatus?: () => SyncStatusSnapshot | null
   onConfigUpdated?: () => void
+  onLeaderboardUploaded?: (uploadedAt: number) => void
   runDbWrite?: <T>(task: () => T | Promise<T>) => Promise<T>
   getDbWriteQueueStatus?: () => AsyncTaskQueueStatus
 }
@@ -1678,6 +1679,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       if (url.pathname === '/api/leaderboard/upload' && req.method === 'POST') {
         try {
           const result = await uploadLeaderboardData(db, options?.currentDeviceInstanceId)
+          const uploadedAt = recordLeaderboardUpload(result)
+          if (uploadedAt != null) options?.onLeaderboardUploaded?.(uploadedAt)
           json(res, {
             totalTokens: result.totalTokens,
             response: result.response,
@@ -2003,11 +2006,33 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               }
             }
 
+            // Milliseconds. A delay above 2^31 - 1 overflows a Node timer, which then
+            // fires every 1 ms, and a value typed in seconds runs back to back.
+            // A blank or zero value still clears the setting.
+            const intervalBounds: Array<[string, number, number]> = [
+              ['refreshInterval', 1000, 2147483647],
+              ['leaderboardUploadInterval', 3600000, 31536000000],
+              ['syncInterval', 60000, 2147483647],
+            ]
+            const intervals: Record<string, number | undefined> = {}
+            for (const [field, min, max] of intervalBounds) {
+              const raw = update[field]
+              if (raw == null || raw === false || raw === '' || raw === 0 || raw === '0') continue
+              const value = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
+              if (!Number.isFinite(value) || value < min || value > max) {
+                // Nothing is saved, so undo the week start this request may have applied above.
+                weekStart = (loadConfig()?.weekStart ?? 1) as 0 | 1
+                json(res, { error: { code: 'INVALID_INTERVAL', message: `${field} must be a number of milliseconds between ${min} and ${max}` } }, 400)
+                return
+              }
+              intervals[field] = value
+            }
+
             if ('refreshInterval' in update) {
-              if (!update.refreshInterval) {
+              if (intervals.refreshInterval == null) {
                 delete existing.refreshInterval
               } else {
-                existing.refreshInterval = Number(update.refreshInterval)
+                existing.refreshInterval = intervals.refreshInterval
               }
               // Clean up legacy fields
               delete existing.dashboardPollInterval
@@ -2021,8 +2046,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               existing.leaderboardAutoUpload = update.leaderboardAutoUpload === true
             }
             if ('leaderboardUploadInterval' in update) {
-              const uploadInterval = Number(update.leaderboardUploadInterval)
-              if (Number.isFinite(uploadInterval) && uploadInterval > 0) {
+              const uploadInterval = intervals.leaderboardUploadInterval
+              if (uploadInterval != null) {
                 existing.leaderboardUploadInterval = uploadInterval
               } else {
                 delete existing.leaderboardUploadInterval
@@ -2030,8 +2055,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             }
 
             if ('syncInterval' in update) {
-              const si = Number(update.syncInterval)
-              if (Number.isFinite(si) && si > 0) {
+              const si = intervals.syncInterval
+              if (si != null) {
                 existing.syncInterval = si
               } else {
                 delete existing.syncInterval

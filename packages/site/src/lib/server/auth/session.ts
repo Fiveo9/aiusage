@@ -75,8 +75,18 @@ export async function getUserFromEvent(event: RequestEvent): Promise<SessionUser
   }
 }
 
+/**
+ * The user of this request. hooks.server.ts loads the session once per request
+ * into `event.locals.user` (null when there is none); the session is only
+ * loaded here for an event that did not pass through the hook.
+ */
+export async function getRequestUser(event: RequestEvent): Promise<SessionUser | null> {
+  if (event.locals.user !== undefined) return event.locals.user
+  return getUserFromEvent(event)
+}
+
 export async function requireUser(event: RequestEvent): Promise<SessionUser> {
-  const user = await getUserFromEvent(event)
+  const user = await getRequestUser(event)
   if (!user) {
     throw error(401, 'unauthorized')
   }

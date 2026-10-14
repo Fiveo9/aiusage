@@ -1,11 +1,11 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { queryLeaderboard, getCurrentPeriodStart, type RankingMetric, type RankingScope } from '$lib/server/leaderboard/query.js'
-import { getUserFromEvent } from '$lib/server/auth/session.js'
+import { getRequestUser } from '$lib/server/auth/session.js'
 
 export const GET: RequestHandler = async (event) => {
   try {
-    const user = await getUserFromEvent(event)
+    const user = await getRequestUser(event)
 
     const periodType = event.url.searchParams.get('period_type') || 'all_time'
     const metric = event.url.searchParams.get('metric') || 'tokens'

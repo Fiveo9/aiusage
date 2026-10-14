@@ -1,12 +1,16 @@
 import { sql } from '$lib/server/db/pool.js'
 
 interface ConfigEntry {
-  value: number
+  /** null: the key has no row in site_config, so callers use their default. */
+  value: number | null
   updatedAt: number
 }
 
 const CACHE_TTL_MS = 60_000
 const cache = new Map<string, ConfigEntry>()
+// Bumped whenever the cache is written outside readConfig, so that a read
+// which started before a save does not put its older result over the saved one.
+let cacheGeneration = 0
 
 async function readConfig(key: string): Promise<number | null> {
   const cached = cache.get(key)
@@ -14,13 +18,15 @@ async function readConfig(key: string): Promise<number | null> {
     return cached.value
   }
 
+  const generation = cacheGeneration
   try {
     const rows = await sql`SELECT value FROM site_config WHERE key = ${key}`
     const row = rows[0] as { value: number } | undefined
-    if (row) {
-      cache.set(key, { value: row.value, updatedAt: Date.now() })
-      return row.value
+    const value = row ? row.value : null
+    if (generation === cacheGeneration) {
+      cache.set(key, { value, updatedAt: Date.now() })
     }
+    return value
   } catch {
     // DB unavailable (e.g. tests without DB) — fall back to default
   }
@@ -35,7 +41,7 @@ export async function getConfig(key: string, defaultValue: number): Promise<numb
 function getConfigSync(key: string, defaultValue: number): number {
   const cached = cache.get(key)
   if (cached && Date.now() - cached.updatedAt < CACHE_TTL_MS) {
-    return cached.value
+    return cached.value ?? defaultValue
   }
   return defaultValue
 }
@@ -46,6 +52,7 @@ export async function setConfig(key: string, value: number, description: string,
     VALUES (${key}, ${value}, ${description}, NOW(), ${userId})
     ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = NOW(), updated_by = ${userId}
   `
+  cacheGeneration++
   cache.set(key, { value, updatedAt: Date.now() })
 }
 
@@ -59,6 +66,7 @@ export async function getAllConfigs(): Promise<Record<string, { value: number; d
 }
 
 export function invalidateConfigCache(): void {
+  cacheGeneration++
   cache.clear()
 }
 

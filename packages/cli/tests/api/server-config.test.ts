@@ -1,11 +1,15 @@
 // packages/cli/tests/api/server-config.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import http from 'node:http'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { initializeDatabase } from '../../src/db/index.js'
 vi.mock('../../src/github/credentials.js', () => ({
   saveGitHubCredentials: vi.fn(() => '11111111-1111-1111-1111-111111111111'),
   loadGitHubCredentials: vi.fn(),
+  deleteGitHubCredentials: vi.fn(),
 }))
 
 vi.mock('../../src/config.js', async (importOriginal) => {
@@ -41,6 +45,23 @@ vi.mock('../../src/init.js', async (importOriginal) => {
 import { createApiServer } from '../../src/api/server.js'
 import { AIUSAGE_DIR, buildConsentConfig, loadConfig, saveConfig, loadCredential } from '../../src/config.js'
 import { getState, setState, setSyncConsent } from '../../src/init.js'
+import { deleteGitHubCredentials, saveGitHubCredentials } from '../../src/github/credentials.js'
+
+/**
+ * Whether another process can take the settings lock now, as one saving
+ * state.json or config.json would. Runs synchronously, so called from inside
+ * a mocked keychain write it blocks this process the way a keychain prompt
+ * does.
+ */
+function lockFreeForAnotherProcess(): boolean {
+  mkdirSync(AIUSAGE_DIR, { recursive: true })
+  const child = spawnSync(process.execPath, ['-e', `
+    const Database = require('better-sqlite3')
+    const lock = new Database(process.argv[1], { timeout: 500 })
+    try { lock.exec('BEGIN EXCLUSIVE'); lock.exec('COMMIT') } catch { process.exit(3) }
+  `, join(AIUSAGE_DIR, 'settings.lock')], { cwd: join(__dirname, '..', '..'), stdio: ['ignore', 'ignore', 'inherit'] })
+  return child.status === 0
+}
 
 describe('GET /api/config', () => {
   let db: Database.Database
@@ -377,6 +398,36 @@ describe('PUT /api/config', () => {
 
     expect(res.status).toBe(200)
     expect(vi.mocked(saveConfig)).toHaveBeenCalledWith({})
+  })
+
+  it('stores a new GitHub token before taking the settings lock, so other processes can save meanwhile', async () => {
+    vi.mocked(loadConfig).mockReturnValue({ sync: { backend: 'github', repo: 'user/repo' } } as any)
+    let freeDuringKeychainWrite: boolean | undefined
+    vi.mocked(saveGitHubCredentials).mockImplementationOnce(() => {
+      freeDuringKeychainWrite = lockFreeForAnotherProcess()
+      return '22222222-2222-2222-2222-222222222222'
+    })
+
+    const res = await fetch(`${baseUrl}/api/config`, { method: 'PUT', body: JSON.stringify({ syncCredentials: { githubToken: 'ghp_new' } }) })
+
+    expect(res.status).toBe(200)
+    expect(freeDuringKeychainWrite).toBe(true)
+    expect(vi.mocked(saveGitHubCredentials)).toHaveBeenCalledWith({ method: 'pat', accessToken: 'ghp_new' })
+    expect(vi.mocked(saveConfig).mock.calls[0][0].sync?.githubAuth).toEqual({ method: 'pat', credentialId: '22222222-2222-2222-2222-222222222222' })
+    expect(vi.mocked(deleteGitHubCredentials)).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['the config does not use it (an S3 target)', { sync: { backend: 's3', bucket: 'bucket' } }, {}],
+    ['the request is refused', { sync: { backend: 'github', repo: 'user/repo' } }, { syncInterval: 5 }],
+  ])('removes a stored GitHub token again when %s', async (_case, config, extra) => {
+    vi.mocked(loadConfig).mockReturnValue(config as any)
+    vi.mocked(deleteGitHubCredentials).mockClear()
+
+    await fetch(`${baseUrl}/api/config`, { method: 'PUT', body: JSON.stringify({ ...extra, syncCredentials: { githubToken: 'ghp_unused' } }) })
+
+    expect(vi.mocked(deleteGitHubCredentials)).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111')
+    for (const [saved] of vi.mocked(saveConfig).mock.calls) expect(JSON.stringify(saved)).not.toContain('11111111-1111-1111-1111-111111111111')
   })
 
   it('returns 400 for invalid JSON', async () => {

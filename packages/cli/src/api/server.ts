@@ -9,6 +9,7 @@ import { AIUSAGE_DIR, buildConsentConfig, loadConfig, saveConfig, updateConfig }
 import { withSettingsLock } from '../settings-lock.js'
 import { JsonFileError } from '../json-file.js'
 import { GitHubAuthError } from '../github/errors.js'
+import { deleteGitHubCredentials, saveGitHubCredentials } from '../github/credentials.js'
 import { browserProtocol, isTrustedApiRequest } from './trust.js'
 import { credentialStatus, publicSyncConfig, setSyncCredentials } from './credential-settings.js'
 import { createGitHubDeviceSessions } from '../github/device-sessions.js'
@@ -1984,7 +1985,20 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           // Set once config.json is written: a failure after that point (the
           // consent in state.json) must not be reported as nothing saved.
           let configSaved = false
+          const syncCredentials = update.syncCredentials && typeof update.syncCredentials === 'object'
+            ? update.syncCredentials as Record<string, unknown> : undefined
+          // A new GitHub token goes to the OS keychain first, outside the
+          // settings lock: the keychain can wait on the user (an access
+          // prompt), and other processes must not wait on that to save
+          // state.json or config.json. It is removed again unless the saved
+          // config refers to it.
+          let storedTokenId: string | undefined
+          let storedTokenKept = false
           try {
+            const githubToken = syncCredentials?.githubToken
+            if (typeof githubToken === 'string' && githubToken) {
+              storedTokenId = saveGitHubCredentials({ method: 'pat', accessToken: githubToken })
+            }
             // Read, change and save under the settings lock, so that a change
             // another process saves meanwhile (`aiusage init`, a login, a
             // sync) is not written over with the copy read here.
@@ -2123,12 +2137,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                 else delete existing.credentials
               }
 
-              if (update.syncCredentials && typeof update.syncCredentials === 'object') {
-                setSyncCredentials(existing, update.syncCredentials as Record<string, unknown>)
-              }
+              if (syncCredentials) setSyncCredentials(existing, syncCredentials, storedTokenId)
 
               saveConfig(existing)
               configSaved = true
+              storedTokenKept = storedTokenId !== undefined && existing.sync?.githubAuth?.credentialId === storedTokenId
               const consentConfig = buildConsentConfig(existing)
               const syncTarget = getSyncTarget(existing.sync)
               if (consentConfig && syncTarget) {
@@ -2152,6 +2165,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               json(res, { error: { code: error instanceof JsonFileError ? 'SETTINGS_FILE_UNUSABLE' : 'CONFIG_NOT_SAVED', message } }, 500)
             }
             return
+          } finally {
+            if (storedTokenId && !storedTokenKept) deleteGitHubCredentials(storedTokenId)
           }
           options?.onConfigUpdated?.()
           json(res, { ok: true })

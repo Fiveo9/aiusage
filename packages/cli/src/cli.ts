@@ -448,6 +448,9 @@ program
         if (ignored) {
           console.log('  Some remote lines belong to a different device than the namespace they are in. Run "aiusage sync --repair" for details.')
         }
+        if ('rejectedCount' in result && result.rejectedCount) {
+          console.log(`  Note: ${result.rejectedCount} local record(s) were not uploaded: the cloud cannot store them (a missing tool or model, or a value out of range). They stay on this device as unsynced and are sent again with the next sync.`)
+        }
         if ('collisionCount' in result && result.collisionCount) {
           console.log(`  WARNING: ${result.collisionCount} local record(s) share a sync id with another record and were not uploaded. Run "aiusage sync --repair" for details.`)
         }

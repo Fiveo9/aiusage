@@ -7,9 +7,19 @@
 
 ## [未发布]
 
+---
+
+## [1.5.22] - 2026-10-14
+
+强化本地状态与定时上传的可靠性，让 LiteLLM 定价结果保持确定，并减少站点数据库查询。
+
 ### 修复
+- **排行榜按月自动上传会连续不停地上传**（[#131](https://github.com/juliantanx/aiusage/pull/131)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — “每月”间隔（2592000000 毫秒）超过了 Node 定时器能保存的最大延迟，定时器因此每毫秒触发一次，`aiusage serve` 会连续不断地解析并上传。现在自动上传从上一次成功上传的时间起等待一个间隔，该时间保存在 `state.json` 中，保存配置或重启不再重新计时。手动上传也计入该计划，失败或被拒绝的上传会在一小时后重试。已开启自动上传的安装在升级后首次启动 `serve` 时会上传一次。
+- **间隔设置可以保存任意数值**（[#131](https://github.com/juliantanx/aiusage/pull/131)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `refreshInterval` 小于 1 秒、`syncInterval` 小于 1 分钟、`leaderboardUploadInterval` 不在 1 小时到 365 天之间，或刷新、同步间隔超过定时器上限（2^31 − 1 毫秒）时，`PUT /api/config` 现在返回 400 `INVALID_INTERVAL`。留空或填 0 仍会移除该设置。
 - **无法读取的 `state.json` 或 `config.json` 会被覆盖**（[#132](https://github.com/juliantanx/aiusage/pull/132)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 文件存在但无法解析时被当作不存在，下一次保存会用默认内容覆盖它：被截断的 `state.json` 会让安装获得新的设备标识并丢失同步授权，带有笔误的 `config.json` 会丢失设置。现在两个文件都通过临时文件加重命名的方式写入，无法读取的文件不会再被覆盖。命令会输出指明该文件的错误信息，保持文件不变，并以非零状态退出。
 - **后台同步失败会终止 `aiusage serve`**（[#132](https://github.com/juliantanx/aiusage/pull/132)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 后台同步中抛出的错误成为未处理的 Promise 拒绝并使进程退出；在没有 `state.json` 的安装上进行云同步就是触发方式之一。现在该错误会被捕获并显示在同步状态中，每个命令运行前都会创建 `state.json`，同步遇到缺失或无法读取的状态文件时会报告为一次失败的运行。
+- **LiteLLM 价格同步会让转售商的条目覆盖模型自身的价格**（[#133](https://github.com/juliantanx/aiusage/pull/133)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 同步时会去掉 id 的提供商前缀，因此 `aihubmix/claude-haiku-4-5`、`vertex_ai/claude-haiku-4-5` 和 `claude-haiku-4-5` 共用同一个价格键，文件中最后出现的条目生效。现在每个键只有一个来源：优先使用与键同名的条目，其次是模型开发商自己的条目，再按固定的提供商顺序选择（`aihubmix` 排在最后）；价格为零的条目不会覆盖有价格的条目。结果不再取决于文件中的顺序。已保存的价格会在下一次价格同步时更正。
+- **站点对每个未保存的配置项都查询数据库，并且每个请求加载两次会话**（[#134](https://github.com/juliantanx/aiusage/pull/134)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — `readConfig` 只在 `site_config` 中存在对应行时才缓存，因此在管理员保存表单之前每次读取都是一次查询，而一次上传会为每个快照读取十一项风控设置（五个快照共 57 次配置查询）。现在不存在的配置项与已保存的值一样缓存 60 秒，风控设置每次上传只读取一次，`requireUser` 和 `requireAdmin` 使用请求钩子已加载的用户。
 
 ---
 
@@ -553,6 +563,7 @@
 
 ---
 
+[1.5.22]: https://github.com/juliantanx/aiusage/compare/v1.5.21...v1.5.22
 [1.5.21]: https://github.com/juliantanx/aiusage/compare/v1.5.20...v1.5.21
 [1.5.20]: https://github.com/juliantanx/aiusage/compare/v1.5.19...v1.5.20
 [1.5.19]: https://github.com/juliantanx/aiusage/compare/v1.5.18...v1.5.19

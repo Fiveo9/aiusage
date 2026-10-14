@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.5.22] - 2026-10-14
+
+Harden local state and scheduled uploads, make LiteLLM pricing deterministic, and reduce site database work.
+
 ### Fixed
+- **Monthly leaderboard auto-upload uploaded continuously** ([#131](https://github.com/juliantanx/aiusage/pull/131) by [@aaroncchung](https://github.com/aaroncchung)) — the Monthly interval (2592000000 ms) is above the largest delay a Node timer holds, so the timer fired every millisecond and `aiusage serve` parsed and uploaded back to back. Auto-upload now waits one interval from the last successful upload, which is stored in `state.json`, so a config save or a restart no longer starts the wait again. Manual uploads count towards the schedule, and a failed or rejected upload is retried after an hour. An installation with auto-upload on uploads once at the first `serve` start after upgrading.
+- **Interval settings accepted any value** ([#131](https://github.com/juliantanx/aiusage/pull/131) by [@aaroncchung](https://github.com/aaroncchung)) — `PUT /api/config` now answers 400 `INVALID_INTERVAL` for a `refreshInterval` below 1 second, a `syncInterval` below 1 minute, a `leaderboardUploadInterval` outside 1 hour to 365 days, or a refresh or sync interval above the timer limit (2^31 − 1 ms). A blank or zero value still removes the setting.
 - **An unreadable `state.json` or `config.json` was overwritten** ([#132](https://github.com/juliantanx/aiusage/pull/132) by [@aaroncchung](https://github.com/aaroncchung)) — a file that exists but does not parse was treated as missing, and the next save wrote a default over it: a truncated `state.json` gave the installation a new device identity and dropped its sync consents, and a `config.json` with a typo lost its settings. Both files are now written through a temporary file and a rename, and a file that cannot be read is never written over. The command prints an error that names the file, leaves it untouched and exits non-zero.
 - **A failed background sync ended `aiusage serve`** ([#132](https://github.com/juliantanx/aiusage/pull/132) by [@aaroncchung](https://github.com/aaroncchung)) — an error thrown during a background sync was an unhandled rejection and stopped the process; cloud sync on an installation with no `state.json` was one way to reach it. The error is now caught and shown in the sync status, `state.json` is created before every command, and a sync reports a missing or unreadable state file as a failed run.
+- **LiteLLM price sync let a reseller's entry replace a model's own price** ([#133](https://github.com/juliantanx/aiusage/pull/133) by [@aaroncchung](https://github.com/aaroncchung)) — the sync drops the provider prefix of an id, so `aihubmix/claude-haiku-4-5`, `vertex_ai/claude-haiku-4-5` and `claude-haiku-4-5` share one price key, and the last entry in the file won. Each key now has one owner: the entry listed under the key itself, otherwise the model developer's own entry, otherwise a fixed provider order with `aihubmix` last; an entry priced at zero does not take a key from a priced one. The result no longer depends on the order of the file. Stored prices are corrected at the next price sync.
+- **Site queried the database for every unsaved config key and loaded the session twice per request** ([#134](https://github.com/juliantanx/aiusage/pull/134) by [@aaroncchung](https://github.com/aaroncchung)) — `readConfig` cached a value only when `site_config` had a row for the key, so until an admin saved the form every lookup was a query, and an upload read eleven risk settings per snapshot (57 config queries for five snapshots). A missing key is now cached for the same 60 seconds as a stored one, the risk settings are read once per upload, and `requireUser` and `requireAdmin` use the user the request hook already loaded.
 
 ---
 
@@ -557,6 +567,7 @@ Fix multi-device sync correctness across GitHub, S3/R2, and Cloud.
 
 ---
 
+[1.5.22]: https://github.com/juliantanx/aiusage/compare/v1.5.21...v1.5.22
 [1.5.21]: https://github.com/juliantanx/aiusage/compare/v1.5.20...v1.5.21
 [1.5.20]: https://github.com/juliantanx/aiusage/compare/v1.5.19...v1.5.20
 [1.5.19]: https://github.com/juliantanx/aiusage/compare/v1.5.18...v1.5.19

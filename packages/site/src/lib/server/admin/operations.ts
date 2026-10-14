@@ -82,9 +82,16 @@ async function hideSnapshotPeriod(tx: Sql, snapshotId: string): Promise<Snapshot
 // need not be this snapshot's: a later upload re-points the rows it contains,
 // and leaves alone the rows of tools and models it does not mention. A row is
 // published when it was written by this snapshot's upload, or by an upload of
-// the period that was accepted or has been approved. A row written by another
-// flagged upload that is not approved stays as it is, and so does a row whose
-// upload history has been pruned (upload_request_id IS NULL).
+// the period that was accepted (and not hidden or rejected since) or has been
+// approved. A row written by another flagged upload that is not approved stays
+// as it is, and so does a row whose upload history has been pruned
+// (upload_request_id IS NULL).
+//
+// An approval decides about this snapshot only. It publishes nothing while
+// another snapshot of the period stands hidden or rejected (a hide covers the
+// whole period, so lifting it takes an approval of that snapshot), and it
+// leaves alone a row an admin hid on its own (entry_hidden), which only
+// restoreLeaderboardEntry publishes again.
 async function publishSnapshotPeriod(tx: Sql, snapshotId: string): Promise<SnapshotModerationResult> {
   const published = await tx`
     UPDATE leaderboard_metrics lm
@@ -94,6 +101,14 @@ async function publishSnapshotPeriod(tx: Sql, snapshotId: string): Promise<Snaps
       AND lm.user_id = s.user_id
       AND lm.period_type = s.period_type
       AND lm.period_start = s.period_start
+      AND NOT lm.entry_hidden
+      AND NOT EXISTS (
+        SELECT 1 FROM upload_snapshots hold
+        WHERE hold.user_id = s.user_id
+          AND hold.period_type = s.period_type
+          AND hold.period_start = s.period_start
+          AND hold.review_status IN ('hidden', 'rejected')
+      )
       AND (
         lm.upload_request_id = s.upload_request_id
         OR EXISTS (
@@ -102,7 +117,10 @@ async function publishSnapshotPeriod(tx: Sql, snapshotId: string): Promise<Snaps
             AND src.user_id = s.user_id
             AND src.period_type = s.period_type
             AND src.period_start = s.period_start
-            AND (src.status <> 'flagged' OR src.review_status = 'approved')
+            AND (
+              src.review_status = 'approved'
+              OR (src.status <> 'flagged' AND src.review_status IS NULL)
+            )
         )
       )
     RETURNING lm.id
@@ -148,8 +166,10 @@ function moderationMetadata(result: SnapshotModerationResult): Record<string, un
   }
 }
 
+// A row hidden on its own stays hidden through snapshot approvals and later
+// uploads of its period, until restoreLeaderboardEntry.
 export async function hideLeaderboardEntry(adminUserId: string, entryId: string): Promise<void> {
-  await sql`UPDATE leaderboard_metrics SET visibility = 'hidden', updated_at = NOW() WHERE id = ${entryId}`
+  await sql`UPDATE leaderboard_metrics SET visibility = 'hidden', entry_hidden = TRUE, updated_at = NOW() WHERE id = ${entryId}`
   await logAdminAction(adminUserId, 'hide_metric', 'leaderboard_metrics', entryId, 'Metric hidden')
   invalidateLeaderboardCache()
 }
@@ -167,7 +187,7 @@ export async function restoreLeaderboardEntry(adminUserId: string, entryId: stri
   if (metric.status !== 'active') throw new Error('Cannot restore: user is not active')
   if (metric.leaderboard_visibility !== 'public') throw new Error('Cannot restore: user leaderboard visibility is not public')
 
-  await sql`UPDATE leaderboard_metrics SET visibility = 'public', updated_at = NOW() WHERE id = ${entryId}`
+  await sql`UPDATE leaderboard_metrics SET visibility = 'public', entry_hidden = FALSE, updated_at = NOW() WHERE id = ${entryId}`
   await logAdminAction(adminUserId, 'restore_metric', 'leaderboard_metrics', entryId, 'Metric restored')
   invalidateLeaderboardCache()
 }

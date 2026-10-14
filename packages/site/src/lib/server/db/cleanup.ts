@@ -21,11 +21,8 @@ export function startCleanupCron(): void {
       const nonces = await sql`DELETE FROM upload_nonces WHERE created_at < ${nonceCutoff}`
       console.log(`[cleanup] Removed ${nonces.count} old nonces`)
 
-      // Clean old upload_requests. Their upload_snapshots go with them;
-      // leaderboard_metrics rows stay (the foreign key is ON DELETE SET NULL).
-      const uploadCutoff = new Date(now.getTime() - uploadDays * 24 * 60 * 60 * 1000)
-      const uploads = await sql`DELETE FROM upload_requests WHERE created_at < ${uploadCutoff}`
-      console.log(`[cleanup] Removed ${uploads.count} old upload requests`)
+      const uploads = await pruneUploadHistory(uploadDays, now)
+      console.log(`[cleanup] Removed ${uploads} old upload requests`)
 
       // Clean expired device auth requests
       const authCutoff = new Date(now.getTime() - deviceAuthHours * 60 * 60 * 1000)
@@ -43,4 +40,23 @@ export function startCleanupCron(): void {
   })
 
   console.log('[cleanup] Cron job registered (daily at 03:00 UTC)')
+}
+
+// Deletes upload_requests older than the retention. Their upload_snapshots go
+// with them; leaderboard_metrics rows stay (the foreign key is ON DELETE SET NULL).
+// An upload with a snapshot an admin hid or rejected is kept: that review is
+// what keeps its period off the leaderboard (admin/operations.ts), and deleting
+// it would let a later approval of another snapshot publish the period again.
+export async function pruneUploadHistory(retentionDays: number, now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
+  const result = await sql`
+    DELETE FROM upload_requests r
+    WHERE r.created_at < ${cutoff}
+      AND NOT EXISTS (
+        SELECT 1 FROM upload_snapshots s
+        WHERE s.upload_request_id = r.id
+          AND s.review_status IN ('hidden', 'rejected')
+      )
+  `
+  return result.count
 }

@@ -455,6 +455,9 @@ program
         if ('rejectedCount' in result && result.rejectedCount) {
           console.log(`  Note: ${result.rejectedCount} local record(s) were not uploaded: the cloud cannot store them (a missing tool or model, or a value out of range). They stay on this device as unsynced and are sent again with the next sync.`)
         }
+        if ('unretiredCount' in result && result.unretiredCount) {
+          console.log(`  Note: ${result.unretiredCount} stale remote record(s) could not be retracted: the cloud did not apply their deletion. They are retracted again with the next sync.`)
+        }
         if ('collisionCount' in result && result.collisionCount) {
           console.log(`  WARNING: ${result.collisionCount} local record(s) share a sync id with another record and were not uploaded. Run "aiusage sync --repair" for details.`)
         }

@@ -12,6 +12,21 @@ export interface RejectedRecord {
   reason: 'missing_field' | 'invalid_value'
 }
 
+/** A tombstone of a push that was not applied, and why. */
+export interface RejectedTombstone {
+  record_id: string | null
+  reason: 'missing_field' | 'invalid_value'
+}
+
+/** Why a pushed tombstone cannot be applied, or null when it can (see `recordProblem`). */
+function tombstoneProblem(tombstone: Record<string, unknown>): RejectedTombstone['reason'] | null {
+  if (!tombstone.record_id) return 'missing_field'
+  if (typeof tombstone.record_id !== 'string' || tombstone.record_id.includes('\u0000')) return 'invalid_value'
+  const updatedAt = tombstone.updatedAt
+  if (updatedAt != null && (typeof updatedAt !== 'number' || !Number.isSafeInteger(updatedAt) || updatedAt < 0)) return 'invalid_value'
+  return null
+}
+
 const BIGINT_FIELDS = ['ts', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'updatedAt'] as const
 const TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
 // cost is NUMERIC(20, 8): at most 12 digits before the decimal point.
@@ -164,6 +179,9 @@ export const POST: RequestHandler = async ({ request }) => {
   // Records that were not stored at all. The client must not count them as
   // synced; older clients ignore the field.
   const rejected: RejectedRecord[] = []
+  // Tombstones that were not applied, likewise: the client keeps them to send
+  // again instead of forgetting them as retracted.
+  const rejectedTombstones: RejectedTombstone[] = []
 
   try {
     await sql.begin(async (tx) => {
@@ -238,9 +256,9 @@ export const POST: RequestHandler = async ({ request }) => {
 
       // Process tombstones
       for (const tombstone of tombstones) {
-        const updatedAt = tombstone?.updatedAt
-        if (typeof tombstone?.record_id !== 'string' || !tombstone.record_id || tombstone.record_id.includes('\u0000')
-          || (updatedAt != null && (typeof updatedAt !== 'number' || !Number.isSafeInteger(updatedAt) || updatedAt < 0))) {
+        const problem = tombstone !== null && typeof tombstone === 'object' ? tombstoneProblem(tombstone) : 'invalid_value'
+        if (problem) {
+          rejectedTombstones.push({ record_id: typeof tombstone?.record_id === 'string' ? tombstone.record_id : null, reason: problem })
           skipped++
           continue
         }
@@ -287,6 +305,7 @@ export const POST: RequestHandler = async ({ request }) => {
       updated,
       skipped,
       rejected,
+      rejected_tombstones: rejectedTombstones,
       sync_generation: serverGeneration,
       server_cursor: serverCursor
     })

@@ -72,6 +72,12 @@ export interface CloudSyncResult {
    * again with the next sync, by then possibly corrected by a re-parse.
    */
   rejectedCount?: number
+  /**
+   * Retired wire ids (see `retiredCount`) not retracted because the cloud
+   * cannot apply their tombstones, or because the server did not apply them.
+   * They stay queued and go out again with the next sync.
+   */
+  unretiredCount?: number
   error?: string
 }
 
@@ -204,7 +210,7 @@ export class CloudSyncOrchestrator {
       }
       // Each batch is marked as synced once the server accepted it (see `push`).
       const { uploadedCount, rejectedCount } = await this.push(pullResult.syncGeneration)
-      const retiredCount = await this.pushRetiredIds(pullResult.syncGeneration)
+      const { retiredCount, unretiredCount } = await this.pushRetiredIds(pullResult.syncGeneration)
 
       this.options.onProgress?.({
         phase: 'finalizing',
@@ -221,6 +227,7 @@ export class CloudSyncOrchestrator {
         prunedCount,
         retiredCount,
         ...(rejectedCount > 0 ? { rejectedCount } : {}),
+        ...(unretiredCount > 0 ? { unretiredCount } : {}),
       }
     } catch (error) {
       const message = error instanceof CloudSyncError ? error.message
@@ -337,18 +344,28 @@ export class CloudSyncOrchestrator {
   /**
    * The cloud store is upsert-only, so wire ids this device will never publish
    * again (migration v14: Antigravity/Trae records re-keyed to their parser
-   * ids) are retracted with tombstones. Each batch is forgotten locally only
-   * once the server accepted it, so an interrupted sync retries the rest.
+   * ids) are retracted with tombstones. An id is forgotten locally only once
+   * the server applied its tombstone, so an interrupted sync retries the rest.
+   * One the cloud cannot apply (an id PostgreSQL text cannot hold) is not
+   * sent, and one the server reports as rejected is kept; both are retried.
    */
-  private async pushRetiredIds(syncGeneration: number): Promise<number> {
+  private async pushRetiredIds(syncGeneration: number): Promise<{ retiredCount: number; unretiredCount: number }> {
     const retired = getRetiredWireIds(this.db, this.target)
-    if (retired.length === 0) return 0
+    let retiredCount = 0
+    let unretiredCount = 0
     const now = Date.now()
     for (let i = 0; i < retired.length; i += BATCH_SIZE) {
       const batch = retired.slice(i, i + BATCH_SIZE)
-      await cloudPush([], batch.map(record_id => ({ record_id, updatedAt: now })), this.options.deviceInstanceId, syncGeneration)
-      clearRetiredWireIds(this.db, this.target, batch)
+      const sendable = batch.filter(id => id && !id.includes('\u0000'))
+      unretiredCount += batch.length - sendable.length
+      if (sendable.length === 0) continue
+      const result = await cloudPush([], sendable.map(record_id => ({ record_id, updatedAt: now })), this.options.deviceInstanceId, syncGeneration)
+      const rejected = new Set(result.rejectedTombstoneIds ?? [])
+      const applied = sendable.filter(id => !rejected.has(id))
+      clearRetiredWireIds(this.db, this.target, applied)
+      retiredCount += applied.length
+      unretiredCount += sendable.length - applied.length
     }
-    return retired.length
+    return { retiredCount, unretiredCount }
   }
 }

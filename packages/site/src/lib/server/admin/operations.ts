@@ -2,6 +2,7 @@ import { sql } from '../db/pool.js'
 import { nanoid } from 'nanoid'
 import { invalidateLeaderboardCache } from '../leaderboard/query.js'
 import { ensureCuratedPricingAliases } from '../pricing/curated-aliases.js'
+import { planLitellmPricing, type LitellmEntry } from '@aiusage/core'
 
 export async function banUser(adminUserId: string, targetUserId: string, reason: string): Promise<void> {
   await sql`UPDATE users SET status = 'banned', banned_at = NOW(), ban_reason = ${reason}, updated_at = NOW() WHERE id = ${targetUserId}`
@@ -244,56 +245,34 @@ async function logAdminAction(adminUserId: string, action: string, targetType: s
 
 const LITELLM_PRICING_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
 
-interface LitellmEntry {
-  input_cost_per_token?: number
-  output_cost_per_token?: number
-  cache_read_input_token_cost?: number
-  cache_creation_input_token_cost?: number
-  input_cost_per_second?: number
-  output_cost_per_second?: number
-  litellm_provider?: string
-  mode?: string
-}
-
-function normalizeModelKey(sourceModelId: string): string {
-  const slash = sourceModelId.indexOf('/')
-  return slash > 0 ? sourceModelId.slice(slash + 1) : sourceModelId
-}
-
-function aliasesFor(sourceModelId: string, modelKey: string): string[] {
-  const aliases = new Set([sourceModelId, modelKey])
-  if (modelKey.startsWith('claude-')) aliases.add(modelKey.replace(/-\d{8}$/, ''))
-  return [...aliases].filter(Boolean)
-}
-
-function parseLitellmEntry(sourceModelId: string, entry: LitellmEntry) {
-  if (entry.mode && entry.mode !== 'chat' && entry.mode !== 'completion' && entry.mode !== 'responses') return null
-  if (entry.input_cost_per_second != null || entry.output_cost_per_second != null) return null
-  if (typeof entry.input_cost_per_token !== 'number' || typeof entry.output_cost_per_token !== 'number') return null
-  const modelKey = normalizeModelKey(sourceModelId)
-  if (!modelKey || modelKey.includes('*')) return null
-  return {
-    modelKey,
-    provider: (entry.litellm_provider ?? '').trim().toLowerCase(),
-    input: entry.input_cost_per_token * 1_000_000,
-    output: entry.output_cost_per_token * 1_000_000,
-    cacheRead: typeof entry.cache_read_input_token_cost === 'number' ? entry.cache_read_input_token_cost * 1_000_000 : null,
-    cacheWrite: typeof entry.cache_creation_input_token_cost === 'number' ? entry.cache_creation_input_token_cost * 1_000_000 : null,
-  }
-}
-
-/** Sync builtin entries from LiteLLM. User-origin rows are preserved. */
+/**
+ * Sync builtin entries from LiteLLM. User-origin rows are preserved.
+ *
+ * Several LiteLLM ids reduce to one model key (`aihubmix/claude-haiku-4-5`,
+ * `vertex_ai/claude-haiku-4-5` and `claude-haiku-4-5`); `planLitellmPricing`
+ * (@aiusage/core, shared with the CLI's price sync) gives each key one owner,
+ * so the stored price does not depend on the order of the file and is the
+ * one the CLI stores. The other ids stay aliases of the key.
+ */
 export async function syncPricingFromLitellm(adminUserId: string): Promise<{ added: number; updated: number; skipped: number; userPreserved: number; aliasesAdded: number; aliasesUpdated: number }> {
   const response = await fetch(LITELLM_PRICING_URL, { headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`LiteLLM pricing fetch failed: HTTP ${response.status}`)
   const data = await response.json() as Record<string, LitellmEntry>
-  let added = 0, updated = 0, skipped = 0, userPreserved = 0, aliasesAdded = 0, aliasesUpdated = 0
+  const plan = planLitellmPricing(data)
+  let added = 0, updated = 0, userPreserved = 0, aliasesAdded = 0, aliasesUpdated = 0
+  const skipped = plan.skipped
 
   await sql.begin(async (tx) => {
-    for (const [sourceModelId, rawEntry] of Object.entries(data)) {
-      const entry = parseLitellmEntry(sourceModelId, rawEntry)
-      if (!entry) { skipped++; continue }
-
+    for (const owner of plan.prices) {
+      const entry = {
+        modelKey: owner.modelKey,
+        provider: owner.provider,
+        input: owner.price.input,
+        output: owner.price.output,
+        cacheRead: owner.price.cacheRead ?? null,
+        cacheWrite: owner.price.cacheWrite ?? null,
+      }
+      const sourceModelId = owner.sourceModelId
       const existing = await tx`SELECT origin, input, output, cache_read, cache_write, currency FROM model_prices WHERE model_key = ${entry.modelKey}`
       const row = existing[0] as { origin: string; input: string; output: string; cache_read: string | null; cache_write: string | null; currency: string } | undefined
       if (row?.origin === 'user') {
@@ -317,23 +296,32 @@ export async function syncPricingFromLitellm(adminUserId: string): Promise<{ add
         `
         if (changed) updated++
       }
+    }
 
-      for (const alias of aliasesFor(sourceModelId, entry.modelKey)) {
-        const before = await tx`SELECT model_key, origin, enabled FROM model_price_aliases WHERE alias = ${alias}` as Array<{ model_key: string; origin: string; enabled: boolean }>
-        await tx`
-          INSERT INTO model_price_aliases (alias, model_key, match_type, provider, priority, source, origin, enabled)
-          VALUES (${alias}, ${entry.modelKey}, 'exact', ${entry.provider}, 100, 'litellm', 'builtin', TRUE)
-          ON CONFLICT (alias) DO UPDATE SET
-            model_key = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.model_key ELSE model_price_aliases.model_key END,
-            provider = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.provider ELSE model_price_aliases.provider END,
-            source = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.source ELSE model_price_aliases.source END,
-            enabled = CASE WHEN model_price_aliases.origin = 'builtin' THEN TRUE ELSE model_price_aliases.enabled END,
-            updated_at = NOW()
-        `
-        const existingAlias = before[0]
-        if (!existingAlias) aliasesAdded++
-        else if (existingAlias.origin !== 'user' && (existingAlias.model_key !== entry.modelKey || existingAlias.enabled !== true)) aliasesUpdated++
+    for (const planned of plan.aliases) {
+      // A dated Claude shortcut must not sit on a name that has a price of
+      // its own the file does not list (a curated price, or a row an earlier
+      // sync left): it points at that row instead.
+      let target = { modelKey: planned.modelKey, provider: planned.provider }
+      if (planned.datedShortcut) {
+        const own = await tx`SELECT provider FROM model_prices WHERE model_key = ${planned.alias} AND status = 'active'` as Array<{ provider: string }>
+        if (own[0]) target = { modelKey: planned.alias, provider: own[0].provider }
       }
+      const alias = planned.alias
+      const before = await tx`SELECT model_key, origin, enabled FROM model_price_aliases WHERE alias = ${alias}` as Array<{ model_key: string; origin: string; enabled: boolean }>
+      await tx`
+        INSERT INTO model_price_aliases (alias, model_key, match_type, provider, priority, source, origin, enabled)
+        VALUES (${alias}, ${target.modelKey}, 'exact', ${target.provider}, 100, 'litellm', 'builtin', TRUE)
+        ON CONFLICT (alias) DO UPDATE SET
+          model_key = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.model_key ELSE model_price_aliases.model_key END,
+          provider = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.provider ELSE model_price_aliases.provider END,
+          source = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.source ELSE model_price_aliases.source END,
+          enabled = CASE WHEN model_price_aliases.origin = 'builtin' THEN TRUE ELSE model_price_aliases.enabled END,
+          updated_at = NOW()
+      `
+      const existingAlias = before[0]
+      if (!existingAlias) aliasesAdded++
+      else if (existingAlias.origin !== 'user' && (existingAlias.model_key !== target.modelKey || existingAlias.enabled !== true)) aliasesUpdated++
     }
 
     // Curated aliases for model names no pricing source lists verbatim; they

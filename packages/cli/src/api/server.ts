@@ -7,6 +7,8 @@ import type Database from 'better-sqlite3'
 import { calculateCostForPrice, removePriceOverride, inferProvider, normalizeQoderModel, resolveExchangeRate, fetchExchangeRate, TOOLS, type PriceEntry } from '@aiusage/core'
 import { AIUSAGE_DIR, buildConsentConfig, loadConfig, saveConfig, updateConfig } from '../config.js'
 import { withSettingsLock } from '../settings-lock.js'
+import { JsonFileError } from '../json-file.js'
+import { GitHubAuthError } from '../github/errors.js'
 import { browserProtocol, isTrustedApiRequest } from './trust.js'
 import { credentialStatus, publicSyncConfig, setSyncCredentials } from './credential-settings.js'
 import { createGitHubDeviceSessions } from '../github/device-sessions.js'
@@ -1972,8 +1974,17 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         if (req.method === 'PUT') {
           let body = ''
           for await (const chunk of req) body += chunk
+          let update: Record<string, unknown>
           try {
-            const update = JSON.parse(body) as Record<string, unknown>
+            update = JSON.parse(body) as Record<string, unknown>
+          } catch {
+            json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
+            return
+          }
+          // Set once config.json is written: a failure after that point (the
+          // consent in state.json) must not be reported as nothing saved.
+          let configSaved = false
+          try {
             // Read, change and save under the settings lock, so that a change
             // another process saves meanwhile (`aiusage init`, a login, a
             // sync) is not written over with the copy read here.
@@ -2117,6 +2128,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               }
 
               saveConfig(existing)
+              configSaved = true
               const consentConfig = buildConsentConfig(existing)
               const syncTarget = getSyncTarget(existing.sync)
               if (consentConfig && syncTarget) {
@@ -2128,11 +2140,21 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               return true
             })
             if (!saved) return
-            options?.onConfigUpdated?.()
-            json(res, { ok: true })
-          } catch {
-            json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (configSaved) {
+              // The settings are in config.json: run with them, and say what failed.
+              options?.onConfigUpdated?.()
+              json(res, { error: { code: 'CONSENT_NOT_SAVED', message: `The settings were saved, but the sync consent was not: ${message}` } }, 500)
+            } else if (error instanceof GitHubAuthError) {
+              json(res, { error: { code: 'INVALID_SYNC_CONFIG', message } }, 400)
+            } else {
+              json(res, { error: { code: error instanceof JsonFileError ? 'SETTINGS_FILE_UNUSABLE' : 'CONFIG_NOT_SAVED', message } }, 500)
+            }
+            return
           }
+          options?.onConfigUpdated?.()
+          json(res, { ok: true })
           return
         }
       }

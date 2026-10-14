@@ -323,6 +323,9 @@ program
         for (const r of propagation.backends) {
           if (r.status === 'ok') {
             console.log(`  ${r.backend.label}: ${r.detail}`)
+          } else if (r.status === 'failed') {
+            console.error(`  ${r.backend.label}: failed — ${r.detail}. The remote data was not removed; run the command again to retry.`)
+            process.exitCode = 1
           } else {
             console.log(`  ${r.backend.label}: skipped — ${r.detail}`)
           }
@@ -330,10 +333,11 @@ program
       } catch (err) {
         if (err instanceof JsonFileError) throw err
         console.error(`  Propagation failed: ${err instanceof Error ? err.message : err}`)
+        process.exitCode = 1
       }
     }
 
-    console.log('\nDone.')
+    console.log(process.exitCode ? '\nDone locally; the remote clean did not complete.' : '\nDone.')
   })
 
 // recalc command

@@ -135,10 +135,14 @@ export async function githubToken(sync: SyncConfig): Promise<string> {
 }
 
 /** New PATs use the same secure store. Existing config.json PATs remain readable. */
-export function setPat(config: Config, token: string): void {
+/**
+ * `credentialId`: the token already stored with `saveGitHubCredentials`, for
+ * a caller that has to store it before taking the settings lock.
+ */
+export function setPat(config: Config, token: string, credentialId?: string): void {
   if (!config.sync?.repo) throw new GitHubAuthError('Select a repository first.')
   validateRepo(config.sync.repo)
-  config.sync.githubAuth = { method: 'pat', credentialId: saveGitHubCredentials({ method: 'pat', accessToken: token }) }
+  config.sync.githubAuth = { method: 'pat', credentialId: credentialId ?? saveGitHubCredentials({ method: 'pat', accessToken: token }) }
   delete config.sync.credentialRef
   if (config.credentials) delete config.credentials[`github/${config.sync.repo}/token`]
 }

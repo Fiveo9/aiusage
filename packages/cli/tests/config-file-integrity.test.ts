@@ -197,9 +197,10 @@ describe('config.json integrity (#104)', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device: 'renamed' }),
       })
-      // The handler answers every failure in its body with this response.
-      expect(response.status).toBe(400)
-      expect(await response.json()).toEqual({ error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } })
+      expect(response.status).toBe(500)
+      const body = await response.json() as { error: { code: string; message: string } }
+      expect(body.error.code).toBe('SETTINGS_FILE_UNUSABLE')
+      expect(body.error.message).toContain(CONFIG_PATH)
       expect(readFileSync(CONFIG_PATH, 'utf-8')).toBe(TYPO)
     })
 

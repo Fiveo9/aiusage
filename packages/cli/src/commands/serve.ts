@@ -81,12 +81,10 @@ export function serve(options: ServeOptions): void {
   }
 
   const syncRuntime = new SyncRuntimeController({
-    runSync: async (runtimeOptions) => {
-      await runDbWrite(async () => {
-        await runParse(options.db)
-        await runSync(options.db, runtimeOptions)
-      })
-    },
+    runSync: (runtimeOptions) => runDbWrite(async () => {
+      await runParse(options.db)
+      return runSync(options.db, runtimeOptions)
+    }),
     getPersistedState: () => getState(AIUSAGE_DIR),
     getCurrentTarget: () => getSyncTarget(loadConfig()?.sync),
   })

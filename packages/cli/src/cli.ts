@@ -21,8 +21,9 @@ import { runLeaderboardLogout } from './commands/leaderboard-logout.js'
 import { runLeaderboardView } from './commands/leaderboard-view.js'
 import { runMenu } from './commands/menu.js'
 import { createDatabase } from './db/index.js'
-import { getState } from './init.js'
+import { ensureAiusageDir, getState } from './init.js'
 import { AIUSAGE_DIR } from './config.js'
+import { JsonFileError } from './json-file.js'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -36,6 +37,15 @@ program
   .name('aiusage')
   .version(typeof __VERSION__ !== 'undefined' ? __VERSION__ : 'dev')
   .description('CLI tool for AI usage statistics')
+
+// Every command starts with a device identity on disk. Nothing else creates
+// `state.json` up front, and `aiusage sync` refuses to run without one. An
+// existing file is left alone, and a failure here is the command's to report.
+program.hook('preAction', () => {
+  try {
+    ensureAiusageDir(AIUSAGE_DIR)
+  } catch {}
+})
 
 // Default command: summary
 program
@@ -318,6 +328,7 @@ program
           }
         }
       } catch (err) {
+        if (err instanceof JsonFileError) throw err
         console.error(`  Propagation failed: ${err instanceof Error ? err.message : err}`)
       }
     }
@@ -368,11 +379,11 @@ program
         const existing = runInit(options)
         if (existing.success) { console.log(existing.message); return }
         await runGitHubLogin(options)
-      } catch (error) { console.error(safeGitHubError(error)); process.exitCode = 1 }
+      } catch (error) { if (error instanceof JsonFileError) throw error; console.error(safeGitHubError(error)); process.exitCode = 1 }
       return
     }
     let result
-    try { result = runInit(options) } catch { console.error('Cannot securely save credentials. Check the OS keychain.'); process.exitCode = 1; return }
+    try { result = runInit(options) } catch (error) { if (error instanceof JsonFileError) throw error; console.error('Cannot securely save credentials. Check the OS keychain.'); process.exitCode = 1; return }
     if (result.success) {
       console.log(`✓ ${result.message}`)
     } else {
@@ -387,7 +398,7 @@ program.command('github').description('Manage local GitHub sync authentication')
   .option('--repo <owner/repo>', 'Select the sync repository (required in headless mode)')
   .action(async (options) => {
     try { await runGitHubLogin(options) }
-    catch (error) { console.error(safeGitHubError(error)); process.exitCode = 1 }
+    catch (error) { if (error instanceof JsonFileError) throw error; console.error(safeGitHubError(error)); process.exitCode = 1 }
   })
 
 program
@@ -614,5 +625,21 @@ program
       process.exit(1)
     }
   })
+
+/**
+ * Run the command line. A `config.json` or `state.json` that exists but
+ * cannot be used ends the command with its message — which names the file,
+ * the problem and how to recover — and a non-zero exit code, instead of a
+ * stack trace. Any other error is not handled here.
+ */
+export async function runCli(argv: string[]): Promise<void> {
+  try {
+    await program.parseAsync(argv)
+  } catch (error) {
+    if (!(error instanceof JsonFileError)) throw error
+    console.error(`✗ ${error.message}`)
+    process.exit(1)
+  }
+}
 
 export { program }

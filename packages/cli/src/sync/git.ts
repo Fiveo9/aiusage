@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir, readdir, stat, unlink, rm } from 'node:fs/p
 import { join } from 'node:path'
 import { gitCredentialOptions, gitFailureSummary, GitIsolationError } from '../github/git-credentials.js'
 import { validateRepo, GitHubAuthError } from '../github/auth.js'
+import { JsonFileError } from '../json-file.js'
 
 const exec = promisify(execFile)
 
@@ -72,7 +73,9 @@ export class GitSyncBackend {
       // Network output is never consumed or surfaced: servers can echo secrets.
       return network ? '' : stdout.trim()
     } catch (error) {
-      if (error instanceof GitHubAuthError || error instanceof GitIsolationError) throw error
+      // A config.json that stopped parsing (the token is read from it) is a
+      // locally authored message too, and names the file and the way out.
+      if (error instanceof GitHubAuthError || error instanceof GitIsolationError || error instanceof JsonFileError) throw error
       // Never retain child-process message, stack, stdout, stderr, cmd, or cause:
       // only a sanitized one-line summary is surfaced (fixed phrases for network commands).
       const detail = gitFailureSummary(error, { network, token })

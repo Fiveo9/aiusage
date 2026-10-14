@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { program } from './cli.js'
+import { runCli } from './cli.js'
 
-program.parse(process.argv)
+void runCli(process.argv)

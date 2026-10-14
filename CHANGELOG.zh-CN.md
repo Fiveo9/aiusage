@@ -7,6 +7,10 @@
 
 ## [未发布]
 
+### 修复
+- **无法读取的 `state.json` 或 `config.json` 会被覆盖**（[#132](https://github.com/juliantanx/aiusage/pull/132)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 文件存在但无法解析时被当作不存在，下一次保存会用默认内容覆盖它：被截断的 `state.json` 会让安装获得新的设备标识并丢失同步授权，带有笔误的 `config.json` 会丢失设置。现在两个文件都通过临时文件加重命名的方式写入，无法读取的文件不会再被覆盖。命令会输出指明该文件的错误信息，保持文件不变，并以非零状态退出。
+- **后台同步失败会终止 `aiusage serve`**（[#132](https://github.com/juliantanx/aiusage/pull/132)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 后台同步中抛出的错误成为未处理的 Promise 拒绝并使进程退出；在没有 `state.json` 的安装上进行云同步就是触发方式之一。现在该错误会被捕获并显示在同步状态中，每个命令运行前都会创建 `state.json`，同步遇到缺失或无法读取的状态文件时会报告为一次失败的运行。
+
 ---
 
 ## [1.5.21] - 2026-10-12

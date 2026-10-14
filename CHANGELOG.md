@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **An unreadable `state.json` or `config.json` was overwritten** ([#132](https://github.com/juliantanx/aiusage/pull/132) by [@aaroncchung](https://github.com/aaroncchung)) — a file that exists but does not parse was treated as missing, and the next save wrote a default over it: a truncated `state.json` gave the installation a new device identity and dropped its sync consents, and a `config.json` with a typo lost its settings. Both files are now written through a temporary file and a rename, and a file that cannot be read is never written over. The command prints an error that names the file, leaves it untouched and exits non-zero.
+- **A failed background sync ended `aiusage serve`** ([#132](https://github.com/juliantanx/aiusage/pull/132) by [@aaroncchung](https://github.com/aaroncchung)) — an error thrown during a background sync was an unhandled rejection and stopped the process; cloud sync on an installation with no `state.json` was one way to reach it. The error is now caught and shown in the sync status, `state.json` is created before every command, and a sync reports a missing or unreadable state file as a failed run.
+
 ---
 
 ## [1.5.21] - 2026-10-12

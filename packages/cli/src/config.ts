@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import type { ConsentConfig } from './sync/consent.js'
 import type { PriceEntry, ExchangeRateCache } from '@aiusage/core'
+import { JsonFileError, readJsonObjectFile, writeFileAtomic } from './json-file.js'
 
 export const AIUSAGE_DIR = join(homedir(), '.aiusage')
 export const CONFIG_PATH = join(AIUSAGE_DIR, 'config.json')
@@ -55,18 +56,51 @@ export interface Config {
   syncInterval?: number
 }
 
-export function loadConfig(): Config | null {
-  if (!existsSync(CONFIG_PATH)) return null
-  try {
-    return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
-  } catch {
-    return null
+/** `config.json` exists but cannot be used; see `JsonFileError`. */
+export class ConfigFileError extends JsonFileError {
+  constructor(path: string, problem: string) {
+    super(path, problem, 'Fix the JSON in it, or move the file aside (rename it) and run "aiusage init" to configure again.')
+    this.name = 'ConfigFileError'
   }
 }
 
+export type ConfigFileRead =
+  | { status: 'missing' }
+  | { status: 'ok'; config: Config }
+  | { status: 'invalid'; error: ConfigFileError }
+
+/**
+ * Read `config.json` without throwing, for a caller that has to tell a
+ * missing file from one that exists but cannot be used.
+ */
+export function readConfigFile(): ConfigFileRead {
+  const read = readJsonObjectFile(CONFIG_PATH)
+  if (read.status === 'missing') return read
+  if (read.status === 'invalid') return { status: 'invalid', error: new ConfigFileError(CONFIG_PATH, read.problem) }
+  return { status: 'ok', config: read.value as Config }
+}
+
+/**
+ * The configuration, or `null` when there is no `config.json`. A file that
+ * exists but cannot be used throws `ConfigFileError`: returning `null` for it
+ * made every `loadConfig() ?? {}` caller save defaults over the user's file.
+ */
+export function loadConfig(): Config | null {
+  const read = readConfigFile()
+  if (read.status === 'invalid') throw read.error
+  return read.status === 'ok' ? read.config : null
+}
+
+/**
+ * Write `config.json` through a temporary file and a rename. Throws
+ * `ConfigFileError`, writing nothing, when the file on disk cannot be used:
+ * whatever is being saved was not built from it.
+ */
 export function saveConfig(config: Config): void {
   mkdirSync(dirname(CONFIG_PATH), { recursive: true, mode: 0o700 })
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 })
+  const existing = readConfigFile()
+  if (existing.status === 'invalid') throw existing.error
+  writeFileAtomic(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 })
 }
 
 export function buildConsentConfig(config: Config): ConsentConfig | null {

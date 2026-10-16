@@ -16,15 +16,15 @@ let cacheGeneration = 0
 // server instance and setConfig refreshes only the instance that saved, so a
 // cached value would keep the others going for up to CACHE_TTL_MS. These keys
 // are read from site_config on every lookup instead (one primary-key query).
-// When that read fails, the last value read within CACHE_TTL_MS is used; with
-// none, the lookup throws rather than assume the default.
+// When that read fails the lookup throws: it neither assumes the default nor
+// reuses an earlier read, so a database error never keeps a switched-off
+// feature running.
 const UNCACHED_KEYS: ReadonlySet<string> = new Set(['cloud.sync_globally_enabled'])
 
 async function readConfig(key: string): Promise<number | null> {
   const uncached = UNCACHED_KEYS.has(key)
   const cached = cache.get(key)
-  const fresh = cached !== undefined && Date.now() - cached.updatedAt < CACHE_TTL_MS
-  if (fresh && !uncached) {
+  if (!uncached && cached && Date.now() - cached.updatedAt < CACHE_TTL_MS) {
     return cached.value
   }
 
@@ -38,10 +38,7 @@ async function readConfig(key: string): Promise<number | null> {
     }
     return value
   } catch (err) {
-    if (uncached) {
-      if (fresh) return cached.value
-      throw err
-    }
+    if (uncached) throw err
     // DB unavailable (e.g. tests without DB) — fall back to default
   }
   return null

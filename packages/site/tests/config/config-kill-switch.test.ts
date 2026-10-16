@@ -137,18 +137,7 @@ describe('cloud sync kill switch across server instances', () => {
   })
 
   describe('when site_config cannot be read', () => {
-    it('uses the value this instance read within the last minute', async () => {
-      db.state.rows.set(SWITCH, 0)
-      const b = await instance()
-      expect(await b.getConfigValue(SWITCH)).toBe(0)
-
-      db.state.failing = true
-      vi.advanceTimersByTime(59_999)
-      expect(await b.getConfigValue(SWITCH)).toBe(0)
-      expect((await b.checkCloudSyncAccess('user_1')).error_code).toBe('CLOUD_SYNC_DISABLED')
-    })
-
-    it('fails the lookup instead of assuming the switch is on when it has no recent value', async () => {
+    it('fails the lookup instead of assuming the switch is on', async () => {
       const b = await instance()
       db.state.failing = true
 
@@ -156,13 +145,23 @@ describe('cloud sync kill switch across server instances', () => {
       await expect(b.checkCloudSyncAccess('user_1')).rejects.toThrow('connection refused')
     })
 
-    it('fails the lookup once the last value read is older than a minute', async () => {
+    it('fails the lookup even when this instance read the switch on a moment ago', async () => {
       db.state.rows.set(SWITCH, 1)
       const b = await instance()
-      await b.getConfigValue(SWITCH)
+      expect(await b.getConfigValue(SWITCH)).toBe(1)
 
       db.state.failing = true
-      vi.advanceTimersByTime(60_000)
+      vi.advanceTimersByTime(1)
+
+      await expect(b.getConfigValue(SWITCH)).rejects.toThrow('connection refused')
+      await expect(b.checkCloudSyncAccess('user_1')).rejects.toThrow('connection refused')
+    })
+
+    it('fails the lookup after this instance saved the switch on itself', async () => {
+      const b = await instance()
+      await b.setConfig(SWITCH, 1, 'on', 'admin_1')
+
+      db.state.failing = true
 
       await expect(b.getConfigValue(SWITCH)).rejects.toThrow('connection refused')
     })

@@ -73,9 +73,8 @@ export interface CloudSyncResult {
    */
   rejectedCount?: number
   /**
-   * Retired wire ids (see `retiredCount`) not retracted because the cloud
-   * cannot apply their tombstones, or because the server did not apply them.
-   * They stay queued and go out again with the next sync.
+   * Retired wire ids (see `retiredCount`) whose tombstones the server did not
+   * apply. They stay queued and go out again with the next sync.
    */
   unretiredCount?: number
   error?: string
@@ -345,19 +344,21 @@ export class CloudSyncOrchestrator {
    * The cloud store is upsert-only, so wire ids this device will never publish
    * again (migration v14: Antigravity/Trae records re-keyed to their parser
    * ids) are retracted with tombstones. An id is forgotten locally only once
-   * the server applied its tombstone, so an interrupted sync retries the rest.
-   * One the cloud cannot apply (an id PostgreSQL text cannot hold) is not
-   * sent, and one the server reports as rejected is kept; both are retried.
+   * the server applied its tombstone, so an interrupted sync retries the rest,
+   * and one the server reports as rejected is kept and sent again. An id the
+   * cloud cannot hold (empty, or with a NUL, which PostgreSQL text cannot
+   * store) has no cloud record to retract: it is forgotten without being sent.
    */
   private async pushRetiredIds(syncGeneration: number): Promise<{ retiredCount: number; unretiredCount: number }> {
     const retired = getRetiredWireIds(this.db, this.target)
     let retiredCount = 0
     let unretiredCount = 0
     const now = Date.now()
+    const storable = (id: string): boolean => id !== '' && !id.includes('\u0000')
     for (let i = 0; i < retired.length; i += BATCH_SIZE) {
       const batch = retired.slice(i, i + BATCH_SIZE)
-      const sendable = batch.filter(id => id && !id.includes('\u0000'))
-      unretiredCount += batch.length - sendable.length
+      clearRetiredWireIds(this.db, this.target, batch.filter(id => !storable(id)))
+      const sendable = batch.filter(storable)
       if (sendable.length === 0) continue
       const result = await cloudPush([], sendable.map(record_id => ({ record_id, updatedAt: now })), this.options.deviceInstanceId, syncGeneration)
       const rejected = new Set(result.rejectedTombstoneIds ?? [])

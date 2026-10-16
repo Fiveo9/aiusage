@@ -119,14 +119,26 @@ describe('CloudSyncOrchestrator tombstones', () => {
       expect(getRetiredWireIds(db, 'cloud').sort()).toEqual(['a', 'b'])
     })
 
-    it('does not send an id the cloud cannot hold, and keeps it', async () => {
+    it('forgets an id the cloud cannot hold without sending it: there is no cloud record to retract', async () => {
       const { CloudSyncOrchestrator } = await import('../../src/sync/cloud-orchestrator.js')
-      retire('ok', 'bad\u0000id')
+      retire('ok', 'bad\u0000id', '')
 
       const result = await new CloudSyncOrchestrator(db, { deviceInstanceId: OWN }).sync()
-      expect(result).toMatchObject({ status: 'ok', retiredCount: 1, unretiredCount: 1 })
+      expect(result).toMatchObject({ status: 'ok', retiredCount: 1 })
+      expect(result.unretiredCount).toBeUndefined()
       expect(await tombstonesSent()).toEqual([['ok']])
-      expect(getRetiredWireIds(db, 'cloud')).toEqual(['bad\u0000id'])
+      expect(getRetiredWireIds(db, 'cloud')).toEqual([])
+    })
+
+    it('forgets an id the cloud cannot hold also when it is the only one', async () => {
+      const { CloudSyncOrchestrator } = await import('../../src/sync/cloud-orchestrator.js')
+      retire('bad\u0000id')
+
+      const result = await new CloudSyncOrchestrator(db, { deviceInstanceId: OWN }).sync()
+      expect(result).toMatchObject({ status: 'ok', retiredCount: 0 })
+      expect(result.unretiredCount).toBeUndefined()
+      expect(await tombstonesSent()).toEqual([])
+      expect(getRetiredWireIds(db, 'cloud')).toEqual([])
     })
 
     it('keeps every id when the request fails, and retracts them on the retry', async () => {

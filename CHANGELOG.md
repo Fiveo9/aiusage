@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Kelivo backups written by SQLite-era builds could not be imported** — Kelivo moved its chat storage from Hive to SQLite, and a backup `.zip` now carries `database/kelivo.db` instead of `chats.json`, so every import failed with `chats.json not found in zip`. The importer now reads the archive's SQLite database, and it also accepts a `.db`/`.sqlite` file selected directly, while `chats.json` keeps working. The SQLite schema's microsecond timestamps are converted, and cache-write and reasoning tokens — kept in the database's `extras_json` or in `chats.json` — are imported instead of being dropped. Following the rest of AIUsage, cache-write and reasoning tokens are now reported as their own columns rather than folded into input and output tokens.
+
 ---
 
 ## [1.5.22] - 2026-10-14

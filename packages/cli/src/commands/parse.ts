@@ -16,7 +16,7 @@ import { runParseQoder } from './parse-qoder.js'
 import { runParseCursor } from './parse-cursor.js'
 import { runParseCursorTranscript } from './parse-cursor.js'
 import { runParseKilo } from './parse-kilo.js'
-import { runParseKelivo } from './parse-kelivo.js'
+import { isKelivoSourceFile, runParseKelivo } from './parse-kelivo.js'
 import { runParseGoose } from './parse-goose.js'
 import { runParseZed } from './parse-zed.js'
 import { runParseKiro } from './parse-kiro.js'
@@ -699,7 +699,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           continue
         }
 
-        if (tool === 'kelivo' && (filePath.endsWith('chats.json') || filePath.endsWith('.zip'))) {
+        if (tool === 'kelivo' && isKelivoSourceFile(filePath)) {
           const result = await runParseKelivo({
             filePath,
             device,

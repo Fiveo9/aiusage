@@ -495,7 +495,13 @@
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    if (file.name !== 'chats.json' && !file.name.toLowerCase().endsWith('.zip')) {
+    const lowerName = file.name.toLowerCase()
+    const accepted = lowerName === 'chats.json'
+      || lowerName.endsWith('.zip')
+      || lowerName.endsWith('.db')
+      || lowerName.endsWith('.sqlite')
+      || lowerName.endsWith('.sqlite3')
+    if (!accepted) {
       kelivoImportError = $t('settings.kelivoInvalidFile')
       return
     }
@@ -629,7 +635,7 @@
         <div class="source-group">
           <div class="source-subtitle">{$t('settings.manualImports')}</div>
           <div class="field-hint">{$t('settings.manualImportsHint')}</div>
-          <input class="file-input" type="file" accept=".zip,.json,application/zip,application/json" bind:this={kelivoFileInput} on:change={handleKelivoFileChange} />
+          <input class="file-input" type="file" accept=".zip,.json,.db,.sqlite,.sqlite3,application/zip,application/json,application/vnd.sqlite3,application/x-sqlite3" bind:this={kelivoFileInput} on:change={handleKelivoFileChange} />
           <div class="detected-tools-list">
             {#each manualImportTools as tool}
               <div class="detected-tool">

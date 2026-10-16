@@ -7,6 +7,9 @@
 
 ## [未发布]
 
+### 修复
+- **SQLite 版本的 Kelivo 备份无法导入** — Kelivo 将聊天存储从 Hive 迁移到 SQLite 后，`.zip` 备份内变成 `database/kelivo.db` 而不是 `chats.json`，导入会直接以 `chats.json not found in zip` 失败。现在导入器会读取压缩包中的 SQLite 数据库，也接受直接选择的 `.db`/`.sqlite` 文件，`chats.json` 仍然兼容。SQLite 中的微秒时间戳会被正确换算，数据库 `extras_json` 或 `chats.json` 里的 cache-write 与 reasoning token 不再被丢弃。与 AIUsage 其他来源保持一致，cache-write 与 reasoning token 现在单独记入对应字段，不再并入输入与输出 token。
+
 ---
 
 ## [1.5.22] - 2026-10-14

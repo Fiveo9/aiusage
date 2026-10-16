@@ -562,18 +562,22 @@ const migrations = [
       // Rows hidden on their own before the column existed, from the audit
       // log's last hide or restore of each row. A row whose log entries were
       // cleared is treated like a row hidden with its period.
+      // admin_audit_logs has no index on its target, so the last action of
+      // every row is found in one pass over the log rather than one lookup
+      // per hidden row.
       await tx`
         UPDATE leaderboard_metrics lm
         SET entry_hidden = TRUE
-        WHERE lm.visibility = 'hidden'
-          AND (
-            SELECT al.action FROM admin_audit_logs al
-            WHERE al.target_type = 'leaderboard_metrics'
-              AND al.target_id = lm.id
-              AND al.action IN ('hide_metric', 'restore_metric')
-            ORDER BY al.created_at DESC, al.id DESC
-            LIMIT 1
-          ) = 'hide_metric'
+        FROM (
+          SELECT DISTINCT ON (al.target_id) al.target_id, al.action
+          FROM admin_audit_logs al
+          WHERE al.target_type = 'leaderboard_metrics'
+            AND al.action IN ('hide_metric', 'restore_metric')
+          ORDER BY al.target_id, al.created_at DESC, al.id DESC
+        ) last_action
+        WHERE last_action.target_id = lm.id
+          AND last_action.action = 'hide_metric'
+          AND lm.visibility = 'hidden'
       `
     }
   }

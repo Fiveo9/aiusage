@@ -54,9 +54,10 @@ export function startCleanupCron(): void {
 // kept), or runs after the prune and finds the snapshot gone.
 export async function pruneUploadHistory(retentionDays: number, now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
-  const users = await sql`SELECT DISTINCT user_id FROM upload_requests WHERE created_at < ${cutoff}` as Array<{ user_id: string }>
+  const users = await sql`SELECT DISTINCT user_id FROM upload_requests WHERE created_at < ${cutoff}`
   let removed = 0
-  for (const { user_id: userId } of users) {
+  for (const row of users) {
+    const userId = (row as { user_id: string }).user_id
     removed += await transaction(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtextextended('leaderboard_metrics:' || ${userId}::text, 0))`
       const result = await tx`

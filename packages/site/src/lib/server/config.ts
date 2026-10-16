@@ -366,7 +366,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   [CFG.NONCE_RETENTION_MINUTES]: 'How often expired upload tokens are cleaned up (minutes)',
 
   [CFG.RETENTION_NONCE_HOURS]:         'Keep upload tokens for this many hours',
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: 'Keep upload history for this many days',
+  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: 'Keep upload history for this many days (uploads with a hidden or rejected snapshot are kept)',
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     'Keep sync history for this many days',
   [CFG.RETENTION_TOMBSTONE_DAYS]:      'Permanently delete removed records after this many days',
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   'Clean up expired CLI login codes after this many hours',
@@ -431,7 +431,7 @@ export const CONFIG_DESCRIPTIONS_ZH: Record<string, string> = {
   [CFG.NONCE_RETENTION_MINUTES]: '每隔几分钟清理过期的上传令牌',
 
   [CFG.RETENTION_NONCE_HOURS]:         '上传令牌保留几小时后自动清理',
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: '上传历史记录保留几天',
+  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: '上传历史记录保留几天（含已隐藏或已拒绝快照的上传不会被清理）',
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     '同步历史记录保留几天',
   [CFG.RETENTION_TOMBSTONE_DAYS]:      '已删除的记录在几天后彻底清除',
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   '过期的 CLI 登录码在几小时后清理',

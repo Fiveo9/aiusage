@@ -456,7 +456,13 @@ export async function runParseKelivo(options: KelivoImportOptions): Promise<Keli
       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + thinkingTokens === 0) continue
 
       const model = readOptionalString(entry.modelId) || 'unknown'
-      const provider = readOptionalString(entry.providerId) || inferProvider(model)
+      // Kelivo's providerId is a user-facing provider name ("OpenAI - MiMo")
+      // or a UUID, so aiusage's own inference wins when it recognises the
+      // model; otherwise the Kelivo label beats "unknown".
+      const inferredProvider = inferProvider(model)
+      const provider = inferredProvider !== 'unknown'
+        ? inferredProvider
+        : readOptionalString(entry.providerId) || 'unknown'
       const ts = parseTimestamp(entry.timestamp, now)
       const sessionId = readOptionalString(entry.conversationId) || 'unknown'
       const messageId = readOptionalString(entry.id) || `${sessionId}:${ts}:${index}`

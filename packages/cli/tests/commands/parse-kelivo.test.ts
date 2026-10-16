@@ -366,6 +366,23 @@ describe('runParse with Kelivo exports', () => {
     expect(result.errors.length).toBeGreaterThan(0)
     expect(cacheDb.prepare('SELECT COUNT(*) AS count FROM records').get()).toMatchObject({ count: 0 })
   })
+  it('infers the provider from the model and falls back to the Kelivo label', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    writeFileSync(join(backupDir, 'kelivo.db'), createKelivoDatabase([
+      { ...assistantDatabaseRow('assistant-known-model'), model_id: 'claude-sonnet-4-6', provider_id: 'OpenAI - MiMo' },
+      { ...assistantDatabaseRow('assistant-custom-model'), model_id: 'MiniMax-M2.7', provider_id: 'OpenAI - MiMo' },
+    ]))
+
+    const result = await runParse(cacheDb, 'kelivo')
+
+    expect(result.errors).toHaveLength(0)
+    const rows = cacheDb.prepare('SELECT model, provider FROM records ORDER BY model').all() as any[]
+    expect(rows).toEqual([
+      { model: 'MiniMax-M2.7', provider: 'OpenAI - MiMo' },
+      { model: 'claude-sonnet-4-6', provider: 'anthropic' },
+    ])
+  })
 })
 
 describe('isKelivoSourceFile', () => {

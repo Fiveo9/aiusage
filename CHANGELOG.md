@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Recalculated costs never reached the dashboard on a synced installation** — the dashboard reads the current device's usage from `records` and every other device's from `synced_records`, but *Recalculate now* and `aiusage recalc` repriced `records` only. A record another device published with no price — a custom gateway reporting `$0`, or a model that had no price when it was parsed — stayed `$0` in the totals, the daily cost chart and the model breakdown however often the recalculation ran, while the row underneath already showed the correct amount. Both tables are now written with the same values, in one transaction, for every repriced row. Rows already carrying the recalculated price, and mirrors the recalculation cannot speak for (a record whose tokens differ from the copy it repriced, or that no copy was merged for), are left alone. The owner stays authoritative: a recalculation still never marks a row from another device as changed, so that device's next correction replaces the recalculated price as usual.
+
 ---
 
 ## [1.5.22] - 2026-10-14

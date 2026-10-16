@@ -2,9 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { initializeDatabase } from '../../src/db/index.js'
 import { insertRecord } from '../../src/db/records.js'
+import { insertSyncedRecord, mergeSyncedRecordsIntoRecords } from '../../src/db/synced-records.js'
 import { recalcPricing } from '../../src/commands/recalc.js'
 import { ensureCuratedPricingAliases, setUserPrice } from '../../src/pricing-registry.js'
-import type { StatsRecord } from '@aiusage/core'
+import type { StatsRecord, SyncRecord } from '@aiusage/core'
+
+/** Local midnight of a fixed day, far from `Date.now()`. */
+const DAY = Date.UTC(2026, 5, 1, 12, 0, 0)
 
 describe('Recalc Command', () => {
   let db: Database.Database
@@ -194,5 +198,106 @@ describe('Recalc Command', () => {
     const record = db.prepare('SELECT * FROM records WHERE id = ?').get('r1') as any
     expect(record.cost_source).toBe('pricing')
     expect(record.cost).toBe(6)
+  })
+})
+
+describe('Recalc Command — pulled rows', () => {
+  let db: Database.Database
+  const OWN = 'device-me'
+
+  function synced(overrides: Partial<SyncRecord> = {}): SyncRecord {
+    return {
+      id: 'remote-1',
+      ts: DAY,
+      tool: 'openclaw',
+      model: 'deepseek-v4-pro',
+      provider: 'deepseek',
+      inputTokens: 1_000_000,
+      outputTokens: 500_000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      // A custom gateway reported no cost for this record.
+      cost: 0,
+      costSource: 'pricing',
+      sessionKey: 'session-key-1',
+      device: 'remote-host',
+      deviceInstanceId: 'device-remote',
+      updatedAt: DAY,
+      ...overrides,
+    }
+  }
+
+  function insertPrice(modelKey: string, entry: { input: number; output: number }) {
+    const now = Date.now()
+    db.prepare(`
+      INSERT INTO model_prices (
+        model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
+        source_url, origin, status, last_synced_at, created_at, updated_at
+      ) VALUES (?, '', ?, ?, NULL, NULL, 'USD', 'litellm', ?, NULL, 'builtin', 'active', ?, ?, ?)
+    `).run(modelKey, entry.input, entry.output, modelKey, now, now, now)
+  }
+
+  function mirroredRow(id = 'remote-1') {
+    return db.prepare('SELECT * FROM records WHERE id = ?').get(id) as any
+  }
+
+  function mirrorRow(id = 'remote-1') {
+    return db.prepare('SELECT * FROM synced_records WHERE id = ?').get(id) as any
+  }
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    initializeDatabase(db)
+    insertPrice('deepseek-v4-pro', { input: 0.435, output: 0.87 })
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('writes the recalculated price into the mirror every cross-device reading uses', () => {
+    insertSyncedRecord(db, synced())
+    mergeSyncedRecordsIntoRecords(db, OWN)
+
+    const result = recalcPricing(db, { currentDeviceInstanceId: OWN })
+
+    expect(result.updatedCount).toBe(1)
+    expect(result.syncedUpdatedCount).toBe(1)
+    // 1M input * 0.435 + 0.5M output * 0.87
+    expect(mirroredRow().cost).toBeCloseTo(0.87)
+    expect(mirrorRow().cost).toBeCloseTo(0.87)
+    expect(mirrorRow().cost_source).toBe('pricing')
+    // The owner's next correction is still the newest version anyone has seen.
+    expect(mirrorRow().updated_at).toBe(DAY)
+    expect(mirroredRow().updated_at).toBe(DAY)
+  })
+
+  it('fills a mirror the price never reached, without repricing the copy again', () => {
+    insertSyncedRecord(db, synced())
+    mergeSyncedRecordsIntoRecords(db, OWN)
+
+    // What an installation recalced by an earlier release looks like: the
+    // merged copy carries the price, the mirror still the owner's.
+    db.prepare('UPDATE records SET cost = 0.87, cost_source = ? WHERE id = ?').run('pricing', 'remote-1')
+
+    const result = recalcPricing(db, { currentDeviceInstanceId: OWN })
+
+    expect(result.updatedCount).toBe(0)
+    expect(result.syncedUpdatedCount).toBe(1)
+    expect(mirrorRow().cost).toBeCloseTo(0.87)
+  })
+
+  it('leaves the mirror to the owner when the merged copy is newer than it', () => {
+    insertSyncedRecord(db, synced())
+    mergeSyncedRecordsIntoRecords(db, OWN)
+    // The row was refreshed by a later pull the merge has not applied yet.
+    db.prepare('UPDATE records SET cache_read_tokens = 900000 WHERE id = ?').run('remote-1')
+
+    const result = recalcPricing(db, { currentDeviceInstanceId: OWN })
+
+    expect(result.updatedCount).toBe(1)
+    expect(result.syncedUpdatedCount).toBe(0)
+    expect(mirrorRow().cost).toBe(0)
   })
 })

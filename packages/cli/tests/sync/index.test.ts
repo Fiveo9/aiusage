@@ -96,8 +96,8 @@ describe('SyncOrchestrator', () => {
   })
 
   it('acknowledges a record whose updated_at is ahead of the clock', async () => {
-    // insertRecord puts a changed record above every earlier acknowledgement,
-    // which can be ahead of the wall clock after the clock was set back.
+    // A changed record is put above every earlier acknowledgement, which can
+    // be ahead of the wall clock after the clock was set back.
     const ahead = Date.now() + 86_400_000
     db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r1', 1000, 1000, ?, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run(ahead)
 

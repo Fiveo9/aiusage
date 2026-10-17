@@ -495,10 +495,10 @@ export class SyncOrchestrator {
     // are what `uploadedCount` reports; retired wire ids are moot once the
     // snapshot has been rewritten.
     // A record counts as unsynced while its updated_at is above the
-    // acknowledgement, and insertRecord can put a changed record's updated_at
-    // ahead of this machine's clock (above an earlier acknowledgement, after
-    // the clock was set back). The acknowledgement is therefore never below
-    // the newest version this upload published.
+    // acknowledgement. A changed record's updated_at is put above every
+    // earlier acknowledgement, so after the clock was set back it can be
+    // ahead of this machine's clock. The acknowledgement is therefore never
+    // below the newest version this upload published.
     const publishedAt = unsynced.reduce((at, r) => Math.max(at, r.updatedAt), Date.now())
     markRecordsSynced(this.db, unsynced.map(r => r.id), publishedAt, target)
     clearRetiredWireIds(this.db, target)

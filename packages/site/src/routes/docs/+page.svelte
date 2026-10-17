@@ -929,6 +929,12 @@
           : 'After each import, AIUsage records the last import time. It remains visible after re-parsing or refreshing the page. Re-importing the same backup file will not create duplicate records.'
         }
       </Callout>
+      <Callout type="warn">
+        {zh
+          ? '优先导入 Kelivo 自己导出的 .zip 备份。直接选择 kelivo.db 时，如果 Kelivo 正在运行，最新消息可能还只存在于同目录的 kelivo.db-wal 中，没有写进 db 文件本身，导入会因此缺少最近的部分；AIUsage 检测到这种情况会给出提示。'
+          : 'Prefer the .zip backup that Kelivo exports. If you select kelivo.db directly while Kelivo is running, its newest messages may still live in the neighbouring kelivo.db-wal instead of the database file itself, and the import will be missing them; AIUsage warns you when it detects this.'
+        }
+      </Callout>
     </section>
 
     <section id="settings-env">

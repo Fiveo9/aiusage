@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { initializeDatabase } from '../../src/db/index.js'
 import { isKelivoSourceFile } from '../../src/commands/parse-kelivo.js'
-import { createKelivoDatabase, zipEntries, zipSingleFile } from '../helpers/kelivo-fixture.js'
+import { createKelivoDatabase, createKelivoDatabaseFile, zipEntries, zipSingleFile } from '../helpers/kelivo-fixture.js'
 
 vi.mock('node:os', async () => {
   const actual = await vi.importActual('node:os')
@@ -382,6 +382,100 @@ describe('runParse with Kelivo exports', () => {
       { model: 'MiniMax-M2.7', provider: 'OpenAI - MiMo' },
       { model: 'claude-sonnet-4-6', provider: 'anthropic' },
     ])
+  })
+  it('re-reads an unchanged database without rewriting its rows', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    writeFileSync(join(backupDir, 'kelivo.db'), createKelivoDatabase([assistantDatabaseRow('assistant-repeat')]))
+
+    const first = await runParse(cacheDb, 'kelivo')
+    expect(first.parsedCount).toBe(1)
+    const imported = cacheDb.prepare("SELECT ingested_at, updated_at FROM records WHERE tool = 'kelivo'").get() as any
+    // Pretend cloud sync acknowledged the row before the second import.
+    cacheDb.prepare("UPDATE records SET synced_at = 4242 WHERE tool = 'kelivo'").run()
+
+    const second = await runParse(cacheDb, 'kelivo')
+
+    expect(second.errors).toHaveLength(0)
+    expect(second.parsedCount).toBe(0)
+    const after = cacheDb.prepare("SELECT ingested_at, updated_at, synced_at FROM records WHERE tool = 'kelivo'").get() as any
+    expect(after).toMatchObject({
+      ingested_at: imported.ingested_at,
+      updated_at: imported.updated_at,
+      synced_at: 4242,
+    })
+  })
+
+  it('updates a record whose database value changed without the file growing', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    const dbPath = join(backupDir, 'kelivo.db')
+    writeFileSync(dbPath, createKelivoDatabase([{
+      id: 'assistant-resized',
+      conversation_id: 'conversation-db',
+      role: 'assistant',
+      timestamp: ASSISTANT_TIMESTAMP_MS * 1000,
+      model_id: 'claude-sonnet-4-6',
+      provider_id: 'anthropic',
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      cached_tokens: 40,
+      total_tokens: 110,
+    }]))
+
+    const first = await runParse(cacheDb, 'kelivo')
+    expect(first.parsedCount).toBe(1)
+    const sizeAfterFirstImport = statSync(dbPath).size
+
+    // SQLite rewrites pages in place: the file keeps its size, so the
+    // watermark's offset reaches EOF while the content still changes.
+    const db = new Database(dbPath)
+    db.prepare('UPDATE message_rows SET prompt_tokens = 127 WHERE id = ?').run('assistant-resized')
+    db.close()
+    expect(statSync(dbPath).size).toBe(sizeAfterFirstImport)
+
+    const second = await runParse(cacheDb, 'kelivo')
+
+    expect(second.errors).toHaveLength(0)
+    expect(second.parsedCount).toBe(1)
+    expect(cacheDb.prepare("SELECT input_tokens FROM records WHERE tool = 'kelivo'").get())
+      .toMatchObject({ input_tokens: 87 })
+  })
+
+  it('reads rows that only exist in the live database WAL', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    const livePath = join(backupDir, 'kelivo.db')
+    const live = createKelivoDatabaseFile(livePath, [assistantDatabaseRow('assistant-live-wal')], { journalMode: 'wal' })
+    try {
+      expect(existsSync(`${livePath}-wal`)).toBe(true)
+      const before = statSync(livePath)
+
+      const result = await runParse(cacheDb, 'kelivo')
+
+      expect(result.errors).toHaveLength(0)
+      expect(result.parsedCount).toBe(1)
+      const after = statSync(livePath)
+      expect(after.size).toBe(before.size)
+      expect(after.mtimeMs).toBe(before.mtimeMs)
+    } finally {
+      live.close()
+    }
+  })
+
+  it('warns when a WAL-mode database was copied without its -wal', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    const dbPath = join(backupDir, 'kelivo.db')
+    const closed = createKelivoDatabaseFile(dbPath, [assistantDatabaseRow('assistant-copied')], { journalMode: 'wal' })
+    closed.close()
+    expect(existsSync(`${dbPath}-wal`)).toBe(false)
+
+    const result = await runParse(cacheDb, 'kelivo')
+
+    expect(result.parsedCount).toBe(1)
+    expect(result.warnings).toHaveLength(1)
+    expect(result.warnings[0]).toContain('-wal')
   })
 })
 

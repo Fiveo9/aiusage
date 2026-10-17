@@ -116,16 +116,8 @@ const MESSAGE_COLUMNS = [
  * SQLite-era Kelivo only added in schema v3, so the importer's column
  * detection can be exercised against both shapes.
  */
-export function createKelivoDatabase(
-  rows: KelivoDatabaseRow[],
-  options: { schemaVersion?: 1 | 3 } = {},
-): Buffer {
-  const withExtras = (options.schemaVersion ?? 3) >= 3
-  const columns: string[] = [...MESSAGE_COLUMNS, ...(withExtras ? ['extras_json'] : [])]
-
-  const db = new Database(':memory:')
-  try {
-    db.exec(`CREATE TABLE message_rows (
+function createSchema(db: Database.Database, withExtras: boolean): void {
+  db.exec(`CREATE TABLE message_rows (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
       role TEXT NOT NULL,
@@ -137,30 +129,67 @@ export function createKelivoDatabase(
       completion_tokens INTEGER,
       cached_tokens INTEGER${withExtras ? ',\n      extras_json TEXT' : ''}
     )`)
+}
 
-    const insert = db.prepare(
-      `INSERT INTO message_rows (${columns.join(', ')})
-       VALUES (${columns.map((column) => `@${column}`).join(', ')})`,
-    )
-    for (const row of rows) {
-      const values: Record<string, unknown> = {
-        model_id: null,
-        provider_id: null,
-        total_tokens: null,
-        prompt_tokens: null,
-        completion_tokens: null,
-        cached_tokens: null,
-      }
-      if (withExtras) values.extras_json = null
-      for (const column of columns) {
-        const value = (row as unknown as Record<string, unknown>)[column]
-        if (value !== undefined) values[column] = value
-      }
-      insert.run(values)
+function insertRows(db: Database.Database, rows: KelivoDatabaseRow[], withExtras: boolean): void {
+  const columns: string[] = [...MESSAGE_COLUMNS, ...(withExtras ? ['extras_json'] : [])]
+  const insert = db.prepare(
+    `INSERT INTO message_rows (${columns.join(', ')})
+     VALUES (${columns.map((column) => `@${column}`).join(', ')})`,
+  )
+  for (const row of rows) {
+    const values: Record<string, unknown> = {
+      model_id: null,
+      provider_id: null,
+      total_tokens: null,
+      prompt_tokens: null,
+      completion_tokens: null,
+      cached_tokens: null,
     }
+    if (withExtras) values.extras_json = null
+    for (const column of columns) {
+      const value = (row as unknown as Record<string, unknown>)[column]
+      if (value !== undefined) values[column] = value
+    }
+    insert.run(values)
+  }
+}
 
+export function createKelivoDatabase(
+  rows: KelivoDatabaseRow[],
+  options: { schemaVersion?: 1 | 3 } = {},
+): Buffer {
+  const withExtras = (options.schemaVersion ?? 3) >= 3
+  const db = new Database(':memory:')
+  try {
+    createSchema(db, withExtras)
+    insertRows(db, rows, withExtras)
     return db.serialize()
   } finally {
     db.close()
+  }
+}
+
+/**
+ * Opens a Kelivo database *as a file* and returns the open connection, so a
+ * test can reproduce a running app: with `journalMode: 'wal'` the newest rows
+ * sit in the `-wal` sidecar until the connection is closed (which checkpoints
+ * and removes it), and writes made while it is open are visible to this file.
+ */
+export function createKelivoDatabaseFile(
+  path: string,
+  rows: KelivoDatabaseRow[],
+  options: { schemaVersion?: 1 | 3; journalMode?: 'delete' | 'wal' } = {},
+): Database.Database {
+  const withExtras = (options.schemaVersion ?? 3) >= 3
+  const db = new Database(path)
+  try {
+    if (options.journalMode === 'wal') db.pragma('journal_mode = WAL')
+    createSchema(db, withExtras)
+    insertRows(db, rows, withExtras)
+    return db
+  } catch (e) {
+    db.close()
+    throw e
   }
 }

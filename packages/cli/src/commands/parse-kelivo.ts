@@ -1,7 +1,7 @@
 import type { StatsRecord } from '@aiusage/core'
 import { calculateCost, generateRecordId, inferProvider } from '@aiusage/core'
 import Database from 'better-sqlite3'
-import { copyFileSync, createWriteStream, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { closeSync, copyFileSync, createWriteStream, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -19,6 +19,8 @@ export interface KelivoImportOptions {
 export interface KelivoImportResult {
   records: StatsRecord[]
   errors: string[]
+  /** Import succeeded but may be incomplete; callers should surface these. */
+  warnings: string[]
 }
 
 /**
@@ -339,9 +341,12 @@ function pickDatabaseEntry(names: string[]): string | null {
 
 interface LoadedKelivoEntries {
   entries: KelivoEntry[]
+  /** Conditions that did not stop the import but can make it incomplete. */
+  warnings: string[]
   cleanup: () => void
 }
 
+const NO_WARNINGS: string[] = []
 const NO_CLEANUP = () => {}
 
 /**
@@ -356,18 +361,56 @@ function discardWorkDir(workDir: string): void {
 }
 
 /**
- * Reads a `.db`/`.sqlite` file. A live Kelivo keeps its newest rows in the
- * `-wal` sidecar, so the database and its sidecars are copied to a temporary
- * directory and opened there — read-write, so SQLite can recover or checkpoint
- * the copy — leaving the user's files untouched.
+ * A database copied on its own from a running Kelivo has no `-wal` next to it,
+ * while the newest messages are exactly what the WAL holds. The import cannot
+ * recover those frames, so it says so instead of reporting a clean result.
  */
-function loadDatabaseFile(filePath: string): LoadedKelivoEntries {
+const MISSING_WAL_WARNING =
+  'this database is in WAL mode but no -wal sidecar was found beside it; if Kelivo is running, its newest messages only exist in that WAL. Export a Kelivo .zip backup instead, or copy the database together with its -wal file'
+
+/** SQLite records the journal mode the database was last written in at byte 18. */
+function isWalModeDatabase(filePath: string): boolean {
+  let handle: number | null = null
+  try {
+    handle = openSync(filePath, 'r')
+    const header = Buffer.alloc(20)
+    const read = readSync(handle, header, 0, header.length, 0)
+    return read >= 19
+      && header.subarray(0, 16).toString('latin1') === 'SQLite format 3\0'
+      && header[18] === 2
+  } catch {
+    return false
+  } finally {
+    if (handle !== null) closeSync(handle)
+  }
+}
+
+/**
+ * Reads a `.db`/`.sqlite` file. When the database still has a WAL beside it,
+ * SQLite's online backup produces the snapshot instead of copying the files one
+ * by one: the copy then either includes the uncheckpointed WAL frames or was
+ * taken before them, but it is never a torn mixture of the two, and the user's
+ * files stay untouched.
+ */
+async function loadDatabaseFile(filePath: string): Promise<LoadedKelivoEntries> {
   const sidecars = [`${filePath}-wal`, `${filePath}-shm`].filter((sidecar) => existsSync(sidecar))
   if (sidecars.length === 0) {
-    return { entries: readKelivoDatabase(filePath), cleanup: NO_CLEANUP }
+    return {
+      entries: readKelivoDatabase(filePath),
+      warnings: isWalModeDatabase(filePath) ? [MISSING_WAL_WARNING] : NO_WARNINGS,
+      cleanup: NO_CLEANUP,
+    }
   }
 
-  // Retry once: Kelivo may be appending to the WAL while the copy is taken.
+  try {
+    const snapshot = await snapshotDatabase(filePath)
+    return { entries: readKelivoDatabase(snapshot.path), warnings: NO_WARNINGS, cleanup: snapshot.cleanup }
+  } catch {
+    // Fall through: a database SQLite refuses to read online is still worth a
+    // plain copy of the files, which the copy below opens read-write so SQLite
+    // can replay the WAL. Retried once, since Kelivo may be appending to it.
+  }
+
   let lastError: unknown
   for (let attempt = 0; attempt < 2; attempt++) {
     const workDir = mkdtempSync(join(tmpdir(), 'aiusage-kelivo-'))
@@ -379,6 +422,7 @@ function loadDatabaseFile(filePath: string): LoadedKelivoEntries {
       }
       return {
         entries: readKelivoDatabase(copyPath, { writable: true }),
+        warnings: NO_WARNINGS,
         cleanup: () => discardWorkDir(workDir),
       }
     } catch (e) {
@@ -390,11 +434,29 @@ function loadDatabaseFile(filePath: string): LoadedKelivoEntries {
   throw lastError
 }
 
+/** Consistent snapshot of a database, including frames still only in its WAL. */
+async function snapshotDatabase(sourcePath: string): Promise<{ path: string; cleanup: () => void }> {
+  const workDir = mkdtempSync(join(tmpdir(), 'aiusage-kelivo-'))
+  try {
+    const snapshotPath = join(workDir, basename(sourcePath))
+    const source = new Database(sourcePath, { readonly: true, fileMustExist: true })
+    try {
+      await source.backup(snapshotPath)
+    } finally {
+      source.close()
+    }
+    return { path: snapshotPath, cleanup: () => discardWorkDir(workDir) }
+  } catch (e) {
+    discardWorkDir(workDir)
+    throw e
+  }
+}
+
 async function loadZipBackup(filePath: string): Promise<LoadedKelivoEntries> {
   const names = await listZipEntryNames(filePath)
 
   if (names.some((name) => basename(name) === 'chats.json')) {
-    return { entries: readChatsJson(await readZipEntryText(filePath, 'chats.json')), cleanup: NO_CLEANUP }
+    return { entries: readChatsJson(await readZipEntryText(filePath, 'chats.json')), warnings: NO_WARNINGS, cleanup: NO_CLEANUP }
   }
 
   const databaseEntry = pickDatabaseEntry(names)
@@ -407,7 +469,7 @@ async function loadZipBackup(filePath: string): Promise<LoadedKelivoEntries> {
     const databasePath = join(workDir, 'kelivo.db')
     await extractZipEntryToFile(filePath, basename(databaseEntry), databasePath)
     const entries = readKelivoDatabase(databasePath)
-    return { entries, cleanup: () => discardWorkDir(workDir) }
+    return { entries, warnings: NO_WARNINGS, cleanup: () => discardWorkDir(workDir) }
   } catch (e) {
     discardWorkDir(workDir)
     throw e
@@ -418,7 +480,7 @@ async function loadKelivoEntries(filePath: string): Promise<LoadedKelivoEntries>
   const name = basename(filePath).toLowerCase()
   if (name.endsWith('.zip')) return loadZipBackup(filePath)
   if (DATABASE_EXTENSIONS.some((ext) => name.endsWith(ext))) return loadDatabaseFile(filePath)
-  return { entries: readChatsJson(readFileSync(filePath, 'utf-8')), cleanup: NO_CLEANUP }
+  return { entries: readChatsJson(readFileSync(filePath, 'utf-8')), warnings: NO_WARNINGS, cleanup: NO_CLEANUP }
 }
 
 // ── import ───────────────────────────────────────────────────────────
@@ -427,12 +489,14 @@ export async function runParseKelivo(options: KelivoImportOptions): Promise<Keli
   const { filePath, device, deviceInstanceId, platform, now, exchangeRate } = options
   const records: StatsRecord[] = []
   const errors: string[] = []
+  const warnings: string[] = []
 
   let loaded: LoadedKelivoEntries
   try {
     loaded = await loadKelivoEntries(filePath)
+    warnings.push(...loaded.warnings)
   } catch (e) {
-    return { records, errors: [`${filePath}: ${e instanceof Error ? e.message : e}`] }
+    return { records, errors: [`${filePath}: ${e instanceof Error ? e.message : e}`], warnings }
   }
 
   try {
@@ -497,5 +561,5 @@ export async function runParseKelivo(options: KelivoImportOptions): Promise<Keli
     loaded.cleanup()
   }
 
-  return { records, errors }
+  return { records, errors, warnings }
 }

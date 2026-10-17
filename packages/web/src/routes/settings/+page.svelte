@@ -24,6 +24,7 @@
   let kelivoImportError = ''
   let kelivoImportedCount = null
   let kelivoAddedCount = null
+  let kelivoImportWarnings = []
 
   const PLATFORM_LABEL = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }
 
@@ -510,10 +511,12 @@
     kelivoImportError = ''
     kelivoImportedCount = null
     kelivoAddedCount = null
+    kelivoImportWarnings = []
     try {
       const result = await importKelivoBackup(file)
       kelivoImportedCount = result.imported ?? 0
       kelivoAddedCount = result.added ?? null
+      kelivoImportWarnings = Array.isArray(result.warnings) ? result.warnings : []
       let nextTools = detectedTools
       try {
         const toolsResult = await fetchDetectedTools()
@@ -665,6 +668,14 @@
                     {/if}
                   </div>
                   {#if kelivoImportError}<p class="section-error compact">{kelivoImportError}</p>{/if}
+                  {#if kelivoImportWarnings.length}
+                    <div class="import-warning">
+                      <span>{$t('settings.kelivoImportIncomplete')}</span>
+                      {#each kelivoImportWarnings as warning}
+                        <div>{warning}</div>
+                      {/each}
+                    </div>
+                  {/if}
                 {/if}
               </div>
             {/each}
@@ -1119,6 +1130,12 @@
     color: var(--rose);
   }
   .section-error.compact { margin: 0.5rem 0 0 1.25rem; }
+
+  .import-warning {
+    margin: 0.5rem 0 0 1.25rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
 
   .section-footer {
     display: flex;

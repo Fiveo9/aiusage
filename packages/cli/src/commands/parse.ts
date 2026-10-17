@@ -708,8 +708,14 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             now: Date.now(),
             exchangeRate,
           })
+          // The last import time reported for Kelivo is MAX(ingested_at), and
+          // insertRecord keeps the ingested_at of a row that already exists.
+          // Reading a backup again still counts as an import, so stamp it, as
+          // the dashboard upload does.
+          const stampImport = db.prepare('UPDATE records SET ingested_at = ? WHERE id = ?')
           for (const record of result.records) {
             insertRecord(db, record)
+            stampImport.run(record.ingestedAt, record.id)
             parsedCount++
           }
           errors.push(...result.errors)

@@ -212,10 +212,11 @@ describe('Codex reasoning tokens through runParse', () => {
 
     expectSameRows(rows(db, 'codefuse'), fresh)
     expect(db.prepare('SELECT COUNT(*) AS n FROM records').get()).toMatchObject({ n: 3 })
-    // The corrected rows are published again; the Codex row was not re-read.
+    // The corrected rows are published again (no acknowledgement, or one older
+    // than the new version); the Codex row was not re-read.
     for (const s of db.prepare(`SELECT synced_at, updated_at FROM records WHERE tool = 'codefuse'`).all() as Array<{ synced_at: number | null; updated_at: number }>) {
-      expect(s.synced_at).toBeNull()
       expect(s.updated_at).toBeGreaterThan(5)
+      expect(s.synced_at === null || s.updated_at > s.synced_at).toBe(true)
     }
     expect(db.prepare(`SELECT synced_at, updated_at FROM records WHERE tool = 'codex'`).get()).toEqual({ synced_at: 5, updated_at: 1 })
     expect(JSON.parse(readFileSync(watermarkPath, 'utf-8')).codefuseParserVersion).toBe(2)

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { NEXT_UPDATED_AT } from '../record-version.js'
 
 /**
  * Codex output tokens exclude reasoning tokens.
@@ -17,7 +18,9 @@ import type Database from 'better-sqlite3'
  *   - `output_tokens` becomes `max(0, output_tokens - thinking_tokens)`;
  *   - `thinking_tokens` is kept, so reasoning is still counted once and billed
  *     once at the output price;
- *   - `updated_at` is bumped so the corrected row is published again;
+ *   - `updated_at` is moved above the row's old version and every
+ *     acknowledgement (`NEXT_UPDATED_AT`), so the corrected row is published
+ *     again even if the clock was set back;
  *   - rows whose cost came from pricing are queued in `pending_cost_recalc`
  *     (created by v15) and repriced by `recalcPendingCosts` once pricing is
  *     ready. A logged cost is never queued.
@@ -42,7 +45,7 @@ export function migrateV16(db: Database.Database): void {
 
   db.prepare(`
     UPDATE records
-    SET output_tokens = MAX(0, output_tokens - thinking_tokens), updated_at = ?
+    SET output_tokens = MAX(0, output_tokens - thinking_tokens), updated_at = ${NEXT_UPDATED_AT}
     WHERE ${affected}
   `).run(Date.now())
 

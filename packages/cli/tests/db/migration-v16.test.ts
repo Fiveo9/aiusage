@@ -157,6 +157,27 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     expect(getUnsyncedRecords(db).map(r => r.id)).toContain('codex-reasoning')
   })
 
+  it('publishes the corrected row again when its acknowledgements are ahead of the clock', () => {
+    // The clock was set back after these were written: the legacy and the
+    // per-target acknowledgement are both later than the time of the upgrade.
+    const ahead = Date.now() + 86_400_000
+    insertRecord(db, makeRecord({ id: 'codex-reasoning', syncedAt: ahead, updatedAt: ahead - 1 }))
+    db.prepare('INSERT INTO sync_record_state (record_id, target, synced_at) VALUES (?, ?, ?)').run('codex-reasoning', 'cloud', ahead + 1000)
+    expect(getUnsyncedRecords(db).map(r => r.id)).not.toContain('codex-reasoning')
+    expect(getUnsyncedRecords(db, 'cloud').map(r => r.id)).not.toContain('codex-reasoning')
+
+    migrateV16(db)
+    const migrated = row(db, 'codex-reasoning').updated_at
+    expect(migrated).toBeGreaterThan(ahead + 1000)
+    finishInit()
+
+    // Repricing does not move the version back either.
+    expect(row(db, 'codex-reasoning').updated_at).toBeGreaterThan(migrated)
+    expect(row(db, 'codex-reasoning').cost).toBeCloseTo(5.38, 10)
+    expect(getUnsyncedRecords(db).map(r => r.id)).toContain('codex-reasoning')
+    expect(getUnsyncedRecords(db, 'cloud').map(r => r.id)).toContain('codex-reasoning')
+  })
+
   it('leaves rows without reasoning tokens untouched', () => {
     insertRecord(db, makeRecord({ id: 'codex-plain', thinkingTokens: 0, cost: 5.38 }))
 

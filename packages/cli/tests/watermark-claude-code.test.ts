@@ -19,6 +19,17 @@ describe('WatermarkManager Claude Code parser version', () => {
 
   const entry = { offset: 200, size: 200, mtime: 2 }
 
+  // The other parsers' versions as this release writes them, so their gates
+  // keep their entries whatever their current versions are.
+  function otherParserVersions(): Record<string, unknown> {
+    const freshPath = join(dir, 'fresh.json')
+    new WatermarkManager(freshPath).save()
+    const versions = JSON.parse(readFileSync(freshPath, 'utf-8'))
+    delete versions.files
+    delete versions.claudeCodeParserVersion
+    return versions
+  }
+
   it('clears only Claude Code entries when the watermark predates the version', () => {
     writeFileSync(watermarkPath, JSON.stringify({
       files: {
@@ -26,10 +37,7 @@ describe('WatermarkManager Claude Code parser version', () => {
         codex: { '/codex/rollout.jsonl': entry },
         codefuse: { '/cf/session.jsonl': entry },
       },
-      grokParserVersion: 1,
-      codebuddyParserVersion: 1,
-      antigravityParserVersion: 1,
-      codefuseParserVersion: 1,
+      ...otherParserVersions(),
       toolCallBackfillVersion: 1,
       opencode: { lastMessageCreatedAt: 5, lastMessageId: 'm' },
     }), 'utf-8')

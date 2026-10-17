@@ -15,6 +15,26 @@ vi.mock('node:os', async () => {
   }
 })
 
+// Track the extraction and snapshot directories the importer creates, so a test
+// can assert it removes them again.
+const fsTrace = vi.hoisted(() => ({ created: [] as string[], removed: [] as string[] }))
+
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
+  return {
+    ...actual,
+    mkdtempSync: (prefix: Parameters<typeof actual.mkdtempSync>[0]) => {
+      const dir = actual.mkdtempSync(prefix)
+      if (String(dir).includes('aiusage-kelivo-')) fsTrace.created.push(String(dir))
+      return dir
+    },
+    rmSync: (target: Parameters<typeof actual.rmSync>[0], options?: Parameters<typeof actual.rmSync>[1]) => {
+      if (typeof target === 'string' && target.includes('aiusage-kelivo-')) fsTrace.removed.push(target)
+      return actual.rmSync(target, options)
+    },
+  }
+})
+
 const { runParse } = await import('../../src/commands/parse.js')
 
 
@@ -476,6 +496,28 @@ describe('runParse with Kelivo exports', () => {
     expect(result.parsedCount).toBe(1)
     expect(result.warnings).toHaveLength(1)
     expect(result.warnings[0]).toContain('-wal')
+  })
+  it('removes the snapshot directory when the snapshot is not a Kelivo database', async () => {
+    const backupDir = join(testDir, 'kelivo-backups')
+    mkdirSync(backupDir, { recursive: true })
+    const dbPath = join(backupDir, 'kelivo.db')
+    const foreign = createKelivoDatabaseFile(dbPath, [], { journalMode: 'wal' })
+    // Keep the WAL (so the online-backup path runs) but drop the table it needs,
+    // so the failure happens after the snapshot exists on disk.
+    foreign.exec('DROP TABLE message_rows')
+    fsTrace.created = []
+    fsTrace.removed = []
+    try {
+      const result = await runParse(cacheDb, 'kelivo')
+
+      expect(result.parsedCount).toBe(0)
+      expect(result.errors.join(' ')).toContain('message_rows')
+    } finally {
+      foreign.close()
+    }
+
+    expect(fsTrace.created.length).toBeGreaterThan(0)
+    for (const dir of fsTrace.created) expect(existsSync(dir)).toBe(false)
   })
 })
 

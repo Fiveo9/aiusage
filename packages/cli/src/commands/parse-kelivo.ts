@@ -368,6 +368,13 @@ function discardWorkDir(workDir: string): void {
 const MISSING_WAL_WARNING =
   'this database is in WAL mode but no -wal sidecar was found beside it; if Kelivo is running, its newest messages only exist in that WAL. Export a Kelivo .zip backup instead, or copy the database together with its -wal file'
 
+/**
+ * The file-by-file copy is a last resort: Kelivo can checkpoint while the files
+ * are copied, so the copy can be behind instead of complete.
+ */
+const COPIED_DATABASE_WARNING =
+  'this database could not be read through SQLite\'s online backup, so its files were copied directly; if Kelivo checkpointed during the copy, the newest messages may be missing (the next import picks them up)'
+
 /** SQLite records the journal mode the database was last written in at byte 18. */
 function isWalModeDatabase(filePath: string): boolean {
   let handle: number | null = null
@@ -402,15 +409,31 @@ async function loadDatabaseFile(filePath: string): Promise<LoadedKelivoEntries> 
     }
   }
 
+  let snapshot: { path: string; cleanup: () => void }
   try {
-    const snapshot = await snapshotDatabase(filePath)
-    return { entries: readKelivoDatabase(snapshot.path), warnings: NO_WARNINGS, cleanup: snapshot.cleanup }
+    snapshot = await snapshotDatabase(filePath)
   } catch {
-    // Fall through: a database SQLite refuses to read online is still worth a
-    // plain copy of the files, which the copy below opens read-write so SQLite
-    // can replay the WAL. Retried once, since Kelivo may be appending to it.
+    // SQLite refused to read the live database online (for example a WAL whose
+    // shared-memory file is gone); a plain copy is still worth a try.
+    return loadCopiedDatabase(filePath, sidecars)
   }
 
+  try {
+    return { entries: readKelivoDatabase(snapshot.path), warnings: NO_WARNINGS, cleanup: snapshot.cleanup }
+  } catch (e) {
+    // The snapshot is a real database but not a Kelivo one; copying the files
+    // would yield the same rows, so surface the error and leave no copy behind.
+    snapshot.cleanup()
+    throw e
+  }
+}
+
+/**
+ * Copies a database and its sidecars, then opens the copy read-write so SQLite
+ * can replay the WAL. Kelivo can checkpoint while the copies run, so the result
+ * is never torn but can be behind, which is why it carries a warning.
+ */
+function loadCopiedDatabase(filePath: string, sidecars: string[]): LoadedKelivoEntries {
   let lastError: unknown
   for (let attempt = 0; attempt < 2; attempt++) {
     const workDir = mkdtempSync(join(tmpdir(), 'aiusage-kelivo-'))
@@ -422,7 +445,7 @@ async function loadDatabaseFile(filePath: string): Promise<LoadedKelivoEntries> 
       }
       return {
         entries: readKelivoDatabase(copyPath, { writable: true }),
-        warnings: NO_WARNINGS,
+        warnings: [COPIED_DATABASE_WARNING],
         cleanup: () => discardWorkDir(workDir),
       }
     } catch (e) {

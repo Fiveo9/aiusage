@@ -91,9 +91,25 @@ export interface SyncedRecordPricing {
  * the price the owner had published: usage another device reported at $0 (a
  * gateway that cannot price the model) stayed $0 however often *Recalculate
  * pricing* ran. Both tables are now written with the same values, so a merged
- * copy and its mirror always describe the same price. This is a local
+ * copy and its mirror normally describe the same price. This is a local
  * correction: it is never published (uploads are built from locally parsed
  * rows only) and the owner stays authoritative.
+ *
+ * Two prices the recalculation must not make worse are kept as they are:
+ *
+ *  - a positive cost from `pricing` is kept when the local registry has no
+ *    price for the model (the recomputation would write `0 / 'unknown'`).
+ *    Price lists legitimately differ between devices — one may have a manual
+ *    price or a newer sync — and "this device cannot price the model" is not
+ *    a correction of what the owner's device priced.
+ *  - a positive `log` cost is kept. The owner logged it, and a price table on
+ *    another device must not override it on that device's dashboard (this is
+ *    also how a recalculation behaved before the mirror was written).
+ *
+ * A record the owner published at $0 is not affected by either guard: its
+ * cost is not positive, so it is still priced — which is the case this
+ * function exists for. A record the owner republished at $0 after a priced
+ * version is repriced here as well, as the owner's current version says.
  *
  * Only a mirror a recalculation may speak for is written. The merged copy in
  * `records` must be a pulled copy (`origin = 'synced'` — never a local row
@@ -149,6 +165,10 @@ export function applyPricingToSyncedRecords(
           AND r.cache_write_tokens = synced_records.cache_write_tokens
           AND r.thinking_tokens = synced_records.thinking_tokens
       )
+      -- A model the local registry cannot price yields no correction; see
+      -- the two prices this function leaves alone, above.
+      AND NOT (@costSource = 'unknown' AND synced_records.cost > 0)
+      AND NOT (synced_records.cost_source = 'log' AND synced_records.cost > 0)
       AND (model != @model OR provider != @provider OR cost != @cost OR cost_source != @costSource)
   `)
   const params = options.excludeDeviceInstanceId !== undefined

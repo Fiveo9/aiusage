@@ -129,7 +129,7 @@ async function recalcCosts(
     priceCache.set(model, price)
     return price ?? undefined
   }
-  const totalRow = db.prepare(`SELECT COUNT(*) AS total FROM records WHERE 1=1 ${currentDeviceInstanceId ? '' : `AND ${LOCAL_RECORDS_WHERE}`}`).get() as { total: number }
+  const totalRow = db.prepare('SELECT COUNT(*) AS total FROM records').get() as { total: number }
   const total = totalRow.total
   onProgress?.({ total, processed, updated, skipped })
 
@@ -138,14 +138,15 @@ async function recalcCosts(
   // endpoints read the current device's rows from `records` and every other
   // device's from `synced_records`, so a recalculation that wrote records alone
   // left the dashboard on the price the owner had published — a gateway-reported
-  // $0 stayed $0 however often *Recalculate now* ran. Without a device id the
-  // readings are not known, so only locally parsed rows are repriced and nothing
-  // is mirrored, exactly as before.
+  // $0 stayed $0 however often *Recalculate now* ran. Every row is repriced,
+  // as the command-line recalculation does; without a device id the readings
+  // never leave `records`, so no mirror is excluded, and the mirror guard only
+  // ever writes pulled copies.
   const mirrorOptions = currentDeviceInstanceId ? { excludeDeviceInstanceId: currentDeviceInstanceId } : {}
 
   while (true) {
     const records = db.prepare(
-      `SELECT id, tool, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, cost_source FROM records WHERE id > @lastId ${currentDeviceInstanceId ? '' : `AND ${LOCAL_RECORDS_WHERE}`} ORDER BY id LIMIT @limit`
+      'SELECT id, tool, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, cost_source FROM records WHERE id > @lastId ORDER BY id LIMIT @limit'
     ).all({ lastId, limit: BATCH_SIZE }) as any[]
     if (records.length === 0) break
     // A pulled row's updated_at is the version of the remote record it mirrors:

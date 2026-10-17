@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3'
 import { calculateCostForPrice, inferProvider, normalizeQoderModel, resolveExchangeRate } from '@aiusage/core'
 import { loadConfig } from '../config.js'
-import { LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { applyPricingToSyncedRecords, type SyncedRecordPricing } from '../db/synced-records.js'
 import { hasUserPrice, resolvePriceFromRegistry } from '../pricing-registry.js'
 
@@ -19,9 +18,10 @@ export interface RecalcOptions {
    * and every other device's from `synced_records`, so that a copy of a local
    * row echoed through another namespace is never counted twice. The
    * recalculation writes the price it recomputed into that mirror, which
-   * requires knowing which rows those are (see
-   * `applyPricingToSyncedRecords`); without the id it reprices locally parsed
-   * rows only, as every reading then does.
+   * requires knowing which mirrors those readings exclude (see
+   * `applyPricingToSyncedRecords`); without the id no mirror is excluded, as
+   * every reading then reads `records` alone. Every row is repriced either
+   * way.
    */
   currentDeviceInstanceId?: string
 }

@@ -4,7 +4,7 @@ import { initializeDatabase } from '../../src/db/index.js'
 import { insertRecord } from '../../src/db/records.js'
 import { insertSyncedRecord, mergeSyncedRecordsIntoRecords } from '../../src/db/synced-records.js'
 import { recalcPricing } from '../../src/commands/recalc.js'
-import { ensureCuratedPricingAliases, setUserPrice } from '../../src/pricing-registry.js'
+import { ensureCuratedPricingAliases, removeUserPrice, setUserPrice } from '../../src/pricing-registry.js'
 import type { StatsRecord, SyncRecord } from '@aiusage/core'
 
 /** Local midnight of a fixed day, far from `Date.now()`. */
@@ -286,6 +286,41 @@ describe('Recalc Command — pulled rows', () => {
     expect(result.updatedCount).toBe(0)
     expect(result.syncedUpdatedCount).toBe(1)
     expect(mirrorRow().cost).toBeCloseTo(0.87)
+  })
+
+  it('keeps a price the owner published when the local registry has none', () => {
+    // Price lists differ between devices: this one has no row for the model.
+    // "Cannot price it here" is not a correction of the $4 the owner priced.
+    insertSyncedRecord(db, synced({ model: 'remote-only-model', cost: 4, costSource: 'pricing' }))
+    mergeSyncedRecordsIntoRecords(db, OWN)
+
+    const result = recalcPricing(db, { currentDeviceInstanceId: OWN })
+
+    expect(result.updatedCount).toBe(1)
+    expect(result.syncedUpdatedCount).toBe(0)
+    expect(mirroredRow().cost).toBe(0)
+    expect(mirroredRow().cost_source).toBe('unknown')
+    expect(mirrorRow()).toMatchObject({ cost: 4, cost_source: 'pricing' })
+  })
+
+  it('does not override a positive logged cost the owner published, even after a manual price is removed', () => {
+    insertSyncedRecord(db, synced({ model: 'remote-logged-model', cost: 10, costSource: 'log' }))
+    mergeSyncedRecordsIntoRecords(db, OWN)
+
+    // The user sets a manual price and recalculates: the local copy takes it,
+    // the owner's logged cost keeps standing on the dashboard.
+    setUserPrice(db, 'remote-logged-model', { input: 5, output: 0 })
+    recalcPricing(db, { currentDeviceInstanceId: OWN })
+    expect(mirroredRow().cost).toBeCloseTo(5)
+    expect(mirrorRow()).toMatchObject({ cost: 10, cost_source: 'log' })
+
+    // Removing the manual price leaves nothing to compute from; the mirror
+    // must not fall to $0 as well — the owner's unversioned row would never
+    // restore it.
+    removeUserPrice(db, 'remote-logged-model')
+    recalcPricing(db, { currentDeviceInstanceId: OWN })
+    expect(mirroredRow()).toMatchObject({ cost: 0, cost_source: 'unknown' })
+    expect(mirrorRow()).toMatchObject({ cost: 10, cost_source: 'log' })
   })
 
   it('leaves the mirror to the owner when the merged copy is newer than it', () => {

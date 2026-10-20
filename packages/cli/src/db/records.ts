@@ -32,9 +32,43 @@ export function isUploadableLocalRecord(
     || record.deviceInstanceId === UNKNOWN_DEVICE_INSTANCE_ID
 }
 
+/** Columns a re-insert overwrites with the incoming value. */
+const OVERWRITTEN_COLUMNS = [
+  'ts', 'line_offset', 'tool', 'model', 'provider', 'input_tokens', 'output_tokens',
+  'cache_read_tokens', 'cache_write_tokens', 'thinking_tokens', 'cost', 'cost_source',
+  'session_id', 'source_file', 'device', 'device_instance_id', 'origin',
+]
+/**
+ * Columns a re-insert overwrites only with a non-empty value. Most parsers
+ * supply neither: `cwd` is filled in after the insert from the head of the
+ * source file, `platform` by a backfill. An empty incoming value says nothing
+ * about the stored one and must not erase it.
+ */
+const KEPT_WHEN_EMPTY_COLUMNS = ['cwd', 'platform']
+
+const RECORD_CHANGED = [
+  `(${OVERWRITTEN_COLUMNS.map(c => `records.${c}`).join(', ')}) IS NOT (${OVERWRITTEN_COLUMNS.map(c => `excluded.${c}`).join(', ')})`,
+  ...KEPT_WHEN_EMPTY_COLUMNS.map(c => `(excluded.${c} != '' AND records.${c} IS NOT excluded.${c})`),
+].join('\n        OR ')
+
+/**
+ * Write a parsed record, updating the row in place when its id already exists.
+ *
+ * An existing row is never deleted and re-created (`INSERT OR REPLACE` does
+ * that, which cascades to the row's `tool_calls` and `sync_record_state`). It
+ * keeps its `ingested_at` and `synced_at`, and its `updated_at` moves only
+ * when a stored field actually changed, so reading a source again leaves an
+ * unchanged record synced on every target while a changed one is queued again.
+ * A changed row always gets an `updated_at` above the one it had and above
+ * every acknowledgement stored for it: a cloud target acknowledges the
+ * `updated_at` it was sent (see `markRecordVersionsSynced`) and a file
+ * backend the time of its upload, and a record counts as unsynced only while
+ * `updated_at` is greater. A new version must therefore never reuse or fall
+ * below those values, whatever the caller's clock says.
+ */
 export function insertRecord(db: Database.Database, record: StatsRecord): void {
   db.prepare(`
-    INSERT OR REPLACE INTO records (
+    INSERT INTO records (
       id, ts, ingested_at, synced_at, updated_at, line_offset,
       tool, model, provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
@@ -45,6 +79,19 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
       @cost, @costSource, @sessionId, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, @origin
     )
+    ON CONFLICT(id) DO UPDATE SET
+      ${OVERWRITTEN_COLUMNS.map(c => `${c} = excluded.${c}`).join(',\n      ')},
+      ${KEPT_WHEN_EMPTY_COLUMNS.map(c => `${c} = CASE WHEN excluded.${c} != '' THEN excluded.${c} ELSE records.${c} END`).join(',\n      ')},
+      updated_at = CASE
+        WHEN ${RECORD_CHANGED}
+        THEN MAX(
+          excluded.updated_at,
+          records.updated_at + 1,
+          COALESCE(records.synced_at, 0) + 1,
+          COALESCE((SELECT MAX(s.synced_at) FROM sync_record_state s WHERE s.record_id = records.id), 0) + 1
+        )
+        ELSE records.updated_at
+      END
   `).run({
     id: record.id,
     ts: record.ts,
@@ -70,6 +117,69 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
     platform: record.platform ?? '',
     origin: record.origin ?? 'local',
   })
+}
+
+/**
+ * Fields a parser can change. Bookkeeping is deliberately excluded:
+ * `ingested_at`, `updated_at`, `synced_at`, `line_offset` and `source_file`
+ * describe *when and from where* a row was read, not what it says. `origin` is
+ * excluded too, so a value-identical row that arrived from another device keeps
+ * its provenance instead of being re-labelled as local work.
+ */
+function recordValuesEqual(existing: StatsRecord, incoming: StatsRecord): boolean {
+  return existing.ts === incoming.ts
+    && existing.tool === incoming.tool
+    && existing.model === incoming.model
+    && existing.provider === incoming.provider
+    && existing.inputTokens === incoming.inputTokens
+    && existing.outputTokens === incoming.outputTokens
+    && existing.cacheReadTokens === incoming.cacheReadTokens
+    && existing.cacheWriteTokens === incoming.cacheWriteTokens
+    && existing.thinkingTokens === incoming.thinkingTokens
+    && existing.cost === incoming.cost
+    && existing.costSource === incoming.costSource
+    && existing.sessionId === incoming.sessionId
+    && (existing.cwd ?? '') === (incoming.cwd ?? '')
+    && existing.device === incoming.device
+    && existing.deviceInstanceId === incoming.deviceInstanceId
+    && (existing.platform ?? '') === (incoming.platform ?? '')
+}
+
+/**
+ * Writes only the records whose values changed, and returns how many rows were
+ * written.
+ *
+ * Sources that are re-read in full — a SQLite database whose pages are
+ * rewritten in place, or a backup archive that re-produces messages already
+ * imported — hand back records that are already stored. Rewriting those
+ * unchanged would move `updated_at` past `synced_at` and drop `synced_at`
+ * entirely, so every re-import marked the whole history as unsynced work.
+ * An identical record is now left exactly as it is.
+ */
+export function insertChangedRecords(db: Database.Database, records: StatsRecord[]): number {
+  if (records.length === 0) return 0
+
+  const existing = new Map<string, StatsRecord>()
+  const chunkSize = 400
+  for (let start = 0; start < records.length; start += chunkSize) {
+    const ids = records.slice(start, start + chunkSize).map((record) => record.id)
+    const rows = db
+      .prepare(`SELECT * FROM records WHERE id IN (${ids.map(() => '?').join(', ')})`)
+      .all(...ids) as Record<string, unknown>[]
+    for (const row of rows) existing.set(row.id as string, mapRowToRecord(row))
+  }
+
+  let written = 0
+  const write = db.transaction((items: StatsRecord[]) => {
+    for (const record of items) {
+      const prior = existing.get(record.id)
+      if (prior && recordValuesEqual(prior, record)) continue
+      insertRecord(db, record)
+      written++
+    }
+  })
+  write(records)
+  return written
 }
 
 export function getRecordById(db: Database.Database, id: string): StatsRecord | null {

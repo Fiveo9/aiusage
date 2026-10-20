@@ -36,7 +36,7 @@ import { clearCredentials, hasCredentials, loadCredentials, saveCredentials } fr
 import { base64url, sha256Buffer } from '../leaderboard/crypto.js'
 import { recordLeaderboardUpload, uploadLeaderboardData } from '../commands/leaderboard-upload.js'
 import { isKelivoSourceFile, runParseKelivo } from '../commands/parse-kelivo.js'
-import { insertChangedRecords, insertRecord, LOCAL_RECORDS_WHERE } from '../db/records.js'
+import { insertChangedRecords, LOCAL_RECORDS_WHERE } from '../db/records.js'
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
 import { getPricingRegistrySummary, getUserAliasBindings, hasUserPrice, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, resolvePriceFromRegistry, setUserPrice, setUserPricingAlias, syncPricingFromLitellm } from '../pricing-registry.js'
 import type { DetectedTool } from '../discovery.js'
@@ -2220,7 +2220,13 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
           const existingCount = await runDbWrite(() => {
             const existingCount = countExistingRecordIds(db, result.records.map((record) => record.id))
+            // Ignore temp-path-only differences so an unchanged upload is not
+            // queued for sync again, while still recording the manual import.
             insertChangedRecords(db, result.records)
+            const stampImport = db.prepare('UPDATE records SET ingested_at = ? WHERE id = ?')
+            for (const record of result.records) {
+              stampImport.run(now, record.id)
+            }
             return existingCount
           })
           const imported = result.records.length

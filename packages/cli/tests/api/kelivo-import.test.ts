@@ -73,7 +73,7 @@ describe('POST /api/import/kelivo', () => {
     })
   })
 
-  it('reports incremental imports without rewriting unchanged rows', async () => {
+  it('reports incremental imports without re-queuing unchanged rows', async () => {
     const firstRes = await fetch(`${baseUrl}/api/import/kelivo`, { method: 'POST', body: createKelivoForm() })
     const firstData = await firstRes.json()
     const secondRes = await fetch(`${baseUrl}/api/import/kelivo`, { method: 'POST', body: createKelivoForm() })
@@ -84,19 +84,18 @@ describe('POST /api/import/kelivo', () => {
     expect(typeof secondData.lastImportedAt).toBe('number')
     expect(secondData.lastImportedAt).toBeGreaterThanOrEqual(firstData.lastImportedAt)
 
-    // The row was already identical, so it was left alone: `lastImportedAt`
-    // reports when this tool's records were last written, not when a repeated
-    // import of the same file ran.
+    // Re-import advances only the user-facing import timestamp; the unchanged
+    // record version is preserved and therefore is not queued for sync again.
     const row = db.prepare("SELECT ingested_at, updated_at FROM records WHERE tool = 'kelivo'").get() as any
     expect(row).toMatchObject({
-      ingested_at: firstData.lastImportedAt,
+      ingested_at: secondData.lastImportedAt,
       updated_at: firstData.lastImportedAt,
     })
     const toolsRes = await fetch(`${baseUrl}/api/detected-tools`)
     const toolsData = await toolsRes.json()
     const kelivo = toolsData.tools.find((tool: any) => tool.sourceKey === 'kelivo')
 
-    expect(kelivo).toMatchObject({ sourceKey: 'kelivo', lastImportedAt: firstData.lastImportedAt })
+    expect(kelivo).toMatchObject({ sourceKey: 'kelivo', lastImportedAt: secondData.lastImportedAt })
   })
 
   it('returns the last Kelivo import time with detected tools', async () => {

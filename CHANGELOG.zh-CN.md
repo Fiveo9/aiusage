@@ -8,6 +8,7 @@
 ## [未发布]
 
 ### 修复
+- **Codex 的推理 token 被重复统计和计费**（[#138](https://github.com/juliantanx/aiusage/pull/138)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — Codex 上报的输出 token 已包含推理 token；它们既被存为输出 token，又被存为思考 token，费用也按两者计算。现在 Codex 以及嵌入 CodeFuse 的 Codex 会话保存的输出 token 不再包含推理部分。已有的本地 Codex 记录由迁移更正并重新计费，CodeFuse 日志会重新导入一次。更正后的记录会在下一次同步时再次上传。首页的 token 构成条现在把思考 token 计入输出部分。
 - **重新导入记录会删除它的工具调用和同步状态**（[#137](https://github.com/juliantanx/aiusage/pull/137)，由 [@aaroncchung](https://github.com/aaroncchung) 贡献） — 记录以 `INSERT OR REPLACE` 写入，该语句会先删除原行，并连带删除其工具调用和各同步目标的同步状态。因此包含多个工具调用的 Claude Code 消息只保存了一个，被重新解析的记录会再次上传到每个目标。现在记录改为原地更新，保留工具调用、`ingested_at` 和同步状态；只有已保存的字段发生变化时才会再次上传。Claude Code 的工具调用改为按 `tool_use` 块的 id 标识。升级后会重新导入一次 Claude Code 日志以恢复缺失的调用；日志已不存在的记录，其工具调用予以保留。
 - **SQLite 版本的 Kelivo 备份无法导入** — Kelivo 将聊天存储从 Hive 迁移到 SQLite 后，`.zip` 备份内变成 `database/kelivo.db` 而不是 `chats.json`，导入会直接以 `chats.json not found in zip` 失败。现在导入器会读取压缩包中的 SQLite 数据库，也接受直接选择的 `.db`/`.sqlite` 文件，`chats.json` 仍然兼容。SQLite 中的微秒时间戳会被正确换算，数据库 `extras_json` 或 `chats.json` 里的 cache-write 与 reasoning token 不再被丢弃。与 AIUsage 其他来源保持一致，cache-write 与 reasoning token 现在单独记入对应字段，不再并入输入与输出 token。
 - **Kelivo 记录沿用应用内的供应商名称** — `providerId` 是面向用户的供应商名称（如 “OpenAI - MiMo”），部分行甚至是 UUID，导致按供应商聚合时显示的是代理配置名而不是模型厂商。现在记录优先使用 AIUsage 依据模型推断出的供应商，仅在模型无法识别时保留 Kelivo 的名称。

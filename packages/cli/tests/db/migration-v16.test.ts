@@ -191,7 +191,8 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
 
   it('leaves other tools, CodeFuse rows and rows pulled from other devices untouched', () => {
     insertRecord(db, makeRecord({ id: 'claude', tool: 'claude-code' }))
-    // Embedded Codex rows of CodeFuse are corrected by a re-import, not here.
+    // A CodeFuse row outside its embedded Codex source has different token
+    // semantics and cannot be corrected by this migration.
     insertRecord(db, makeRecord({ id: 'codefuse', tool: 'codefuse' }))
     insertRecord(db, makeRecord({ id: 'pulled', origin: 'synced', deviceInstanceId: 'device-b' }))
 
@@ -205,6 +206,34 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
       expect(r.thinking_tokens).toBe(200_000)
       expect(r.cost).toBeCloseTo(7.38, 10)
       expect(r.updated_at).toBe(1000)
+    }
+  })
+
+  it('corrects embedded CodeFuse Codex rows even when their source logs are gone', () => {
+    insertRecord(db, makeRecord({
+      id: 'codefuse-posix',
+      tool: 'codefuse',
+      sourceFile: '/Users/a/.codefuse/engine/codex/sessions/2026/10/01/rollout-gone.jsonl',
+    }))
+    insertRecord(db, makeRecord({
+      id: 'codefuse-windows',
+      tool: 'codefuse',
+      sourceFile: 'C:\\Users\\a\\.codefuse\\engine\\codex\\sessions\\2026\\10\\01\\rollout-gone.jsonl',
+    }))
+
+    migrateV16(db)
+    expect(pending(db)).toEqual(['codefuse-posix', 'codefuse-windows'])
+    finishInit()
+
+    for (const id of ['codefuse-posix', 'codefuse-windows']) {
+      const migrated = row(db, id)
+      expect(migrated).toMatchObject({
+        output_tokens: 300_000,
+        thinking_tokens: 200_000,
+        cost_source: 'pricing',
+      })
+      expect(migrated.cost).toBeCloseTo(5.38, 10)
+      expect(getUnsyncedRecords(db).map(r => r.id)).toContain(id)
     }
   })
 

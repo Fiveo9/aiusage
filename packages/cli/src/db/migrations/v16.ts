@@ -27,8 +27,10 @@ import { NEXT_UPDATED_AT } from '../record-version.js'
  *
  * Only `origin = 'local'` rows are touched, as in v15: rows pulled from other
  * devices are corrected and re-published by their owners. CodeFuse rows from
- * its embedded Codex engine are not touched here either; they are re-imported
- * from their logs through the CodeFuse parser version in `watermark.ts`.
+ * its embedded Codex engine are identifiable by their source path and are
+ * migrated too. This matters when the original log has already been removed:
+ * the parser-version reset in `watermark.ts` can repair files that still
+ * exist, but it cannot repair a historical database row on its own.
  *
  * The subtraction is not repeatable, so it relies on running exactly once
  * (the schema version) and on every row it sees having been written by the
@@ -36,7 +38,17 @@ import { NEXT_UPDATED_AT } from '../record-version.js'
  * and migrations run before anything is parsed.
  */
 export function migrateV16(db: Database.Database): void {
-  const affected = `tool = 'codex' AND origin = 'local' AND thinking_tokens > 0`
+  // Normalize Windows separators before matching CodeFuse's embedded Codex
+  // directory. Other CodeFuse formats can also carry thinking tokens, but
+  // their output-token semantics are different and must not be subtracted.
+  const codexRows = `(
+    tool = 'codex'
+    OR (
+      tool = 'codefuse'
+      AND INSTR(REPLACE(source_file, CHAR(92), '/'), '/engine/codex/sessions/') > 0
+    )
+  )`
+  const affected = `${codexRows} AND origin = 'local' AND thinking_tokens > 0`
 
   db.prepare(`
     INSERT OR IGNORE INTO pending_cost_recalc (record_id)

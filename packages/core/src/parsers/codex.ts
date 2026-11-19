@@ -128,6 +128,7 @@ export class CodexParser implements Parser {
   }
 
   finalize(): ParseResult[] {
+    this.currentModel = null
     // Handle orphan tool calls (no subsequent token_count)
     if (this.pendingToolCalls.length === 0) return []
 

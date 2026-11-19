@@ -1,10 +1,12 @@
 <script>
-  import { dateRange, selectedDevice, selectedTool, formatTokens, formatNumber, formatCost } from '$lib/stores.js'
+  import { dateRange, selectedDevice, selectedTool, modelDisplayMode, formatTokens, formatNumber, formatCost } from '$lib/stores.js'
   import { fetchModels } from '$lib/api.js'
+  import { groupModels } from '$lib/model-display.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
+  import ModelDisplaySelector from '$lib/components/ModelDisplaySelector.svelte'
 
   let data = null
   let error = null
@@ -26,7 +28,7 @@
 
   $: $dateRange, $selectedDevice, $selectedTool, loadData()
 
-  $: sortedModels = [...(data?.models || [])].sort((a, b) => {
+  $: sortedModels = groupModels(data?.models || [], $modelDisplayMode).sort((a, b) => {
     if (chartMode === 'cost') return b.totalCost - a.totalCost
     return b.totalTokens - a.totalTokens
   })
@@ -78,6 +80,7 @@
   <DateRangeSelector />
   <DeviceSelector />
   <ToolSelector />
+  <ModelDisplaySelector />
 </div>
 
 {#if loading}
@@ -120,10 +123,10 @@
     {/if}
 
     <div class="model-list">
-      {#each sortedModels as model, i (model.model)}
+      {#each sortedModels as model, i (JSON.stringify([model.model, model.provider]))}
         <div class="model-row animate-row" style="animation-delay: {i * 30}ms">
           <div class="model-meta">
-            <span class="mono model-name">{model.model}</span>
+            <span class="mono model-name" title={model.originalModels.join('\n')}>{model.model}</span>
             <span class="model-provider">{model.provider}</span>
           </div>
 

@@ -1,10 +1,12 @@
 <script>
-  import { dateRange, selectedDevice, selectedTool, formatCost } from '$lib/stores.js'
+  import { dateRange, selectedDevice, selectedTool, modelDisplayMode, formatCost } from '$lib/stores.js'
   import { fetchCost } from '$lib/api.js'
+  import { groupModelCosts } from '$lib/model-display.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
+  import ModelDisplaySelector from '$lib/components/ModelDisplaySelector.svelte'
 
   let data = null
   let error = null
@@ -27,6 +29,7 @@
   }
 
   $: $dateRange, $selectedDevice, $selectedTool, loadData()
+  $: modelCosts = groupModelCosts(data?.byModel || {}, $modelDisplayMode)
 
   function getMaxCost() {
     if (!data?.data.length) return 0
@@ -89,6 +92,7 @@
   <DateRangeSelector />
   <DeviceSelector />
   <ToolSelector />
+  <ModelDisplaySelector />
 </div>
 
 {#if loading}
@@ -159,7 +163,7 @@
     </div>
     <div class="card">
       <div class="section-title">{$t('cost.byModel')}</div>
-      {#each getTopEntries(data.byModel, 10) as [model, cost]}
+      {#each getTopEntries(modelCosts, 10) as [model, cost]}
         <div class="breakdown-row">
           <span class="mono">{model}</span>
           <span class="mono accent">{formatCost(cost)}</span>

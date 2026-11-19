@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Optional model prefix merging** — Models and Cost now share a browser-saved display selector. Keep full names by default, or group names by the segment after the last `/` (for example, `provider-1/gpt-6-astra` and `provider-2/gpt-6-astra` become `gpt-6-astra`). Merged rows sum token categories, calls, and recorded costs, and recalculate token shares; the model ranking retains original names in tooltips. Stored records and pricing are unchanged.
+
 ---
 
 ## [1.5.28] - 2026-11-04

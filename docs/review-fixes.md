@@ -2,7 +2,7 @@
 
 来源：2026-11-19「README审阅与项目优化」（会话 240）。本次按用户授权初始化本地 Git，保留现有源码和重写后的 README，然后按以下顺序逐项实现、定向验证、只读审阅和独立提交。不自动推送或发布。
 
-当前收尾状态（2026-11-19）：10 项源码修复已提交；本机五个包的分项生产构建、站点整体类型检查和隔离 Electron 运行验证已通过。本机收尾执行 39 项定向回归及 Electron smoke 的 5 组断言；随后新增统一 remote-check 入口，远程 Linux 82/82 修复回归及 6 步构建通过。以下分项保留初次交付记录，后续补验结果见文末「收尾验证」及[远程验收](remote-check.md)。未执行 GitHub Actions、独立 PostgreSQL 多实例锁竞争、完整测试套件及实际发布。
+当前收尾状态（2026-11-19）：10 项源码修复已提交。本机编译、类型检查和 Electron 功能回归通过；远程 Linux 完整套件 1,877 项中 1,876 通过、0 失败、1 项 Windows 专属用例按平台跳过。独立 PostgreSQL 双进程锁竞争/回滚/重试 12 项断言通过；两份 Docker 镜像在受控构建模式下成功构建，隔离启动 10 项断言通过，测试容器已停止保留。以下保留历史验证记录，当前结果以「收尾验证」及[远程验收](remote-check.md)中的后续结果为准。未推送、发布或触发 GitHub Actions。
 
 | 编号 | 问题 | 状态 |
 | --- | --- | --- |
@@ -15,7 +15,7 @@
 | R07 | 小组件手动刷新忽略已保存的统计范围 | 完成；类型检查及 Electron 实际设置/查询 IPC 通过 |
 | R08 | 小组件日界计算未适配夏令时 | 完成；18/18 日期与数据回归、widget 类型检查通过 |
 | R09 | 构建脚本依赖 Unix 命令，CI 缺少 Windows 覆盖 | 完成；本机分项构建与远程 Linux 构建通过，GitHub Actions 未触发 |
-| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；12/12 初始化/迁移回归及站点整体类型检查通过；独立 PG 多实例未验证 |
+| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；初始化/迁移回归、整体类型检查和独立 PostgreSQL 双进程 12 项断言通过 |
 
 ## 验证约束
 
@@ -79,6 +79,8 @@ widget 使用官方 better-sqlite3 12.10.0、Electron ABI 130、win32-x64 预编
 
 通过统一入口执行 `-Task test -Target linux -Scope full -Machine linux-01 -ReuseRunId 20261119T133655Z-adb0aaed`，最终 runId 为 `20261119T134309Z-b1b2dec5`。五个包共 1,877 项：1,876 通过、0 失败、1 项 Windows 文件占用测试按平台跳过，本地/远程退出码 0。
 
+容器验收补齐异步硬链接登记后再次执行完整套件：`pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope full -Machine linux-01 -ReuseRunId 20261119T140620Z-ce0349a0`，最终 runId `20261119T141038Z-65bd95bf`，仍为 1,876 通过、0 失败、1 项平台预期跳过，本地/远程 exit 0。此运行是本轮最终全量回归证据。
+
 初次全量执行发现测试夹具落后于 v18：回退版本账本时未撤销 v18 对象、status 仍期待 v17/3 个视图；另有 Grok 固定 `/tmp` 路径和 init 固定目录造成隔离问题。已修正对应测试，生产迁移实现未改。回收器登记并审查本次运行创建的硬链接，保持运行目录边界、拒绝符号链接及未登记硬链接，所有清理仍为移动到回收区。前两次失败报告保留在 `20261119T132923Z-8bdc468a` 和 `20261119T133655Z-adb0aaed`。
 
 ### 独立 PostgreSQL 双进程补验
@@ -114,4 +116,12 @@ Electron smoke 实际加载构建后的 main/preload/renderer 和 ABI 130 SQLite
 
 后续远程收尾：`scripts/remote-check.ps1` 已实现并实际运行，修复回归 82/82、失败 0、跳过 0，本地/远程退出码均为 0；core/Web/CLI/site 生产构建和 widget renderer/类型检查共 6 步通过。证据分别位于 `.artifacts/remote-check/20261119T131143Z-e39885dc/` 和 `.artifacts/remote-check/20261119T131513Z-82c2f8c5/`，命令、失败过程及边界见[远程验证文档](remote-check.md)。依赖已在独立 Linux 目录按锁文件安装验证，未执行生命周期脚本，SQLite 使用官方匹配 ABI 的预编译绑定。
 
-剩余边界：未执行 GitHub Actions 或独立 PostgreSQL 多实例锁竞争；PGlite 不能替代多进程数据库锁验证。未从零重编译 Electron 原生模块，未运行完整测试套件、根级 `pnpm build` 或容器构建。npm/Docker 命名空间权限、发布及推送未执行。上述未执行项不标为通过。
+### Docker 构建与隔离启动补验
+
+命令：`pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope docker -Machine linux-01 -ReuseRunId 20261119T135947Z-8b1909fa`。成功 runId `20261119T140620Z-ce0349a0`，本地/远程 exit 0。根 CLI Dockerfile 和 site Dockerfile 均实际构建成功，10 项断言确认 CLI 静态页面、未登录 401、登录与会话访问、site 数据库健康、16 个迁移版本及三个容器未发布宿主机端口。`docker-result.json` 记录两份镜像 ID，`stopped=true` 确认三个本次容器已停止；镜像、容器及内部网络保留，没有发布或删除。
+
+为满足本轮禁止删除规则，Dockerfile 增加仅验收启用的 `AIUSAGE_CONTAINER_CHECK=1`：依赖生命周期脚本不执行，Node 清理转换为镜像内回收，CLI SQLite 使用经路径/链接审查的官方匹配 ABI 预编译包。CLI 基础镜像改为 Node 22（Node 20 的该版本 Linux 预编译下载返回 404）；site 仍为 Node 20。普通发行默认模式保留，因此本结果不能表述为普通模式的从零原生编译已通过。`.dockerignore` 补齐 Web/site 构建目录排除，避免本机/远程旧构建混入镜像。
+
+两次容器失败结果保留：`20261119T135659Z-cd51bbcf` 为 pnpm 异步硬链接未登记，已补齐同步/异步同等审查；`20261119T135947Z-8b1909fa` 为 Node 20 原生预编译 404，后改用 Node 22。一次日志下载失败通过同 runId 续收完成，没有重新提交构建。
+
+剩余边界：未触发 GitHub Actions、未验证 Linux Electron GUI 或从零重编译 Electron 原生模块；根级 `pnpm build` 未单独执行，但各模块本机/远程构建已有结果。Windows 专属文件占用用例在本次 Linux 全量运行中跳过。普通容器发行模式的生命周期/原生编译、npm/Docker 命名空间权限、发布及推送未执行。上述未执行项不标为通过。

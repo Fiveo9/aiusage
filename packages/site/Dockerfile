@@ -1,6 +1,7 @@
 FROM node:20-slim AS base
 
 ARG BUILD_DATE
+ARG AIUSAGE_CONTAINER_CHECK=0
 
 LABEL org.opencontainers.image.title="aiusage-site" \
       org.opencontainers.image.description="Official website and documentation for AIUsage — track AI coding assistant usage, token consumption, costs, and tool calls across Claude Code, Codex, Cursor, and more" \
@@ -25,9 +26,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 # Copy package.json files for each workspace package
 COPY packages/core/package.json packages/core/
 COPY packages/site/package.json packages/site/
+COPY scripts/remote-check-recycle.cjs scripts/
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then \
+      mkdir -p /app/.check-home /app/.check-tmp && \
+      HOME=/app/.check-home TMPDIR=/app/.check-tmp AIUSAGE_CHECK_ROOT=/app AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs" pnpm install --frozen-lockfile --ignore-scripts --package-import-method=copy; \
+    else pnpm install --frozen-lockfile; fi
 
 # Copy source code
 COPY scripts/recycle-output.cjs scripts/recycle-output.cjs
@@ -35,7 +40,8 @@ COPY packages/core/ packages/core/
 COPY packages/site/ packages/site/
 
 # Build
-RUN pnpm --filter @aiusage/core build && pnpm --filter @aiusage/site build
+RUN if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then export AIUSAGE_CHECK_ROOT=/app AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs"; fi; \
+    pnpm --filter @aiusage/core build && pnpm --filter @aiusage/site build
 
 FROM base AS prod-deps
 
@@ -43,11 +49,16 @@ FROM base AS prod-deps
 # invalidate this expensive step unless dependency manifests change.
 COPY packages/core/package.json packages/core/package.json
 COPY packages/site/package.json packages/site/package.json
+COPY scripts/remote-check-recycle.cjs scripts/
 RUN mkdir -p /deploy/packages/core && \
     cp /app/packages/core/package.json /deploy/packages/core/package.json && \
     cat /app/packages/site/package.json | \
       node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('/dev/stdin','utf8')); delete pkg.devDependencies; delete pkg.scripts; pkg.type='module'; pkg.dependencies=pkg.dependencies||{}; pkg.dependencies['@aiusage/core']='file:./packages/core'; fs.writeFileSync('/deploy/package.json',JSON.stringify(pkg,null,2)+'\n')" && \
-    cd /deploy && npm install --omit=dev --no-audit --no-fund
+    cd /deploy && \
+    if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then \
+      mkdir -p /deploy/.check-home /deploy/.check-tmp && \
+      HOME=/deploy/.check-home TMPDIR=/deploy/.check-tmp AIUSAGE_CHECK_ROOT=/deploy AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs" npm install --omit=dev --ignore-scripts --no-audit --no-fund; \
+    else npm install --omit=dev --no-audit --no-fund; fi
 
 FROM node:20-slim
 

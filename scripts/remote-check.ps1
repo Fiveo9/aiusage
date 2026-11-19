@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('test', 'build', 'install')][string]$Task,
     [Parameter(Mandatory)][ValidateSet('linux', 'android14')][string]$Target,
-    [ValidateSet('review', 'full', 'postgres', 'linux-resources')][string]$Scope = 'review',
+    [ValidateSet('review', 'full', 'postgres', 'docker', 'linux-resources')][string]$Scope = 'review',
     [string]$Machine,
     [string]$CliPath,
     [string]$ResumeRunId,
@@ -212,7 +212,7 @@ exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$root/home" TMPDIR="$root/tm
     $summary.category = $remoteSummary.category
     if ($remoteSummary.ContainsKey('evidenceFiles')) {
         foreach ($file in $remoteSummary.evidenceFiles) {
-            if ($file -notmatch '^[a-z0-9-]+\.json$') { throw 'Invalid additional evidence name.' }
+            if ($file -notmatch '^[a-z0-9-]+\.(json|log)$') { throw 'Invalid additional evidence name.' }
             $download = Invoke-Instabox @('pull', $Machine, "$remoteResults/$file", (Join-Path $runDir $file), '--json') 90
             Assert-Transport $download 'evidence-download'
             if ($download.code -ne 0) { throw 'Additional evidence download failed.' }

@@ -69,7 +69,7 @@ function promoteUnreleased(file, marker, summary = '') {
   const before = changelog.slice(0, markerIndex)
   const after = changelog.slice(boundary + separator.length)
   let updated = `${before}${marker}${separator}## [${nextVersion}] - ${date}\n\n${releaseBody}${separator}${after}`
-  const compareLink = `[${nextVersion}]: https://github.com/juliantanx/aiusage/compare/v${currentVersion}...v${nextVersion}`
+  const compareLink = `[${nextVersion}]: https://github.com/Fiveo9/aiusage/compare/v${currentVersion}...v${nextVersion}`
   if (!updated.includes(compareLink)) {
     const firstCompareLink = updated.search(/^\[\d+\.\d+\.\d+\]:/m)
     if (firstCompareLink === -1) throw new Error(`${file} has no compare-link section`)

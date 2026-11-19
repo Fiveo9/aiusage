@@ -1,6 +1,6 @@
-# @juliantanx/aiusage-widget
+# @fiveo9/aiusage-widget
 
-一个轻量级的系统托盘小组件，用于 [AIUsage](https://github.com/juliantanx/aiusage)，可以快速查看 AI 编程助手的 token 用量。
+一个轻量级的系统托盘小组件，用于 [AIUsage](https://github.com/Fiveo9/aiusage)，可以快速查看 AI 编程助手的 token 用量。
 
 [English](./README.md) | 中文
 
@@ -20,13 +20,13 @@
 
 ## 前置条件
 
-- 已安装 [AIUsage](https://github.com/juliantanx/aiusage) CLI 并完成数据解析（`aiusage serve` 启动时会自动解析）
+- 已安装 [AIUsage](https://github.com/Fiveo9/aiusage) CLI 并完成数据解析（`aiusage serve` 启动时会自动解析）
 - Node.js >= 20
 
 ## 安装
 
 ```bash
-npm install -g @juliantanx/aiusage-widget
+npm install -g @fiveo9/aiusage-widget
 ```
 
 ## 使用
@@ -67,7 +67,7 @@ PM2 支持 Windows、macOS 和 Linux。
 ## 从源码构建
 
 ```bash
-git clone https://github.com/juliantanx/aiusage.git
+git clone https://github.com/Fiveo9/aiusage.git
 cd aiusage
 pnpm install
 pnpm build

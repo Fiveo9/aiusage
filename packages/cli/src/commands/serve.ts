@@ -125,7 +125,7 @@ export function serve(options: ServeOptions): void {
   })()
 
   if (!existsSync(webBuildDir)) {
-    console.error('Web dashboard not found. Reinstall the package: npm install -g @juliantanx/aiusage')
+    console.error('Web dashboard not found. Reinstall the package: npm install -g @fiveo9/aiusage')
     process.exit(1)
   }
 
@@ -175,7 +175,7 @@ export function serve(options: ServeOptions): void {
 
     // No web build available
     res.writeHead(404, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Web dashboard not found. Reinstall the package: npm install -g @juliantanx/aiusage' } }))
+    res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Web dashboard not found. Reinstall the package: npm install -g @fiveo9/aiusage' } }))
   })
 
   let currentPort = options.port

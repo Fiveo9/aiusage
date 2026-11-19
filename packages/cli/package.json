@@ -1,5 +1,5 @@
 {
-  "name": "@juliantanx/aiusage",
+  "name": "@fiveo9/aiusage",
   "version": "1.5.28",
   "type": "module",
   "description": "Track and analyze AI coding assistant usage across Claude Code, Codex, and more",
@@ -19,13 +19,13 @@
     "dashboard",
     "developer-tools"
   ],
-  "homepage": "https://aiusage.jtanx.com",
+  "homepage": "https://github.com/Fiveo9/aiusage",
   "repository": {
     "type": "git",
-    "url": "https://github.com/juliantanx/aiusage.git"
+    "url": "https://github.com/Fiveo9/aiusage.git"
   },
   "bugs": {
-    "url": "https://github.com/juliantanx/aiusage/issues"
+    "url": "https://github.com/Fiveo9/aiusage/issues"
   },
   "license": "MIT",
   "engines": {

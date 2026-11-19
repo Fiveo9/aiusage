@@ -4,31 +4,30 @@ import { ensureCuratedPricingAliases } from '../pricing/curated-aliases.js'
 import { ensureCuratedPrices } from '../pricing/curated-prices.js'
 
 export async function runMigrations(): Promise<void> {
-  await sql`CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at TIMESTAMPTZ DEFAULT NOW()
-  )`
+  await sql.begin(async (tx) => {
+    // Shared by every instance. Acquired before even creating the version table,
+    // held on this transaction's connection, and released on commit or rollback.
+    await tx`SELECT pg_advisory_xact_lock(1634304371, 1)`
+    await tx`CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    )`
 
-  const applied = await sql<{ version: number }[]>`SELECT version FROM schema_migrations ORDER BY version`
-  const appliedVersions = new Set(applied.map((r: { version: number }) => r.version))
+    const applied = await tx<{ version: number }[]>`SELECT version FROM schema_migrations ORDER BY version`
+    const appliedVersions = new Set(applied.map((r: { version: number }) => r.version))
 
-  for (const migration of migrations) {
-    if (!appliedVersions.has(migration.version)) {
-      console.log(`Applying migration v${migration.version}: ${migration.name}`)
-      await sql.begin(async (tx) => {
+    for (const migration of migrations) {
+      if (!appliedVersions.has(migration.version)) {
+        console.log(`Applying migration v${migration.version}: ${migration.name}`)
         await migration.up(tx)
         await tx`INSERT INTO schema_migrations (version) VALUES (${migration.version})`
-      })
+      }
     }
-  }
 
-  await ensureCuratedPrices(sql)
-
-  // Not a versioned migration: the curated list changes with the code and its
-  // target prices may only arrive with a later pricing sync, so it is
-  // reapplied on every startup, as the CLI does on each open. Each statement
-  // is idempotent and safe to race with another instance or a pricing sync.
-  await ensureCuratedPricingAliases(sql)
+    // Reapply code-maintained defaults before exposing this schema to requests.
+    await ensureCuratedPrices(tx)
+    await ensureCuratedPricingAliases(tx)
+  })
 }
 
 const migrations = [

@@ -4,7 +4,7 @@ import { getUserFromEvent } from '$lib/server/auth/session.js'
 import { startCleanupCron } from '$lib/server/db/cleanup.js'
 import { generateCsrfToken, validateCsrfToken, setCsrfCookie } from '$lib/server/auth/csrf.js'
 
-let initialized = false
+let initializationPromise: Promise<void> | null = null
 
 const CLI_SYNC_STATUS_PATH = '/api/cli/sync/status'
 
@@ -15,15 +15,17 @@ function applyCliSyncStatusCors(response: Response) {
   response.headers.set('Access-Control-Max-Age', '86400')
 }
 
-async function ensureInitialized() {
-  if (initialized) return
-  try {
-    await runMigrations()
-    startCleanupCron()
-    initialized = true
-  } catch (err) {
-    console.error('Failed to initialize:', err)
+function ensureInitialized(): Promise<void> {
+  if (!initializationPromise) {
+    initializationPromise = (async () => {
+      await runMigrations()
+      startCleanupCron()
+    })().catch((error) => {
+      initializationPromise = null
+      throw error
+    })
   }
+  return initializationPromise
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -35,7 +37,17 @@ export const handle: Handle = async ({ event, resolve }) => {
     return response
   }
 
-  await ensureInitialized()
+  try {
+    await ensureInitialized()
+  } catch {
+    console.error('Site initialization failed; request rejected and initialization will be retried.')
+    const response = new Response('Service temporarily unavailable', {
+      status: 503,
+      headers: { 'Retry-After': '5', 'Cache-Control': 'no-store' },
+    })
+    if (isCliSyncStatus) applyCliSyncStatusCors(response)
+    return response
+  }
 
   // Set user in locals
   const user = await getUserFromEvent(event)

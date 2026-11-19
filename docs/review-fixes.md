@@ -81,6 +81,10 @@ widget 使用官方 better-sqlite3 12.10.0、Electron ABI 130、win32-x64 预编
 
 初次全量执行发现测试夹具落后于 v18：回退版本账本时未撤销 v18 对象、status 仍期待 v17/3 个视图；另有 Grok 固定 `/tmp` 路径和 init 固定目录造成隔离问题。已修正对应测试，生产迁移实现未改。回收器登记并审查本次运行创建的硬链接，保持运行目录边界、拒绝符号链接及未登记硬链接，所有清理仍为移动到回收区。前两次失败报告保留在 `20261119T132923Z-8bdc468a` 和 `20261119T133655Z-adb0aaed`。
 
+### 独立 PostgreSQL 双进程补验
+
+命令：`pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope postgres -Machine linux-01 -ReuseRunId 20261119T134309Z-b1b2dec5`。runId `20261119T134852Z-d2bfebde`，本地/远程 exit 0。PostgreSQL 16.16 实际服务上 12 项断言通过：两个不同 PID 的进程运行生产 `runMigrations`，数据库锁目录证实第二进程等待；成功后两进程 exit 0，版本表完整；注入 DDL 失败后两进程 exit 1、schema 回滚、事务锁释放，关闭失败触发器后再次迁移 exit 0。验证容器已停止且保留，证据 `postgres-result.json` 中 `stopped=true`。此结果补齐此前独立数据库锁竞争验证缺口。
+
 已按锁文件 SHA512 校验官方 PGlite 0.5.8 归档并补齐本机缺失依赖，未更改 manifest/lockfile，未执行安装生命周期脚本。站点整体 `tsc --noEmit` 现已通过，前述依赖缺失阻断已解除。实际 PostgreSQL SQL 引擎测试使用内存 PGlite，不使用个人或生产数据库。
 
 | 实际命令 / 检查 | 结果 | 本地证据（相对 `.artifacts/closeout-20261119/`） |

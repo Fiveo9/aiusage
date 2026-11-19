@@ -1,8 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type http from 'node:http'
 
 export const AUTH_COOKIE_NAME = 'aiusage_dashboard_auth'
 const AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+const AUTH_COOKIE_MAX_AGE_MS = AUTH_COOKIE_MAX_AGE_SECONDS * 1000
 
 export function getDashboardPassword(): string | null {
   const password = process.env.AIUSAGE_DASHBOARD_PASSWORD?.trim()
@@ -15,20 +16,29 @@ export function verifyPassword(configuredPassword: string | null | undefined, su
   return safeEqual(configuredPassword, submittedPassword)
 }
 
-export function buildAuthCookie(password: string, secure = false): string {
-  return `${AUTH_COOKIE_NAME}=${hashPassword(password)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}${secure ? '; Secure' : ''}`
+export function buildAuthCookie(password: string, secure = false, now = Date.now()): string {
+  const issuedAt = Math.floor(now / 1000)
+  const nonce = randomBytes(32).toString('base64url')
+  const payload = `${issuedAt}.${nonce}`
+  const signature = signSession(password, payload)
+  return `${AUTH_COOKIE_NAME}=${payload}.${signature}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}${secure ? '; Secure' : ''}`
 }
 
 export function buildClearAuthCookie(secure = false): string {
   return `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`
 }
 
-export function isAuthenticated(configuredPassword: string | null | undefined, cookieHeader: string | null | undefined): boolean {
+export function isAuthenticated(configuredPassword: string | null | undefined, cookieHeader: string | null | undefined, now = Date.now()): boolean {
   if (!configuredPassword) return true
   const cookies = parseCookies(cookieHeader ?? '')
   const token = cookies.get(AUTH_COOKIE_NAME)
   if (!token) return false
-  return safeEqual(token, hashPassword(configuredPassword))
+  const parts = token.split('.')
+  if (parts.length !== 3 || !/^\d+$/.test(parts[0])) return false
+  const issuedAt = Number(parts[0]) * 1000
+  if (!Number.isSafeInteger(issuedAt) || issuedAt > now || now - issuedAt >= AUTH_COOKIE_MAX_AGE_MS) return false
+  const payload = `${parts[0]}.${parts[1]}`
+  return safeEqual(parts[2], signSession(configuredPassword, payload))
 }
 
 export function isPublicPath(pathname: string): boolean {
@@ -51,8 +61,8 @@ export function requireAuth(password: string | null, req: http.IncomingMessage):
   return isAuthenticated(password, req.headers.cookie)
 }
 
-function hashPassword(password: string): string {
-  return createHash('sha256').update(password).digest('hex')
+function signSession(password: string, payload: string): string {
+  return createHmac('sha256', password).update(`aiusage-session-v1:${payload}`).digest('base64url')
 }
 
 function parseCookies(cookieHeader: string): Map<string, string> {

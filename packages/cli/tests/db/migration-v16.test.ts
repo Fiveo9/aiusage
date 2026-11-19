@@ -76,6 +76,8 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
   beforeEach(() => {
     db = new Database(':memory:')
     initializeDatabase(db)
+    // Revert the v18 schema objects as well as the version ledger below.
+    db.exec('DROP VIEW activity_tool_calls; DROP VIEW activity_records; DROP TABLE synced_tool_calls;')
     // initializeDatabase already ran v16 on the empty DB. Roll back to v15 so
     // we can seed records and re-run migrateV16 deterministically.
     db.prepare('DELETE FROM schema_version WHERE version >= 16').run()
@@ -272,7 +274,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     // Nothing changes on the second open, including updated_at.
     expect(row(db, 'codex-reasoning')).toEqual(first)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(17)
+    expect(schemaVersion(db)).toBe(18)
   })
 
   it('applies after v15 when a database upgrades from v14 in one open', () => {
@@ -297,7 +299,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     })
     expect(r.cost).toBeCloseTo(5.38, 10)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(17)
+    expect(schemaVersion(db)).toBe(18)
   })
 
   it('reprices a row v15 queued and the open did not finish repricing', () => {

@@ -75,6 +75,12 @@ widget 使用官方 better-sqlite3 12.10.0、Electron ABI 130、win32-x64 预编
 
 ## 收尾验证
 
+### 完整套件补验（2026-11-19）
+
+通过统一入口执行 `-Task test -Target linux -Scope full -Machine linux-01 -ReuseRunId 20261119T133655Z-adb0aaed`，最终 runId 为 `20261119T134309Z-b1b2dec5`。五个包共 1,877 项：1,876 通过、0 失败、1 项 Windows 文件占用测试按平台跳过，本地/远程退出码 0。
+
+初次全量执行发现测试夹具落后于 v18：回退版本账本时未撤销 v18 对象、status 仍期待 v17/3 个视图；另有 Grok 固定 `/tmp` 路径和 init 固定目录造成隔离问题。已修正对应测试，生产迁移实现未改。回收器登记并审查本次运行创建的硬链接，保持运行目录边界、拒绝符号链接及未登记硬链接，所有清理仍为移动到回收区。前两次失败报告保留在 `20261119T132923Z-8bdc468a` 和 `20261119T133655Z-adb0aaed`。
+
 已按锁文件 SHA512 校验官方 PGlite 0.5.8 归档并补齐本机缺失依赖，未更改 manifest/lockfile，未执行安装生命周期脚本。站点整体 `tsc --noEmit` 现已通过，前述依赖缺失阻断已解除。实际 PostgreSQL SQL 引擎测试使用内存 PGlite，不使用个人或生产数据库。
 
 | 实际命令 / 检查 | 结果 | 本地证据（相对 `.artifacts/closeout-20261119/`） |

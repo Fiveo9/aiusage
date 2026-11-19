@@ -4,11 +4,11 @@ ARG BUILD_DATE
 
 LABEL org.opencontainers.image.title="aiusage-site" \
       org.opencontainers.image.description="Official website and documentation for AIUsage — track AI coding assistant usage, token consumption, costs, and tool calls across Claude Code, Codex, Cursor, and more" \
-      org.opencontainers.image.url="https://github.com/juliantanx/aiusage" \
-      org.opencontainers.image.source="https://github.com/juliantanx/aiusage" \
-      org.opencontainers.image.documentation="https://github.com/juliantanx/aiusage/tree/main/packages/site" \
+      org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.documentation="https://github.com/Fiveo9/aiusage/tree/main/packages/site" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="juliantanx" \
+      org.opencontainers.image.vendor="Fiveonine" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.authors="Julian <juliantanx@users.noreply.github.com>"
 
@@ -30,6 +30,7 @@ COPY packages/site/package.json packages/site/
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
+COPY scripts/recycle-output.cjs scripts/recycle-output.cjs
 COPY packages/core/ packages/core/
 COPY packages/site/ packages/site/
 
@@ -52,10 +53,10 @@ FROM node:20-slim
 
 LABEL org.opencontainers.image.title="aiusage-site" \
       org.opencontainers.image.description="Official website and documentation for AIUsage — track AI coding assistant usage, token consumption, costs, and tool calls across Claude Code, Codex, Cursor, and more" \
-      org.opencontainers.image.url="https://github.com/juliantanx/aiusage" \
-      org.opencontainers.image.source="https://github.com/juliantanx/aiusage" \
+      org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="juliantanx"
+      org.opencontainers.image.vendor="Fiveonine"
 
 WORKDIR /app
 

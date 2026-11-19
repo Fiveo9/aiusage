@@ -26,6 +26,7 @@ import { runParseCodeBuddy } from './parse-codebuddy.js'
 import { runParseAntigravity } from './parse-antigravity.js'
 import { cursorTranscriptComposerId, deleteCursorTranscriptEstimates, hasCursorDatabaseRecord, kiroLogLineId, prefixFingerprint, repairImporterDuplicates, replaceKiroLogLines, replaceSourceRecords, replaceSourceSnapshot } from './importer-duplicates.js'
 import type { ProgressInfo } from '../progress.js'
+import { completeJsonlInput } from '../jsonl.js'
 
 interface ParseResult {
   parsedCount: number
@@ -957,8 +958,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           continue
         }
 
-        const content = readFileSync(filePath, 'utf-8')
-        const lines = content.split('\n')
+        const { lines, nextOffset } = completeJsonlInput(readFileSync(filePath))
         let byteOffset = 0
 
         // Extract cwd from the first line (Claude Code: top-level, Codex: payload.cwd)
@@ -1110,7 +1110,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         }
 
         wm.setEntry(tool, filePath, {
-          offset: stat.size,
+          offset: nextOffset,
           size: stat.size,
           mtime: stat.mtimeMs,
         })

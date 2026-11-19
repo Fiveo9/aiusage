@@ -41,6 +41,7 @@ import { insertChangedRecords, LOCAL_RECORDS_WHERE, recordIdsForReread } from '.
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
 import { getPricingRegistrySummary, getUserAliasBindings, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias, syncPricingFromLitellm } from '../pricing-registry.js'
 import type { DetectedTool } from '../discovery.js'
+import { BodyTooLargeError, readJsonBody } from './request-body.js'
 
 const pendingLeaderboardAuth = new Map<string, { verifier: string; expiresAt: number }>()
 
@@ -209,6 +210,11 @@ function json(res: http.ServerResponse, data: unknown, status = 200): void {
   res.end(JSON.stringify(data))
 }
 
+function bodyTooLarge(res: http.ServerResponse): void {
+  res.setHeader('Connection', 'close')
+  json(res, { error: { code: 'PAYLOAD_TOO_LARGE', message: 'JSON body exceeds the allowed size' } }, 413)
+}
+
 function isDatabaseLockedError(error: unknown): boolean {
   return error instanceof Error && /database is locked|SQLITE_BUSY/i.test(error.message)
 }
@@ -220,13 +226,6 @@ function databaseBusy(res: http.ServerResponse): void {
       message: 'Database is busy. Wait for the current refresh, sync, or import to finish and retry.',
     },
   }, 503)
-}
-
-async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
-  let body = ''
-  for await (const chunk of req) body += chunk
-  if (!body.trim()) return {}
-  return JSON.parse(body) as Record<string, unknown>
 }
 
 async function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
@@ -715,7 +714,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
     if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       try {
-        const body = await readJsonBody(req)
+        const body = await readJsonBody(req, 16 * 1024)
         if (!verifyPassword(dashboardPassword, typeof body.password === 'string' ? body.password : null)) {
           json(res, { error: { code: 'UNAUTHORIZED', message: 'Invalid password' } }, 401)
           return
@@ -725,7 +724,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           res.setHeader('Set-Cookie', buildAuthCookie(dashboardPassword, browserProtocol(req) === 'https:'))
         }
         json(res, { ok: true })
-      } catch {
+      } catch (error) {
+        if (error instanceof BodyTooLargeError) {
+          bodyTooLarge(res)
+          return
+        }
         json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
       }
       return
@@ -1532,6 +1535,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           })
           json(res, { ok: true, needsRecalc: true, needsRecalcSince: markPricingNeedsRecalc() })
         } catch (error) {
+          if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
           if (isDatabaseLockedError(error)) {
             databaseBusy(res)
             return
@@ -1756,6 +1760,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           })
           json(res, { loggedIn: true, deviceId: completed.device_id })
         } catch (err: any) {
+          if (err instanceof BodyTooLargeError) { bodyTooLarge(res); return }
           if (err?.code === 'authorization_pending') {
             json(res, { pending: true }, 202)
             return

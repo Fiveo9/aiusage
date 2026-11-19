@@ -1,0 +1,197 @@
+import { platform } from 'node:os'
+import { generateConsentFingerprint } from '../sync/consent.js'
+import { setSyncConsent } from '../init.js'
+import { loadConfig, saveConfig, buildConsentConfig, AIUSAGE_DIR, type Config } from '../config.js'
+import { hasCredentials } from '../leaderboard/credentials.js'
+import { getSyncTarget } from '../sync/target.js'
+import { setPat, validateRepo } from '../github/auth.js'
+import { saveGitHubCredentials } from '../github/credentials.js'
+import { withSettingsLock } from '../settings-lock.js'
+
+export interface InitOptions {
+  backend?: 'github' | 's3' | 'cloud' | 'skip'
+  repo?: string
+  bucket?: string
+  prefix?: string
+  endpoint?: string
+  region?: string
+  device?: string
+  token?: string
+  /** Explicitly completed App login takes precedence over an environment PAT. */
+  githubAuth?: 'github-app'
+  accessKeyId?: string
+  secretAccessKey?: string
+}
+
+/**
+ * Builds the new configuration from the one on disk and saves it, with the
+ * consent in state.json, under the settings lock: a change another process
+ * (`aiusage serve`) saves at the same time is not written over.
+ */
+export function runInit(options: InitOptions): { success: boolean; message: string } {
+  // The token goes to the OS keychain first, outside the lock: the keychain
+  // can wait on the user (an access prompt), and `aiusage serve` must not wait
+  // on that to record a sync.
+  let patCredentialId: string | undefined
+  if (options.backend === 'github' && options.token && options.repo) {
+    try { validateRepo(options.repo) } catch { return { success: false, message: 'Invalid GitHub repository. Use owner/repo.' } }
+    patCredentialId = saveGitHubCredentials({ method: 'pat', accessToken: options.token })
+  }
+  return withSettingsLock(AIUSAGE_DIR, () => initConfig(options, patCredentialId))
+}
+
+function initConfig(options: InitOptions, patCredentialId?: string): { success: boolean; message: string } {
+  const existingConfig = loadConfig()
+
+  if (!options.backend) {
+    // No backend named: the sync setup stays as it is, and only what was
+    // passed (the device alias) changes.
+    const config: Config = {
+      ...existingConfig,
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
+    }
+    saveConfig(config)
+    if (config.sync) {
+      return {
+        success: true,
+        message: `Configuration saved. Sync settings unchanged (${config.sync.backend}).\nRun "aiusage init --backend cloud|github|s3" to change them, or "aiusage init --backend skip" to remove them.`,
+      }
+    }
+    return {
+      success: true,
+      message: 'Configuration saved without cloud sync.\nRun "aiusage init --backend cloud|github|s3" to configure it.',
+    }
+  }
+
+  if (options.backend === 'skip') {
+    const { sync: _sync, ...withoutSync } = existingConfig ?? {}
+    const config: Config = {
+      ...withoutSync,
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
+    }
+    saveConfig(config)
+    return { success: true, message: 'Configuration saved without cloud sync.' }
+  }
+
+  if (options.backend === 'cloud') {
+    if (!hasCredentials()) {
+      return { success: false, message: 'Not logged in. Run "aiusage login" first.' }
+    }
+
+    const config: Config = {
+      ...existingConfig,
+      sync: {
+        backend: 'cloud',
+      },
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
+    }
+
+    saveConfig(config)
+    return {
+      success: true,
+      message: 'Official cloud sync configured. Run "aiusage sync" to start syncing.',
+    }
+  }
+
+  if (options.backend === 'github') {
+    if (!options.repo) {
+      return { success: false, message: 'GitHub repository is required (format: username/repo-name).' }
+    }
+    try { validateRepo(options.repo) } catch { return { success: false, message: 'Invalid GitHub repository. Use owner/repo.' } }
+    const previous = existingConfig?.sync?.repo === options.repo ? existingConfig.sync : undefined
+    if (!options.token && !process.env.AIUSAGE_GITHUB_TOKEN && !previous?.githubAuth && !existingConfig?.credentials?.[`github/${options.repo}/token`]) {
+      return { success: false, message: 'Run aiusage github login to connect GitHub, or configure an advanced Personal Access Token.' }
+    }
+
+    const config: Config = {
+      ...existingConfig,
+      sync: {
+        backend: 'github',
+        repo: options.repo,
+        githubAuth: !options.githubAuth && (options.token || process.env.AIUSAGE_GITHUB_TOKEN) ? { method: 'pat' } : previous?.githubAuth ?? { method: 'pat' },
+        branch: previous?.branch,
+      },
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
+      retentionDays: existingConfig?.retentionDays,
+      refreshInterval: existingConfig?.refreshInterval,
+      credentials: {
+        ...existingConfig?.credentials,
+      },
+    }
+
+    if (options.token) setPat(config, options.token, patCredentialId)
+
+    const consentConfig = buildConsentConfig(config)
+    if (!consentConfig) {
+      return { success: false, message: 'Failed to build consent configuration.' }
+    }
+    const fingerprint = generateConsentFingerprint(consentConfig)
+
+    saveConfig(config)
+    setSyncConsent(AIUSAGE_DIR, getSyncTarget(config.sync)!, {
+      syncConsentAt: Date.now(),
+      syncConsentTarget: fingerprint,
+    })
+
+    return {
+      success: true,
+      message: `GitHub sync configured: ${options.repo}\nConsent recorded for schema v1.`,
+    }
+  }
+
+  if (options.backend === 's3') {
+    if (!options.bucket) {
+      return { success: false, message: 'S3 bucket name is required.' }
+    }
+    if (!options.accessKeyId || !options.secretAccessKey) {
+      return { success: false, message: 'S3 access key ID and secret access key are required.' }
+    }
+
+    const prefix = options.prefix ?? 'aiusage/'
+    if (!prefix || prefix === '/') {
+      return { success: false, message: 'S3 prefix must not be empty or point to bucket root.' }
+    }
+
+    const config: Config = {
+      ...existingConfig,
+      sync: {
+        backend: 's3',
+        bucket: options.bucket,
+        prefix,
+        endpoint: options.endpoint,
+        region: options.region ?? 'auto',
+        credentialRef: `s3/${options.bucket}/accessKeyId`,
+      },
+      device: options.device ?? existingConfig?.device,
+      platform: existingConfig?.platform ?? platform(),
+      credentials: {
+        ...existingConfig?.credentials,
+        [`s3/${options.bucket}/accessKeyId`]: options.accessKeyId,
+        [`s3/${options.bucket}/secretAccessKey`]: options.secretAccessKey,
+      },
+    }
+
+    const consentConfig = buildConsentConfig(config)
+    if (!consentConfig) {
+      return { success: false, message: 'Failed to build consent configuration.' }
+    }
+    const fingerprint = generateConsentFingerprint(consentConfig)
+
+    saveConfig(config)
+    setSyncConsent(AIUSAGE_DIR, getSyncTarget(config.sync)!, {
+      syncConsentAt: Date.now(),
+      syncConsentTarget: fingerprint,
+    })
+
+    return {
+      success: true,
+      message: `S3 sync configured: ${options.bucket}/${prefix}\nConsent recorded for schema v1.`,
+    }
+  }
+
+  return { success: false, message: 'Unknown backend.' }
+}

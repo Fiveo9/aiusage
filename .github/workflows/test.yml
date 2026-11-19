@@ -1,0 +1,99 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-core:
+    name: Core (Node.js ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22', '24', '26']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies (skip native compilation)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build core
+        run: pnpm --filter @aiusage/core build
+
+      - name: Test core & web
+        run: pnpm --filter @aiusage/core --filter @aiusage/web test
+
+  test-native:
+    name: Native (Node.js ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24', '26']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core
+        run: pnpm --filter @aiusage/core build
+
+      - name: Test cli & widget
+        run: |
+          pnpm --filter @juliantanx/aiusage test
+          pnpm --filter @juliantanx/aiusage-widget test
+
+  test-site:
+    name: Site (Node.js 20)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core
+        run: pnpm --filter @aiusage/core build
+
+      - name: Test site
+        run: pnpm --filter @aiusage/site test
+
+      - name: Build site
+        run: pnpm --filter @aiusage/site build

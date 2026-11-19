@@ -1,0 +1,68 @@
+name: Release Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      description:
+        description: 'Release notes (markdown supported)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bump patch version
+        id: version
+        env:
+          DESCRIPTION: ${{ github.event.inputs.description }}
+        run: |
+          NEW=$(node scripts/prepare-patch-release.mjs)
+          echo "version=${NEW}" >> $GITHUB_OUTPUT
+          echo "Prepared ${NEW}"
+
+      - name: Commit, tag and push
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/*/package.json \
+            packages/site/src/routes/+layout.svelte \
+            packages/site/src/routes/docs/+page.svelte \
+            CHANGELOG.md CHANGELOG.zh-CN.md
+          git commit -m "chore: bump version to ${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push origin main
+          git push origin "v${VERSION}"
+
+      # A tag pushed with GITHUB_TOKEN does not emit another workflow run.
+      # Dispatch the tag-based release workflows explicitly so npm, Docker,
+      # the site image and the GitHub Release are always produced.
+      - name: Trigger release workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run npm-publish.yml --ref "v${VERSION}" -f version="${VERSION}"
+          gh workflow run docker.yml --ref "v${VERSION}"
+          gh workflow run site-docker.yml --ref "v${VERSION}"

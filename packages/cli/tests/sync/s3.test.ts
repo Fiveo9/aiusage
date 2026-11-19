@@ -1,0 +1,176 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { S3SyncBackend } from '../../src/sync/s3.js'
+
+// Mock AWS SDK
+const mockSend = vi.fn()
+vi.mock('@aws-sdk/client-s3', () => ({
+  S3Client: vi.fn(() => ({ send: mockSend })),
+  GetObjectCommand: vi.fn((params) => params),
+  PutObjectCommand: vi.fn((params) => params),
+  HeadObjectCommand: vi.fn((params) => params),
+  ListObjectsV2Command: vi.fn((params) => params),
+}))
+
+describe('S3SyncBackend', () => {
+  let backend: S3SyncBackend
+
+  beforeEach(() => {
+    mockSend.mockReset()
+    backend = new S3SyncBackend({
+      bucket: 'test-bucket',
+      prefix: 'aiusage/',
+      accessKeyId: 'test-key',
+      secretAccessKey: 'test-secret',
+      endpoint: 'https://test.r2.cloudflarestorage.com',
+      region: 'auto',
+    })
+  })
+
+  it('constructs correct object key', () => {
+    expect(backend.getObjectKey('2026/05.ndjson')).toBe('aiusage/2026/05.ndjson')
+  })
+
+  it('strips leading slashes from prefix', () => {
+    const b = new S3SyncBackend({
+      bucket: 'bucket',
+      prefix: '/my-prefix/',
+      accessKeyId: 'k',
+      secretAccessKey: 's',
+    })
+    expect(b.getObjectKey('test.ndjson')).toBe('my-prefix/test.ndjson')
+  })
+
+  it('reads file and returns content', async () => {
+    mockSend.mockResolvedValueOnce({
+      Body: { transformToString: () => Promise.resolve('{"id":"r1"}\n') },
+    })
+
+    const result = await backend.readFile('2026/05.ndjson')
+    expect(result).toBe('{"id":"r1"}\n')
+  })
+
+  it('returns null for non-existent file', async () => {
+    mockSend.mockRejectedValueOnce({ name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } })
+
+    const result = await backend.readFile('2026/05.ndjson')
+    expect(result).toBeNull()
+  })
+
+  it('rejects a successful GET without a body, but accepts an empty body', async () => {
+    mockSend.mockResolvedValueOnce({})
+    await expect(backend.readFile('dev/manifest.json')).rejects.toThrow('no body')
+    mockSend.mockResolvedValueOnce({ Body: { transformToString: async () => '' } })
+    await expect(backend.readFile('dev/manifest.json')).resolves.toBe('')
+  })
+
+  it('throws on non-404 errors', async () => {
+    mockSend.mockRejectedValueOnce({ name: 'AccessDenied', $metadata: { httpStatusCode: 403 } })
+
+    await expect(backend.readFile('2026/05.ndjson')).rejects.toThrow()
+  })
+
+  it('writes file with content type', async () => {
+    mockSend.mockResolvedValueOnce({})
+
+    await backend.writeFile('2026/05.ndjson', '{"id":"r1"}\n')
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Bucket: 'test-bucket',
+        Key: 'aiusage/2026/05.ndjson',
+        Body: '{"id":"r1"}\n',
+        ContentType: 'application/x-ndjson',
+      })
+    )
+  })
+
+  it('checks file existence', async () => {
+    mockSend.mockResolvedValueOnce({})
+    expect(await backend.fileExists('2026/05.ndjson')).toBe(true)
+  })
+
+  it('returns false for non-existent file', async () => {
+    mockSend.mockRejectedValueOnce({ name: 'NotFound', $metadata: { httpStatusCode: 404 } })
+    expect(await backend.fileExists('2026/05.ndjson')).toBe(false)
+  })
+
+  describe('listFiles', () => {
+    it.each([
+      {}, { IsTruncated: 'false' }, { IsTruncated: false, Contents: {} },
+      { IsTruncated: false, Contents: [{}] },
+      { IsTruncated: false, Contents: [{ Key: 'another-prefix/dev/manifest.json' }] },
+    ])('rejects malformed listing %# instead of treating it as absence', async response => {
+      mockSend.mockResolvedValueOnce(response)
+      await expect(backend.listFiles()).rejects.toThrow('invalid object')
+    })
+
+    it('discovers manifest-only namespaces without listing unrelated JSON files', async () => {
+      mockSend.mockResolvedValueOnce({
+        Contents: [{ Key: 'aiusage/new-device/manifest.json' }, { Key: 'aiusage/readme.json' }],
+        IsTruncated: false,
+      })
+      await expect(backend.listFiles()).resolves.toEqual(['new-device/manifest.json'])
+    })
+
+    it.each([undefined, '', ' '])('rejects a truncated page with unusable token %s', async token => {
+      mockSend.mockResolvedValueOnce({ Contents: [], IsTruncated: true, NextContinuationToken: token })
+      await expect(backend.listFiles()).rejects.toThrow('progressing continuation token')
+    })
+
+    it.each(['listFiles', 'listFileDigests', 'deleteAllData'] as const)(
+      '%s rejects a cyclic listing before accepting or deleting a partial snapshot', async method => {
+        for (const token of ['a', 'b', 'a']) {
+          mockSend.mockResolvedValueOnce({ Contents: [{ Key: 'aiusage/dev/day.ndjson' }], IsTruncated: true, NextContinuationToken: token })
+        }
+        await expect(backend[method]()).rejects.toThrow('progressing continuation token')
+        expect(mockSend).toHaveBeenCalledTimes(3)
+      },
+    )
+
+    it('returns paths relative to prefix (no data/ subdirectory)', async () => {
+      mockSend.mockResolvedValueOnce({
+        Contents: [
+          { Key: 'aiusage/device-abc/2026/05/16.ndjson' },
+          { Key: 'aiusage/device-xyz/2026/05/15.ndjson' },
+        ],
+        IsTruncated: false,
+      })
+
+      const files = await backend.listFiles()
+
+      // Paths must be readable back via readFile(path) → getObjectKey(path) = 'aiusage/' + path
+      expect(files).toContain('device-abc/2026/05/16.ndjson')
+      expect(files).toContain('device-xyz/2026/05/15.ndjson')
+    })
+
+    it('listed paths round-trip correctly through readFile', async () => {
+      mockSend
+        .mockResolvedValueOnce({
+          Contents: [{ Key: 'aiusage/device-abc/2026/05/16.ndjson' }],
+          IsTruncated: false,
+        })
+        .mockResolvedValueOnce({
+          Body: { transformToString: () => Promise.resolve('{"id":"r1"}\n') },
+        })
+
+      const [path] = await backend.listFiles()
+      const content = await backend.readFile(path)
+      expect(content).toBe('{"id":"r1"}\n')
+    })
+
+    it('handles pagination', async () => {
+      mockSend
+        .mockResolvedValueOnce({
+          Contents: [{ Key: 'aiusage/device-abc/2026/05/15.ndjson' }],
+          IsTruncated: true,
+          NextContinuationToken: 'token1',
+        })
+        .mockResolvedValueOnce({
+          Contents: [{ Key: 'aiusage/device-abc/2026/05/16.ndjson' }],
+          IsTruncated: false,
+        })
+
+      const files = await backend.listFiles()
+      expect(files).toHaveLength(2)
+    })
+  })
+})

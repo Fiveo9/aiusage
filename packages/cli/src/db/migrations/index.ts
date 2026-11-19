@@ -1,0 +1,59 @@
+import type Database from 'better-sqlite3'
+import { migrateV1 } from './v1.js'
+import { migrateV2 } from './v2.js'
+import { migrateV3 } from './v3.js'
+import { migrateV4 } from './v4.js'
+import { migrateV5 } from './v5.js'
+import { migrateV6 } from './v6.js'
+import { migrateV7 } from './v7.js'
+import { migrateV8 } from './v8.js'
+import { migrateV9 } from './v9.js'
+import { migrateV10 } from './v10.js'
+import { migrateV11 } from './v11.js'
+import { migrateV12 } from './v12.js'
+import { migrateV13 } from './v13.js'
+import { migrateV14 } from './v14.js'
+import { migrateV15 } from './v15.js'
+import { migrateV16 } from './v16.js'
+import { migrateV17 } from './v17.js'
+import { migrateV18 } from './v18.js'
+import { createSchemaVersionTable } from '../schema.js'
+
+const MIGRATIONS = [
+  { version: 1, migrate: migrateV1 },
+  { version: 2, migrate: migrateV2 },
+  { version: 3, migrate: migrateV3 },
+  { version: 4, migrate: migrateV4 },
+  { version: 5, migrate: migrateV5 },
+  { version: 6, migrate: migrateV6 },
+  { version: 7, migrate: migrateV7 },
+  { version: 8, migrate: migrateV8 },
+  { version: 9, migrate: migrateV9 },
+  { version: 10, migrate: migrateV10 },
+  { version: 11, migrate: migrateV11 },
+  { version: 12, migrate: migrateV12 },
+  { version: 13, migrate: migrateV13 },
+  { version: 14, migrate: migrateV14 },
+  { version: 15, migrate: migrateV15 },
+  { version: 16, migrate: migrateV16 },
+  { version: 17, migrate: migrateV17 },
+  { version: 18, migrate: migrateV18 },
+]
+
+export function runMigrations(db: Database.Database): void {
+  createSchemaVersionTable(db)
+
+  const currentVersion = db.prepare(
+    'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
+  ).get() as { version: number } | undefined
+
+  const current = currentVersion?.version ?? 0
+
+  for (const migration of MIGRATIONS) {
+    if (migration.version > current) {
+      db.transaction(() => {
+        migration.migrate(db)
+      })()
+    }
+  }
+}

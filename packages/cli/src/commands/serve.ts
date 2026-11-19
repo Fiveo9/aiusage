@@ -1,0 +1,237 @@
+import http from 'node:http'
+import { readFileSync, existsSync, statSync, writeFileSync, unlinkSync } from 'node:fs'
+import { join, extname, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createApiServer } from '../api/server.js'
+import { dashboardHost } from '../api/trust.js'
+import { getDashboardPassword } from '../auth.js'
+import { importConfigPriceOverrides, loadPricingRuntime } from '../pricing-registry.js'
+import { runParse } from './parse.js'
+import { runSync } from './sync.js'
+import { cleanOldData } from './clean.js'
+import { uploadLeaderboardData, wasLeaderboardUploadStored } from './leaderboard-upload.js'
+import { getState, setState } from '../init.js'
+import { AIUSAGE_DIR, loadConfig, updateConfig } from '../config.js'
+import { SyncRuntimeController } from '../sync/runtime.js'
+import { getSyncTarget } from '../sync/target.js'
+import { RuntimeSettingsController } from '../runtime/settings-controller.js'
+import { AsyncTaskQueue } from '../db/write-queue.js'
+import { fetchExchangeRate, CACHE_TTL_MS } from '@aiusage/core'
+import { createGracefulShutdownHandler } from './serve-shutdown.js'
+import type Database from 'better-sqlite3'
+
+export interface ServeOptions {
+  port: number
+  host?: string
+  db: Database.Database
+}
+
+const MAX_PORT_ATTEMPTS = 10
+const PORT_FILE = join(AIUSAGE_DIR, '.serve-port')
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+}
+
+export function serve(options: ServeOptions): void {
+  const host = dashboardHost(options.host, getDashboardPassword())
+  const config = loadConfig()
+  const dbWriteQueue = new AsyncTaskQueue()
+  const runDbWrite = <T>(task: () => T | Promise<T>) => dbWriteQueue.run(task)
+
+  // One-time: migrate legacy config.priceOverrides into the pricing registry so
+  // recalc/Sessions actually use them (they were previously ignored — issue #13).
+  // After import, drop them from config so the registry is the single source of
+  // truth and this does not run again.
+  if (config?.priceOverrides && Object.keys(config.priceOverrides).length > 0) {
+    const migrated = config.priceOverrides
+    const imported = importConfigPriceOverrides(options.db, migrated)
+    // Only the overrides imported here leave config.json; one the dashboard
+    // saved since the read above stays for the next start.
+    const saved = updateConfig((cfg) => {
+      if (!cfg.priceOverrides) return false
+      for (const model of Object.keys(migrated)) delete cfg.priceOverrides[model]
+      if (Object.keys(cfg.priceOverrides).length === 0) delete cfg.priceOverrides
+    })
+    delete config.priceOverrides
+    loadPricingRuntime(options.db, saved)
+    if (imported.length > 0) {
+      console.log(`[serve] migrated ${imported.length} config price override(s) into the registry: ${imported.join(', ')}`)
+    }
+  }
+
+  // Initialize exchange rate: fetch if cache missing or expired (non-blocking)
+  if (config == null || config.exchangeRate == null) {
+    const cacheAge = config?.exchangeRateCache
+      ? Date.now() - config.exchangeRateCache.fetchedAt
+      : Infinity
+    if (cacheAge >= CACHE_TTL_MS) {
+      fetchExchangeRate().then(rate => {
+        if (rate != null) {
+          updateConfig((cfg) => { cfg.exchangeRateCache = { CNY_USD: rate, fetchedAt: Date.now() } })
+        }
+      }).catch(() => {
+        // Silently ignore — FALLBACK_RATE will be used
+      })
+    }
+  }
+
+  const syncRuntime = new SyncRuntimeController({
+    runSync: (runtimeOptions) => runDbWrite(async () => {
+      await runParse(options.db)
+      return runSync(options.db, runtimeOptions)
+    }),
+    getPersistedState: () => getState(AIUSAGE_DIR),
+    getCurrentTarget: () => getSyncTarget(loadConfig()?.sync),
+  })
+
+  const runtimeSettings = new RuntimeSettingsController({
+    db: options.db,
+    loadConfig,
+    runParse: (db) => runDbWrite(() => runParse(db)),
+    runCleanup: (db, retentionDays) => runDbWrite(() => cleanOldData(db, retentionDays)),
+    runLeaderboardUpload: (db) => uploadLeaderboardData(db, getState(AIUSAGE_DIR)?.deviceInstanceId).then(wasLeaderboardUploadStored),
+    getLastLeaderboardUploadAt: () => getState(AIUSAGE_DIR)?.lastLeaderboardUploadAt,
+    setLastLeaderboardUploadAt: (ts) => setState(AIUSAGE_DIR, { lastLeaderboardUploadAt: ts }),
+    runSync: () => syncRuntime.start(),
+    onSyncScheduleChanged: (ts) => syncRuntime.setNextSyncAt(ts),
+  })
+  runtimeSettings.start()
+
+  const apiServer = createApiServer(options.db, {
+    currentDeviceInstanceId: getState(AIUSAGE_DIR)?.deviceInstanceId,
+    onRefresh: () => runParse(options.db),
+    onSyncStart: () => syncRuntime.start(),
+    getSyncStatus: () => syncRuntime.getStatus(),
+    onConfigUpdated: () => runtimeSettings.reload(),
+    onLeaderboardUploaded: (uploadedAt) => runtimeSettings.noteLeaderboardUpload(uploadedAt),
+    runDbWrite,
+    getDbWriteQueueStatus: () => dbWriteQueue.getStatus(),
+  })
+  const webBuildDir = (() => {
+    const prodDir = join(dirname(fileURLToPath(import.meta.url)), 'web')
+    if (existsSync(prodDir)) return prodDir
+    // dev mode (tsx): fall back to packages/web/build
+    return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'web', 'build')
+  })()
+
+  if (!existsSync(webBuildDir)) {
+    console.error('Web dashboard not found. Reinstall the package: npm install -g @juliantanx/aiusage')
+    process.exit(1)
+  }
+
+  const server = http.createServer(async (req, res) => {
+    let url: URL
+    try {
+      if (!req.url?.startsWith('/') || req.url.startsWith('//')) throw new Error('Invalid request target')
+      url = new URL(req.url, 'http://localhost')
+    } catch {
+      res.writeHead(400)
+      res.end()
+      return
+    }
+
+    // API routes go to API server
+    if (url.pathname.startsWith('/api/')) {
+      apiServer.emit('request', req, res)
+      return
+    }
+
+    // Try to serve static files from web build
+    if (existsSync(webBuildDir)) {
+      let filePath = join(webBuildDir, url.pathname)
+
+      // If path is a directory, try index.html
+      try {
+        if (statSync(filePath).isDirectory()) {
+          filePath = join(filePath, 'index.html')
+        }
+      } catch {}
+
+      // If file doesn't exist, fall back to index.html (SPA routing)
+      if (!existsSync(filePath)) {
+        filePath = join(webBuildDir, 'index.html')
+      }
+
+      try {
+        const content = readFileSync(filePath)
+        const ext = extname(filePath)
+        const contentType = MIME_TYPES[ext] ?? 'application/octet-stream'
+
+        res.writeHead(200, { 'Content-Type': contentType })
+        res.end(content)
+        return
+      } catch {}
+    }
+
+    // No web build available
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Web dashboard not found. Reinstall the package: npm install -g @juliantanx/aiusage' } }))
+  })
+
+  let currentPort = options.port
+  let started = false
+
+  const listenOnPort = (port: number): void => {
+    currentPort = port
+    server.listen(port, host)
+  }
+
+  server.on('listening', () => {
+    started = true
+    writeFileSync(PORT_FILE, String(currentPort), 'utf-8')
+    console.log(`aiusage serve listening on http://${host.includes(':') ? `[${host}]` : host}:${currentPort}`)
+
+    // Start the initial parse only after the HTTP server is accepting connections.
+    // Scheduling it on the next turn also lets the listening event finish first.
+    setImmediate(() => {
+      console.log('[serve] parsing logs...')
+      runDbWrite(() => runParse(options.db)).then((result) => {
+        console.log(`[serve] parsed ${result.parsedCount} records, ${result.toolCallCount} tool calls.`)
+        for (const warning of result.warnings) {
+          console.warn(`[serve] warning: ${warning}`)
+        }
+      }).catch((err) => {
+        console.error('[serve] initial parse failed:', err)
+      })
+    })
+  })
+
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE' && !started && currentPort < options.port + MAX_PORT_ATTEMPTS - 1) {
+      const nextPort = currentPort + 1
+      console.warn(`Port ${currentPort} is already in use, trying ${nextPort}...`)
+      server.close(() => {
+        listenOnPort(nextPort)
+      })
+      return
+    }
+
+    runtimeSettings.stop()
+    throw error
+  })
+
+  listenOnPort(options.port)
+
+  // Graceful shutdown
+  const cleanup = () => {
+    try { unlinkSync(PORT_FILE) } catch {}
+  }
+
+  const shutdown = createGracefulShutdownHandler({
+    server,
+    cleanup,
+    stopRuntime: () => runtimeSettings.stop(),
+  })
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
+}

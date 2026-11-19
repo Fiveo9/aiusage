@@ -1,0 +1,71 @@
+{
+  "name": "@juliantanx/aiusage",
+  "version": "1.5.28",
+  "type": "module",
+  "description": "Track and analyze AI coding assistant usage across Claude Code, Codex, and more",
+  "keywords": [
+    "aiusage",
+    "ai-usage",
+    "ai",
+    "claude",
+    "claude-code",
+    "codex",
+    "opencode",
+    "qoder",
+    "usage",
+    "token",
+    "cost",
+    "analytics",
+    "dashboard",
+    "developer-tools"
+  ],
+  "homepage": "https://aiusage.jtanx.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/juliantanx/aiusage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/juliantanx/aiusage/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aiusage": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "prepack": "cp ../../README.md README.md",
+    "build": "tsup && node scripts/copy-web.js",
+    "dev": "tsx src/index.ts serve",
+    "cli": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "better-sqlite3": "^12.0.0",
+    "commander": "^12.0.0",
+    "yauzl": "^3.3.2"
+  },
+  "devDependencies": {
+    "@aiusage/core": "workspace:*",
+    "@aiusage/web": "workspace:*",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^25.7.0",
+    "@types/yauzl": "^2.10.3",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^2.0.0"
+  }
+}

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Optional model prefix merging** — Models and Cost now share a browser-saved display selector. Keep full names by default, or group names by the segment after the last `/` (for example, `provider-1/gpt-6-astra` and `provider-2/gpt-6-astra` become `gpt-6-astra`). Merged rows sum token categories, calls, and recorded costs, and recalculate token shares; the model ranking retains original names in tooltips. Stored records and pricing are unchanged.
 
+### Changed
+- **Consistent Activity pages** — Sessions, Projects, Tool Calls, and their detail views now use the dashboard's card headers, theme colors, badges, and pagination. Rankings include labeled metrics and adapt to narrow screens; wide tables scroll within their cards, and long model names and identifiers stay readable. Existing filters, detail links, and data calculations are preserved.
+
 ---
 
 ## [1.5.28] - 2026-11-04

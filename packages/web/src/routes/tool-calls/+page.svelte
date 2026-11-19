@@ -1,4 +1,5 @@
 <script>
+  import '$lib/activity.css'
   import { dateRange, selectedDevice, selectedTool, formatNumber } from '$lib/stores.js'
   import { fetchToolCalls, activityDetailUrl } from '$lib/api.js'
   import { t } from '$lib/i18n.js'
@@ -77,172 +78,67 @@
 </div>
 
 {#if showNoToolCallNotice}
-  <div class="info-notice">
+  <div class="activity-notice" role="note">
     {$t('toolCalls.noToolCallData')}
   </div>
 {/if}
 
-<div class="type-tabs">
+<div class="card activity-card">
+  <div class="activity-card-header">
+    <div class="activity-heading">
+      <h2 class="section-title">{$t('activity.toolRanking')}</h2>
+      {#if !loading && !error && data?.toolCalls.length}
+        <span class="activity-count mono">{formatNumber(data.toolCalls.length)}</span>
+      {/if}
+    </div>
+<div class="type-tabs activity-type-tabs" role="group" aria-label={$t('activity.toolType')}>
   {#each TYPES as type}
     <button
-      class="tab"
+      class="activity-type-tab"
       class:active={selectedType === type.key}
+      aria-pressed={selectedType === type.key}
       on:click={() => { selectedType = type.key }}
     >
       {type.label()}
     </button>
   {/each}
 </div>
+  </div>
 
 {#if loading}
-  <div class="state-msg">{$t('common.loading')}</div>
+  <div class="state-msg" role="status">{$t('common.loading')}</div>
 {:else if error}
-  <div class="state-msg error">{error}</div>
+  <div class="state-msg error" role="alert">{error}</div>
 {:else if !data?.toolCalls.length}
   <div class="state-msg">
     <h2>{$t('toolCalls.noData')}</h2>
     <p>{$t('toolCalls.noDataHint')}</p>
   </div>
 {:else}
-  <div class="ranking">
+  <div class="activity-ranking">
     {#each data.toolCalls as tc, i}
-      <a class="row animate-row" href={activityDetailUrl('/tool-calls/events', { ...$dateRange, device: $selectedDevice, tool: $selectedTool, toolType: selectedType, name: tc.name })}>
-        <span class="rank mono">#{i + 1}</span>
-        <span class="name mono">
-          {tc.displayName}
+      <a class="activity-rank-row" href={activityDetailUrl('/tool-calls/events', { ...$dateRange, device: $selectedDevice, tool: $selectedTool, toolType: selectedType, name: tc.name })}>
+        <span class="activity-rank mono">{String(i + 1).padStart(2, '0')}</span>
+        <div class="activity-rank-body">
+        <div class="activity-name-line">
+          <span class="activity-name mono" title={tc.name}>{tc.displayName}</span>
           {#if tc.type === 'mcp'}
-            <span class="badge badge-mcp">{$t('toolCalls.badgeMcp')}</span>
+            <span class="activity-badge activity-badge-mcp">{$t('toolCalls.badgeMcp')}</span>
           {:else if tc.type === 'skill'}
-            <span class="badge badge-skill">{$t('toolCalls.badgeSkill')}</span>
+            <span class="activity-badge activity-badge-skill">{$t('toolCalls.badgeSkill')}</span>
           {/if}
-        </span>
-        <div class="bar-container">
-          <div class="bar" style="width: {tc.percentage}%"></div>
         </div>
-        <span class="count mono">{formatNumber(tc.count)}</span>
-        <span class="pct mono">{tc.percentage.toFixed(1)}%</span>
+        <div class="activity-bar-track" aria-hidden="true">
+          <div class="activity-bar-fill" style="width: {tc.percentage}%"></div>
+        </div>
+        </div>
+        <div class="activity-stats">
+          <span class="activity-stat"><span class="activity-stat-label">{$t('activity.calls')}</span><span class="activity-stat-value mono">{formatNumber(tc.count)}</span></span>
+          <span class="activity-stat"><span class="activity-stat-label">{$t('projects.share')}</span><span class="activity-stat-value mono">{tc.percentage.toFixed(1)}%</span></span>
+        </div>
+        <span class="activity-chevron" aria-hidden="true">→</span>
       </a>
     {/each}
   </div>
 {/if}
-
-<style>
-  .type-tabs {
-    display: flex;
-    gap: 0.25rem;
-    margin-bottom: 1rem;
-  }
-  .tab {
-    padding: 0.3rem 0.75rem;
-    border: 1px solid var(--border-subtle);
-    background: var(--raised);
-    color: var(--text-secondary);
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 500;
-    font-family: var(--mono);
-    transition: color 0.15s, background 0.15s, border-color 0.15s;
-  }
-  .tab:hover {
-    color: var(--text);
-    background: var(--hover);
-  }
-  .tab.active {
-    color: var(--accent);
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    font-weight: 600;
-  }
-
-  .info-notice {
-    padding: 0.6rem 0.9rem;
-    margin-bottom: 1rem;
-    background: var(--blue-dim);
-    color: var(--blue);
-    border: 1px solid var(--blue);
-    border-radius: 8px;
-    font-size: 0.8rem;
-  }
-
-  .ranking {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 2.5rem 1fr 1fr 4.5rem 3.5rem;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.65rem 0.85rem;
-    background: var(--surface);
-    border-radius: 8px;
-    transition: background 0.15s;
-  }
-  .row:hover {
-    background: var(--hover);
-  }
-  .rank {
-    color: var(--text-muted);
-    font-size: 0.75rem;
-  }
-  .name {
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .badge {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 0.15rem 0.35rem;
-    border-radius: 4px;
-    flex-shrink: 0;
-  }
-  .badge-mcp {
-    background: var(--blue-dim);
-    color: var(--blue);
-  }
-  .badge-skill {
-    background: var(--purple-dim);
-    color: var(--purple);
-  }
-  .bar-container {
-    height: 6px;
-    background: var(--raised);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .bar {
-    height: 100%;
-    background: var(--accent);
-    border-radius: 3px;
-    transition: width 0.6s ease;
-  }
-  .count {
-    text-align: right;
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: var(--text);
-  }
-  .pct {
-    text-align: right;
-    color: var(--text-muted);
-    font-size: 0.75rem;
-  }
-  .animate-row {
-    animation: fadeIn 0.2s ease both;
-  }
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-</style>
+</div>

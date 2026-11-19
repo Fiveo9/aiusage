@@ -8,11 +8,12 @@ on:
 
 jobs:
   test-core:
-    name: Core (Node.js ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
+    name: Core (${{ matrix.os }}, Node.js ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node-version: ['20', '22', '24', '26']
 
     steps:
@@ -38,11 +39,12 @@ jobs:
         run: pnpm --filter @aiusage/core --filter @aiusage/web test
 
   test-native:
-    name: Native (Node.js ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
+    name: Native (${{ matrix.os }}, Node.js ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node-version: ['22', '24', '26']
 
     steps:
@@ -68,6 +70,11 @@ jobs:
         run: |
           pnpm --filter @fiveo9/aiusage test
           pnpm --filter @fiveo9/aiusage-widget test
+
+      - name: Build packages and prepare CLI package
+        run: |
+          pnpm build
+          pnpm --filter @fiveo9/aiusage prepack
 
   test-site:
     name: Site (Node.js 20)

@@ -41,7 +41,7 @@
     "README.md"
   ],
   "scripts": {
-    "prepack": "cp ../../README.md README.md",
+    "prepack": "node scripts/copy-readme.js",
     "build": "tsup && node scripts/copy-web.js",
     "dev": "tsx src/index.ts serve",
     "cli": "tsx src/index.ts",

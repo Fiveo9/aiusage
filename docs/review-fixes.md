@@ -12,7 +12,7 @@
 | R06 | 登录 Cookie 缺少服务端有效期 | 完成；8/8 认证回归、CLI 类型检查通过 |
 | R07 | 小组件手动刷新忽略已保存的统计范围 | 完成；两个取数入口静态核对、widget 类型检查通过 |
 | R08 | 小组件日界计算未适配夏令时 | 完成；18/18 日期与数据回归、widget 类型检查通过 |
-| R09 | 构建脚本依赖 Unix 命令，CI 缺少 Windows 覆盖 | 完成；回收脚本回归、Windows prepack 与语法检查通过；完整 CI 未运行 |
+| R09 | 构建脚本依赖 Unix 命令，CI 缺少 Windows 覆盖 | 完成；五个包本机分项生产构建通过，远程 CI 未触发 |
 | R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；8/8 回归及定向类型检查通过；真实 PG 并发未验证 |
 
 ## 验证约束
@@ -60,6 +60,10 @@ Cookie 改为签发时间、随机值及 HMAC 签名；服务端拒绝超过或�
 CLI prepack 改用 Node 复制；widget 构建的 renderer 清理改为经边界、符号链接和硬链接检查后移入 `backups/build-recycle/`。原生绑定恢复通过包管理器 JS 入口执行，避免 Windows `.cmd` 的 execFile 问题。CI 的 core/native 添加 Windows matrix 并增加构建/prepack 检查。
 
 1/1 回收回归、三个 Node 脚本语法检查、实际 Windows prepack 和内容哈希比对均通过；测试目录与生成 README 已移入回收区，可恢复。仓库没有 `scripts/remote-check.ps1`，未发起远程任务；完整构建还包含既有工具链清理及原生重编译，未执行，新增 CI 也未触发。只读审阅范围为本项构建入口及直接调用脚本。
+
+2026-11-19 收尾更新：core/CLI 构建现先回收旧 dist 并禁用 tsup 删除式清理；CLI 复制 Web 产物时也回收旧目录。core、web、CLI、site、widget 的本机分项生产构建均退出 0，CLI 中 Web 入口与本次 Web 构建的哈希一致，构建出的 CLI `--version` 返回 1.5.28。Web/site 构建通过本次临时 preload 将 SvelteKit/adapter 的清理转换为仅针对明确输出路径的回收移动，原构建命令本身仍有工具链清理行为。没有运行根级 `pnpm build` 或远程 CI。
+
+widget 使用官方 better-sqlite3 12.10.0、Electron ABI 130、win32-x64 预编译绑定，安装在 `dist/native/`，未改动 CLI 的 Node 绑定；完整 widget 构建通过且 native 步骤命中已准备绑定，未验证从零原生编译。原生归档 SHA256：`0BCDEFFC09E0C5D6864313EA4CFA3544E3C3F56C553B39B61F56B2A3EA310948`。构建日志保留在 `.artifacts/closeout-20261119/`；临时脚本、下载包、旧输出和 Vite 临时配置均移入 `backups/build-recycle/`。
 
 ## R10
 

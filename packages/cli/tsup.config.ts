@@ -7,7 +7,7 @@ export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
   dts: true,
-  clean: true,
+  clean: false,
   noExternal: ['@aiusage/core'],
   esbuildOptions(options) {
     options.define = {

@@ -340,7 +340,7 @@ async function autoSetup(): Promise<void> {
 // IPC handlers
 ipcMain.handle('widget:get-data', () => {
   if (!db) return null
-  return queryWidgetData(db)
+  return queryWidgetData(db, settings.rangeDays)
 })
 
 ipcMain.handle('widget:open-dashboard', async () => {

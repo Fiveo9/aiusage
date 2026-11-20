@@ -49,9 +49,10 @@ export interface WidgetData {
 }
 
 export function queryWidgetData(db: Database.Database, rangeDays: number = 30): WidgetData {
-  const todayStart = getTodayStartMs()
-  const tomorrow = todayStart + 86_400_000
-  const rangeStart = todayStart - (rangeDays - 1) * 86_400_000
+  const now = new Date()
+  const todayStart = getLocalDayStart(now)
+  const tomorrow = getLocalDayStart(now, 1)
+  const rangeStart = getLocalDayStart(now, -(rangeDays - 1))
 
   const todayRow = db.prepare(`
     SELECT
@@ -117,23 +118,30 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
   }
 
   // Daily history for the configured range
+  const days = Array.from({ length: rangeDays }, (_, i) => ({
+    start: getLocalDayStart(now, i - rangeDays + 1),
+    end: getLocalDayStart(now, i - rangeDays + 2),
+  }))
   const dailyRows = db.prepare(`
+    WITH days AS (
+      SELECT CAST(key AS INTEGER) AS dayIndex,
+        json_extract(value, '$.start') AS start,
+        json_extract(value, '$.end') AS end
+      FROM json_each(?)
+    )
     SELECT
-      CAST((ts - ?) / 86400000 AS INTEGER) AS dayIndex,
+      days.dayIndex,
       SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
       SUM(cost) AS cost
-    FROM records
-    WHERE ts >= ? AND ts < ?
-    GROUP BY dayIndex
-    ORDER BY dayIndex
-  `).all(rangeStart, rangeStart, tomorrow) as Array<{ dayIndex: number; tokens: number; cost: number }>
+    FROM days LEFT JOIN records ON records.ts >= days.start AND records.ts < days.end
+    GROUP BY days.dayIndex
+    ORDER BY days.dayIndex
+  `).all(JSON.stringify(days)) as Array<{ dayIndex: number; tokens: number | null; cost: number | null }>
 
   const dailyHistory: DailyEntry[] = []
   const dailyMap = new Map(dailyRows.map(r => [r.dayIndex, r]))
   for (let i = 0; i < rangeDays; i++) {
-    const dayMs = rangeStart + i * 86_400_000
-    const d = new Date(dayMs)
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const date = localDateKey(new Date(days[i].start))
     const row = dailyMap.get(i)
     dailyHistory.push({
       date,
@@ -172,7 +180,12 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
   }
 }
 
-function getTodayStartMs(): number {
-  const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+export function getLocalDayStart(date = new Date(), dayOffset = 0): number {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  start.setDate(start.getDate() + dayOffset)
+  return start.getTime()
+}
+
+function localDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }

@@ -7,3 +7,13 @@ packages/core/dist/
 packages/cli/dist/
 packages/web/.svelte-kit/
 packages/widget/
+
+# Local secrets, backups and runtime/test artifacts (at any depth).
+**/.env
+**/.env.*
+**/backups
+**/.artifacts
+**/.runtime
+**/aiusage-data
+**/.git
+**/node_modules

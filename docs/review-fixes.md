@@ -5,7 +5,7 @@
 | 编号 | 问题 | 状态 |
 | --- | --- | --- |
 | R01 | JSONL 未完成尾行导致增量解析漏计 | 完成；5/5 边界回归、CLI 类型检查通过 |
-| R02 | Docker 构建上下文未排除环境文件和备份 | 待处理 |
+| R02 | Docker 构建上下文未排除环境文件和备份 | 完成；排除规则和两个 COPY 入口静态核对通过 |
 | R03 | 独立包名、发布目标和小组件启动仍依赖上游发行包 | 待处理 |
 | R04 | 公开登录接口读取请求体无大小限制 | 待处理 |
 | R05 | Codex 模型状态在文件间继承 | 待处理 |
@@ -22,3 +22,7 @@
 ## R01
 
 游标取自实际读取到的完整 JSONL 边界，保留未完成尾行；合法但无换行的尾行仍可解析。覆盖补写重试、CRLF/中文字节偏移、UTF-8 字符分片、无换行完整记录和空行。执行 `pnpm --dir packages/cli exec vitest run --config vitest.review.config.ts tests/review/jsonl.test.ts`（5/5）及 `pnpm --dir packages/cli exec tsc --noEmit`，均退出 0。只读审阅确认通用 JSONL 分支使用新游标；未执行真实用户日志导入。
+
+## R02
+
+根 `.dockerignore` 统一排除所有层级的 `.env`、`.env.*`、备份、测试产物、运行数据、Git 元数据和依赖目录，覆盖 CLI 与站点使用仓库根作为构建上下文的入口。静态规则检查及 `git diff --check` 通过；未构建或发布镜像。

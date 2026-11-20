@@ -47,9 +47,13 @@ async function main() {
     execFileSync('codesign', ['--force', '--sign', '-', nativeTarget], { stdio: 'inherit' })
   }
 
-  execFileSync('npm', ['run', 'install'], {
+  // npm is a .cmd shim on Windows; execute its JS entry with Node directly.
+  const npmCli = process.env.npm_execpath
+  if (!npmCli) throw new Error('Run prepare:native through pnpm or npm')
+  execFileSync(process.execPath, [npmCli, 'run', 'install'], {
     cwd: dirname(require.resolve('better-sqlite3/package.json')),
     stdio: 'pipe',
+    windowsHide: true,
   })
 }
 

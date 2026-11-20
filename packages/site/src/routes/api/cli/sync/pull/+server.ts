@@ -44,7 +44,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
     SELECT
       record_id, ts, tool, model, provider,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens,
-      cost, cost_source, session_key, source_file, cwd,
+      cost, cost_source, session_key, session_title, source_file, cwd,
       device_instance_id, device_name, platform, updated_at, deleted_at, change_seq
     FROM cloud_usage_records
     WHERE user_id = ${userId}
@@ -84,6 +84,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
         cost: r.cost,
         costSource: r.cost_source,
         sessionKey: r.session_key,
+        sessionTitle: r.session_title,
         sourceFile: r.source_file,
         cwd: r.cwd,
         deviceInstanceId: r.device_instance_id,

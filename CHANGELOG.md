@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Real session titles** — Session lists and detail pages prefer the source's saved title, with the timestamp underneath; untitled sessions show an “Unnamed session” label and the first eight ID characters. Imports refresh existing Codex, Claude Code, OpenCode/Kilo, and Hermes titles independently of usage cursors, including renames. Optional titles are stored and carried through file/cloud sync; older records without titles remain compatible. The new sync field requires renewed scope consent.
 - **Optional model prefix merging** — Models and Cost now share a browser-saved display selector. Keep full names by default, or group names by the segment after the last `/` (for example, `provider-1/gpt-6-astra` and `provider-2/gpt-6-astra` become `gpt-6-astra`). Merged rows sum token categories, calls, and recorded costs, and recalculate token shares; the model ranking retains original names in tooltips. Stored records and pricing are unchanged.
 
 ### Changed

@@ -158,6 +158,8 @@ const translations = {
     },
     sessions: {
       title: 'Sessions',
+      session: 'Session',
+      unnamed: 'Unnamed session',
       desc: 'Per-session log with token and cost details.',
       assistant: 'AI Assistant',
       time: 'Time',
@@ -687,6 +689,8 @@ const translations = {
     },
     sessions: {
       title: '会话',
+      session: '会话',
+      unnamed: '未命名会话',
       desc: '每条会话的 Token 用量和费用详细记录。',
       assistant: 'AI 助手',
       time: '时间',

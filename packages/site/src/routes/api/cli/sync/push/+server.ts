@@ -29,7 +29,7 @@ function tombstoneProblem(tombstone: Record<string, unknown>): RejectedTombstone
 }
 
 const BIGINT_FIELDS = ['ts', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'updatedAt'] as const
-const TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
+const TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sessionTitle', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
 // cost is NUMERIC(20, 8): at most 12 digits before the decimal point.
 const MAX_COST = 1e12
 
@@ -203,7 +203,7 @@ export const POST: RequestHandler = async ({ request }) => {
             id, user_id, device_id, device_instance_id, sync_generation,
             record_id, ts, tool, model, provider,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens,
-            cost, cost_source, session_key, source_file, cwd,
+            cost, cost_source, session_key, session_title, source_file, cwd,
             device_name, platform, updated_at, server_updated_at
           ) VALUES (
             ${id}, ${userId}, ${deviceId}, ${deviceInstanceId}, ${serverGeneration},
@@ -211,6 +211,7 @@ export const POST: RequestHandler = async ({ request }) => {
             ${record.inputTokens || 0}, ${record.outputTokens || 0}, ${record.cacheReadTokens || 0},
             ${record.cacheWriteTokens || 0}, ${record.thinkingTokens || 0},
             ${record.cost ?? null}, ${record.costSource || null}, ${record.sessionKey || ''},
+            ${record.sessionTitle || ''},
             ${record.sourceFile || ''}, ${record.cwd || ''},
             ${record.deviceName || null}, ${record.platform || null},
             ${updatedAt}, NOW()
@@ -239,6 +240,7 @@ export const POST: RequestHandler = async ({ request }) => {
             cost = ${record.cost ?? null},
             cost_source = ${record.costSource || null},
             session_key = ${record.sessionKey || ''},
+            session_title = COALESCE(NULLIF(${record.sessionTitle || ''}, ''), cloud_usage_records.session_title),
             source_file = ${record.sourceFile || ''},
             cwd = ${record.cwd || ''},
             device_name = ${record.deviceName || null},

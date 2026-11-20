@@ -6,6 +6,7 @@
   import { formatCost, formatDateTime, formatTokens, formatNumber } from '$lib/stores.js'
   import { activityDetailUrl, fetchActivityDetail, sessionDetailUrl } from '$lib/api.js'
   import { createRequestTracker } from '$lib/sessions-paging.js'
+  import { sessionLabel } from '$lib/session-title.js'
 
   export let kind
   const beginRequest = createRequestTracker()
@@ -51,14 +52,20 @@
     <div class="activity-table-scroll" role="region" aria-labelledby="activity-detail-title" tabindex="0">
     <table class="activity-table">
       <thead><tr>
-        <th>{$t('sessions.time')}</th><th>{$t('activity.device')}</th><th>{$t('sessions.detail.meta.sessionId')}</th>
+        <th>{$t(project ? 'sessions.session' : 'sessions.time')}</th><th>{$t('activity.device')}</th><th>{$t('sessions.detail.meta.sessionId')}</th>
         {#if project}<th class="activity-number">{$t('projects.tokens')}</th><th class="activity-number">{$t('projects.cost')}</th>
         {:else}<th>{$t('sessions.assistant')}</th><th class="activity-number">{$t('activity.callIndex')}</th>{/if}
       </tr></thead>
       <tbody>
         {#each (project ? data.sessions : data.events) as row}
           <tr>
-            <td class="mono activity-time">{formatDateTime(row.ts)}</td><td class="mono activity-id">{row.deviceInstanceId || '—'}</td>
+            {#if project}
+              <td class="activity-session-cell">
+                <a class="activity-link activity-session-title" href={sessionDetailUrl(row.sessionId, row.deviceInstanceId, params.tool)}>{sessionLabel(row, $t('sessions.unnamed'))}</a>
+                <span class="activity-session-time mono">{formatDateTime(row.ts)}</span>
+              </td>
+            {:else}<td class="mono activity-time">{formatDateTime(row.ts)}</td>{/if}
+            <td class="mono activity-id">{row.deviceInstanceId || '—'}</td>
             <td class="mono activity-id">{#if row.sessionId}<a class="activity-link" href={sessionDetailUrl(row.sessionId, row.deviceInstanceId, params.tool)}>{row.sessionId}</a>{:else}—{/if}</td>
             {#if project}<td class="mono activity-number">{formatTokens(row.tokens)}</td><td class="mono accent activity-number">{formatCost(row.cost)}</td>
             {:else}<td><span class="activity-badge">{row.tool}</span></td><td class="mono activity-number">{row.callIndex}</td>{/if}

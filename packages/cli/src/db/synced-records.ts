@@ -21,12 +21,12 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord, ti
       id, ts, tool, model, provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
       cost, cost_source, session_key, device, device_instance_id, platform, updated_at,
-      source_file, cwd, unclaimed_since
+      source_file, cwd, session_title, unclaimed_since
     ) VALUES (
       @id, @ts, @tool, @model, @provider, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
       @cost, @costSource, @sessionKey, @device, @deviceInstanceId, @platform, @updatedAt,
-      @sourceFile, @cwd, @tick
+      @sourceFile, @cwd, @sessionTitle, @tick
     )
     ON CONFLICT(id) DO UPDATE SET
       ts = excluded.ts,
@@ -46,7 +46,8 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord, ti
       platform = excluded.platform,
       updated_at = excluded.updated_at,
       source_file = excluded.source_file,
-      cwd = excluded.cwd
+      cwd = excluded.cwd,
+      session_title = CASE WHEN excluded.session_title != '' THEN excluded.session_title ELSE synced_records.session_title END
     WHERE excluded.updated_at > synced_records.updated_at
   `).run({
     id: record.id,
@@ -68,6 +69,7 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord, ti
     updatedAt: record.updatedAt,
     sourceFile: record.sourceFile ?? '',
     cwd: record.cwd ?? '',
+    sessionTitle: typeof record.sessionTitle === 'string' ? record.sessionTitle : '',
     tick,
   })
   return result.changes > 0
@@ -532,7 +534,8 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
       session_id = sr.session_key, device = sr.device, device_instance_id = sr.device_instance_id,
       platform = sr.platform,
       source_file = CASE WHEN sr.source_file != '' THEN sr.source_file ELSE records.source_file END,
-      cwd = sr.cwd
+      cwd = sr.cwd,
+      session_title = CASE WHEN sr.session_title != '' THEN sr.session_title ELSE records.session_title END
     FROM synced_records sr
     WHERE sr.id = records.id
       AND records.origin = 'synced'
@@ -563,12 +566,12 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
       id, ts, ingested_at, synced_at, updated_at, line_offset,
       tool, model, provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
-      cost, cost_source, session_id, source_file, cwd, device, device_instance_id, platform, origin
+      cost, cost_source, session_id, session_title, source_file, cwd, device, device_instance_id, platform, origin
     ) VALUES (
       @id, @ts, @ingestedAt, @syncedAt, @updatedAt, 0,
       @tool, @model, @provider, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
-      @cost, @costSource, @sessionId, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, 'synced'
+      @cost, @costSource, @sessionId, @sessionTitle, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, 'synced'
     )
   `)
 
@@ -594,6 +597,7 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
         cost: row.cost,
         costSource: row.cost_source,
         sessionId: row.session_key,
+        sessionTitle: row.session_title,
         sourceFile,
         cwd: (typeof row.cwd === 'string' ? row.cwd : '') || '',
         device: row.device,
@@ -622,6 +626,7 @@ function mapRowToSyncRecord(row: Record<string, unknown>): SyncRecord {
     cost: row.cost as number,
     costSource: row.cost_source as SyncRecord['costSource'],
     sessionKey: row.session_key as string,
+    sessionTitle: (row.session_title as string) || undefined,
     device: row.device as string,
     deviceInstanceId: row.device_instance_id as string,
     platform: row.platform as string | undefined,

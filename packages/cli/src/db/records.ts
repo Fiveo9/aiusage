@@ -47,7 +47,7 @@ const OVERWRITTEN_COLUMNS = [
  * source file, `platform` by a backfill. An empty incoming value says nothing
  * about the stored one and must not erase it.
  */
-const KEPT_WHEN_EMPTY_COLUMNS = ['cwd', 'platform']
+const KEPT_WHEN_EMPTY_COLUMNS = ['cwd', 'platform', 'session_title']
 
 const RECORD_CHANGED = [
   `(${OVERWRITTEN_COLUMNS.map(c => `records.${c}`).join(', ')}) IS NOT (${OVERWRITTEN_COLUMNS.map(c => `excluded.${c}`).join(', ')})`,
@@ -75,12 +75,12 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
       id, ts, ingested_at, synced_at, updated_at, line_offset,
       tool, model, provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
-      cost, cost_source, session_id, source_file, cwd, device, device_instance_id, platform, origin
+      cost, cost_source, session_id, session_title, source_file, cwd, device, device_instance_id, platform, origin
     ) VALUES (
       @id, @ts, @ingestedAt, @syncedAt, @updatedAt, @lineOffset,
       @tool, @model, @provider, @inputTokens, @outputTokens,
       @cacheReadTokens, @cacheWriteTokens, @thinkingTokens,
-      @cost, @costSource, @sessionId, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, @origin
+      @cost, @costSource, @sessionId, @sessionTitle, @sourceFile, @cwd, @device, @deviceInstanceId, @platform, @origin
     )
     ON CONFLICT(id) DO UPDATE SET
       ${OVERWRITTEN_COLUMNS.map(c => `${c} = excluded.${c}`).join(',\n      ')},
@@ -113,6 +113,7 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
     cost: record.cost,
     costSource: record.costSource,
     sessionId: record.sessionId,
+    sessionTitle: record.sessionTitle ?? '',
     sourceFile: record.sourceFile,
     cwd: record.cwd ?? '',
     device: record.device,
@@ -142,6 +143,7 @@ function recordValuesEqual(existing: StatsRecord, incoming: StatsRecord): boolea
     && existing.cost === incoming.cost
     && existing.costSource === incoming.costSource
     && existing.sessionId === incoming.sessionId
+    && keptWhenEmptyEqual(existing.sessionTitle, incoming.sessionTitle)
     && keptWhenEmptyEqual(existing.cwd, incoming.cwd)
     && existing.device === incoming.device
     && existing.deviceInstanceId === incoming.deviceInstanceId
@@ -363,6 +365,7 @@ function mapRowToRecord(row: Record<string, unknown>): StatsRecord {
     cost: row.cost as number,
     costSource: row.cost_source as StatsRecord['costSource'],
     sessionId: row.session_id as string,
+    sessionTitle: (row.session_title as string) || undefined,
     sourceFile: row.source_file as string,
     cwd: (row.cwd as string) || undefined,
     device: row.device as string,

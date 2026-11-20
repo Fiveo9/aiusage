@@ -26,7 +26,7 @@ export function toCloudRecord(record: SyncRecord): CloudWireRecord {
 }
 
 const WIRE_INTEGER_FIELDS = ['ts', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'updatedAt'] as const
-const WIRE_TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
+const WIRE_TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sessionTitle', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
 
 /**
  * Why the cloud would not store `record`, or null when it would: the checks
@@ -122,6 +122,7 @@ export function fromCloudRecord(raw: unknown): SyncRecord | null {
   const platform = str(r.platform)
   const sourceFile = str(r.sourceFile)
   const cwd = str(r.cwd)
+  const sessionTitle = str(r.sessionTitle)
   return {
     id,
     ts,
@@ -142,5 +143,6 @@ export function fromCloudRecord(raw: unknown): SyncRecord | null {
     updatedAt,
     ...(sourceFile ? { sourceFile } : {}),
     ...(cwd ? { cwd } : {}),
+    ...(sessionTitle ? { sessionTitle } : {}),
   }
 }

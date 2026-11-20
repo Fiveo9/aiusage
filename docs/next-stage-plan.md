@@ -8,6 +8,7 @@
 - 仅读取交付文件及直接依赖。测试使用合成数据，不读取真实使用记录或凭据。禁止物理删除，临时产物保留在证据目录或移入回收区。
 - 本机轻量检查直接执行；耗时全量或 Linux 验证仅通过根目录 `scripts/remote-check.ps1`，明确 `-Task`、`-Target`，跟踪最终退出状态。远程受阻时如实记录，不擅自切换平台。
 - 每项提交前更新本文件与中英文更新日志，记录实际命令、结果、review 和未验证边界。提交身份使用 Fiveonine。
+- 下列本机 Vitest 命令在仓库根目录运行，均先设置 `$env:NODE_OPTIONS = '--require=C:/Repositories/aiusage/.artifacts/next-stage/recycle.cjs'`。该保护重定向测试 home/tmp，检查目标与链接后将 Node 文件清理转为可恢复移动；验证配置与保护脚本保留在证据目录。没有使用会物理删除夹具的默认 CLI setup。
 
 ## S1 会话标题收尾
 
@@ -64,10 +65,24 @@
 - 汇总与日期/工具/设备筛选一致，未知价格不影响既有费用求和；模型合并展示不改变原始价格身份。
 - 提供价格管理入口，并覆盖混合来源、零费用、空数据与筛选回归，完成只读 review。
 
-状态：待实施。提交：待记录。
+状态：已完成验证与只读 review，随本阶段提交。提交标题：`feat(cost): 展示费用来源与未计价模型提示`。
+
+本机验证：
+
+- `node packages/cli/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/cli.config.ts tests/api/cost-provenance.test.ts tests/api/session-search.test.ts`：14/14，退出 0。
+- `node packages/cli/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/cli.config.ts tests/api/server.test.ts -t 'cost '`：4 项通过、39 项因名称筛选未运行，退出 0。
+- `node packages/web/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/web.config.ts tests/cost-provenance.test.ts tests/model-display.test.ts`：12/12，退出 0。
+- CLI `tsc --noEmit` 退出 0；费用页和费用来源组件 DOM/SSR 编译零警告；`git diff --check` 通过。日志：`.artifacts/next-stage/s3-*`。
+- 首轮组件测试错误要求 Svelte 同时转义文本中的 `<` 与 `>`，实际已安全转义 `<`；将断言修正为保留原始模型名且不生成原始标签后通过。滚动区域的键盘焦点按既有活动页约定添加说明，编译警告消除。失败日志保留。
+- 只读 review：来源统计复用费用接口各设备分支的记录集合，过滤/同步去重口径与原总额一致；覆盖率是已知费用记录占比，零费用计入，空集合返回 null。未知价格不改写存储费用，不宣称免费或账单准确性；未计价清单保留完整模型名并链接现有定价页。新 Token 清单包含独立 thinking。费用页保留最新响应并在卸载时使请求失效。未发现剩余阻断项。
+- 边界：实际 SQLite/HTTP、组件 SSR 输出和页面脚本回调已验证；未执行整仓构建、远程全量套件或人工浏览器验收。仅 core 构建产物已更新，Web/CLI 发行产物应通过项目启动/构建命令生成。
 
 ## 交付记录
 
 计划已先于本轮实现写入。各阶段的实际验证、review 和提交记录在完成时追加。
 
 - S1 提交：`e6d4d50`。
+- S2 提交：`9b7e28e`。
+- S3：本次费用来源提交，以上标题可在 Git 历史定位。
+- 本轮源码备份：`backups/next-stage-20261120/`。合成标题夹具、隔离 home/tmp、测试回收内容、未使用临时脚本与暂存补丁均经路径/链接审查移入 `backups/build-recycle/`，可恢复；没有物理删除。
+- 三项均在各自验证与只读 review 后提交；未推送或发布，未更改真实使用数据或本机同步同意状态。

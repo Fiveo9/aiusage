@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, modelDisplayMode, formatCost } from '$lib/stores.js'
   import { fetchCost } from '$lib/api.js'
   import { groupModelCosts } from '$lib/model-display.js'
@@ -7,6 +8,8 @@
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
   import ModelDisplaySelector from '$lib/components/ModelDisplaySelector.svelte'
+  import CostProvenance from '$lib/components/CostProvenance.svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
@@ -14,17 +17,23 @@
 
   let tooltip = null
   let chartEl = null
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   async function loadData() {
+    const isLatest = beginRequest()
     loading = true
     error = null
     try {
-      data = await fetchCost({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      const response = await fetchCost({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      if (!isLatest()) return
+      data = response
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
@@ -112,6 +121,8 @@
     <span class="hero-label">{$t('cost.totalCost')}</span>
     <span class="hero-value">{formatCost(getTotalCost())}</span>
   </div>
+
+  <CostProvenance provenance={data.provenance} />
 
   <div class="card chart-section">
     <div class="section-title">{$t('cost.chartTitle')}</div>

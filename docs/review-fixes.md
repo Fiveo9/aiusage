@@ -13,7 +13,7 @@
 | R07 | 小组件手动刷新忽略已保存的统计范围 | 完成；两个取数入口静态核对、widget 类型检查通过 |
 | R08 | 小组件日界计算未适配夏令时 | 完成；18/18 日期与数据回归、widget 类型检查通过 |
 | R09 | 构建脚本依赖 Unix 命令，CI 缺少 Windows 覆盖 | 完成；回收脚本回归、Windows prepack 与语法检查通过；完整 CI 未运行 |
-| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 待处理 |
+| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；8/8 回归及定向类型检查通过；真实 PG 并发未验证 |
 
 ## 验证约束
 
@@ -60,3 +60,9 @@ Cookie 改为签发时间、随机值及 HMAC 签名；服务端拒绝超过或�
 CLI prepack 改用 Node 复制；widget 构建的 renderer 清理改为经边界、符号链接和硬链接检查后移入 `backups/build-recycle/`。原生绑定恢复通过包管理器 JS 入口执行，避免 Windows `.cmd` 的 execFile 问题。CI 的 core/native 添加 Windows matrix 并增加构建/prepack 检查。
 
 1/1 回收回归、三个 Node 脚本语法检查、实际 Windows prepack 和内容哈希比对均通过；测试目录与生成 README 已移入回收区，可恢复。仓库没有 `scripts/remote-check.ps1`，未发起远程任务；完整构建还包含既有工具链清理及原生重编译，未执行，新增 CI 也未触发。只读审阅范围为本项构建入口及直接调用脚本。
+
+## R10
+
+并发首请求共享初始化 Promise，迁移成功后只启动一次清理调度；失败返回 503/Retry-After 并阻止认证和业务查询，后续请求可重试。迁移在同一事务连接上先取得事务级 advisory lock，再创建/读取版本表，执行迁移并写入版本，提交或回滚时自动释放锁。初始化默认定价也在同一事务内完成。
+
+8/8 定向回归通过，包括并发请求、失败重试、CORS/preflight、事务锁顺序、失败传播及原有迁移断言。只读 diff 审阅和交付源码/新增测试的定向 TypeScript 检查通过。站点整体 `tsc --noEmit` 失败：本机缺少已声明的 `@electric-sql/pglite`，既有 `tests/helpers/pglite-sql.ts` 报 TS2307 和两个连带 TS7006；没有扩大到安装依赖或修改无关测试。临时类型配置已移入 `backups/build-recycle/`。没有连接真实 PostgreSQL，也没有执行实际多实例锁竞争或完整站点构建。

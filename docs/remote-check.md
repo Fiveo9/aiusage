@@ -76,3 +76,17 @@ pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope
 容器成功运行 `20261119T140620Z-ce0349a0`：两份镜像构建 exit 0，隔离启动 10 项断言通过，三个容器停止状态为 true。命令为 `pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope docker -Machine linux-01 -ReuseRunId 20261119T135947Z-8b1909fa`。证据包含 `docker-result.json`、两份 build.log、三份 runtime.log；镜像 ID 写入结果，未发布镜像或宿主机端口。构建过程中异步硬链接登记和 Node 20 预编译 404 的失败记录均保留，修复后成功。
 
 最终完整套件复验 `20261119T141038Z-65bd95bf` 使用上述容器验收后的源码及回收器，命令为 `pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope full -Machine linux-01 -ReuseRunId 20261119T140620Z-ce0349a0`。结果 1,877 项：1,876 通过、0 失败、1 项 Windows 文件占用测试按平台跳过，本地/远程 exit 0。新增迁移 worker 的站点整体类型检查也在本机通过。
+
+## 2026-11-20 三项功能补验
+
+会话标题、会话搜索与排序、费用来源与未计价提示已完成构建和全量回归。实际命令、失败修复与本机证据见[下一阶段计划的补验记录](next-stage-plan.md#构建与-linux-全量补验2026-11-20)。
+
+| runId | 范围 | 本地/远程退出码 | 结果 |
+| --- | --- | --- | --- |
+| `20261120T013538Z-c8fb722b` | full 初验 | 1 / 1 | 1,920 通过、6 失败、1 平台跳过；失败来自旧迁移夹具/版本断言未适配标题 schema |
+| `20261120T014107Z-58f78b6c` | build | 0 / 0 | 6 步通过：core/Web/CLI/site 生产构建、widget renderer 和类型检查 |
+| `20261120T014318Z-07e05b2c` | full 复验 | 0 / 0 | 1,926 通过、0 失败、1 Windows 专属用例跳过，共 1,927 项 |
+
+上述证据分别位于 `.artifacts/remote-check/<runId>/`，含完整 summary、逐包报告和日志。使用原 `linux-01` 与 Node 22.23.3，逐文件校验 610 个输入并复用锁定依赖。修复后五包均通过：core 137、CLI 1,513、widget 34、site 160、Web 82。首轮失败归类为单元测试失败，不是网络或远程编译失败；失败日志仍保留。
+
+本轮不含 Docker、独立 PostgreSQL 服务或 Linux Electron GUI/native 验收；不得将 2026-11-19 的容器结果当作本次三个功能的部署验收。未推送、发布或销毁实例，继续依赖原自动挂起策略。

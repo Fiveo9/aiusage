@@ -158,6 +158,13 @@ describe('Codex reasoning tokens through runParse', () => {
     `).run(PRICE.output)
     db.prepare('DELETE FROM schema_version WHERE version >= 16').run()
     db.exec('DROP VIEW activity_tool_calls; DROP VIEW activity_records; DROP TABLE synced_tool_calls;')
+    // Restore title schema together with its version entry before replaying v19.
+    db.exec(`DROP VIEW activity_session_titles;
+      DROP TABLE session_title_sources;
+      DROP INDEX idx_records_session_title;
+      DROP INDEX idx_synced_session_title;
+      ALTER TABLE records DROP COLUMN session_title;
+      ALTER TABLE synced_records DROP COLUMN session_title;`)
     const before = db.prepare('SELECT cost, output_tokens FROM records ORDER BY session_id, line_offset LIMIT 1').get()
     // The 0.2M reasoning tokens are in both columns and billed twice.
     expect(before).toMatchObject({ output_tokens: 500_000 })

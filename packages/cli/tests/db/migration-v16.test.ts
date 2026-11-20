@@ -95,6 +95,17 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     recalcPendingCosts(db, null)
   }
 
+  // Seed with today's writer, but replay migrations against the schema that
+  // actually matches the old ledger. Otherwise v19 would add its columns twice.
+  function restorePreTitleSchema(): void {
+    db.exec(`DROP VIEW activity_session_titles;
+      DROP TABLE session_title_sources;
+      DROP INDEX idx_records_session_title;
+      DROP INDEX idx_synced_session_title;
+      ALTER TABLE records DROP COLUMN session_title;
+      ALTER TABLE synced_records DROP COLUMN session_title;`)
+  }
+
   it('subtracts reasoning tokens from output, keeps them as thinking and queues the row for repricing', () => {
     insertRecord(db, makeRecord({ id: 'codex-reasoning' }))
 
@@ -265,6 +276,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     insertRecord(db, makeRecord({ id: 'codex-reasoning' }))
     setUserPrice(db, MODEL, PRICE)
 
+    restorePreTitleSchema()
     initializeDatabase(db)
     const first = row(db, 'codex-reasoning')
     initializeDatabase(db)
@@ -274,7 +286,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     // Nothing changes on the second open, including updated_at.
     expect(row(db, 'codex-reasoning')).toEqual(first)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(18)
+    expect(schemaVersion(db)).toBe(19)
   })
 
   it('applies after v15 when a database upgrades from v14 in one open', () => {
@@ -288,6 +300,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     }))
     setUserPrice(db, MODEL, PRICE)
 
+    restorePreTitleSchema()
     initializeDatabase(db)
 
     const r = row(db, 'codex-both')
@@ -299,7 +312,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     })
     expect(r.cost).toBeCloseTo(5.38, 10)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(18)
+    expect(schemaVersion(db)).toBe(19)
   })
 
   it('reprices a row v15 queued and the open did not finish repricing', () => {

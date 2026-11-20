@@ -66,8 +66,8 @@ jobs:
 
       - name: Test cli & widget
         run: |
-          pnpm --filter @juliantanx/aiusage test
-          pnpm --filter @juliantanx/aiusage-widget test
+          pnpm --filter @fiveo9/aiusage test
+          pnpm --filter @fiveo9/aiusage-widget test
 
   test-site:
     name: Site (Node.js 20)

@@ -1,6 +1,6 @@
-# @juliantanx/aiusage-widget
+# @fiveo9/aiusage-widget
 
-A lightweight system tray widget for [AIUsage](https://github.com/juliantanx/aiusage) that shows your AI coding assistant token usage at a glance.
+A lightweight system tray widget for [AIUsage](https://github.com/Fiveo9/aiusage) that shows your AI coding assistant token usage at a glance.
 
 English | [中文](./README_zh.md)
 
@@ -20,13 +20,13 @@ English | [中文](./README_zh.md)
 
 ## Prerequisites
 
-- [AIUsage](https://github.com/juliantanx/aiusage) CLI installed and data parsed (`aiusage serve` auto-parses on startup)
+- [AIUsage](https://github.com/Fiveo9/aiusage) CLI installed and data parsed (`aiusage serve` auto-parses on startup)
 - Node.js >= 20
 
 ## Install
 
 ```bash
-npm install -g @juliantanx/aiusage-widget
+npm install -g @fiveo9/aiusage-widget
 ```
 
 ## Usage
@@ -67,7 +67,7 @@ PM2 works on Windows, macOS, and Linux.
 ## Build from Source
 
 ```bash
-git clone https://github.com/juliantanx/aiusage.git
+git clone https://github.com/Fiveo9/aiusage.git
 cd aiusage
 pnpm install
 pnpm build

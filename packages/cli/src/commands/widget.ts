@@ -14,7 +14,7 @@ export async function launchWidget(): Promise<void> {
   const electronBin = resolveElectronBin()
   if (!electronBin) {
     console.error(
-      'Widget not installed. Run: npm install -g @juliantanx/aiusage-widget'
+      'Widget not installed. Run: npm install -g @fiveo9/aiusage-widget'
     )
     process.exit(1)
   }

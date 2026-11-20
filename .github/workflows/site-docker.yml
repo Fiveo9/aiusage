@@ -13,7 +13,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: juliantanx/aiusage-site
+  IMAGE_NAME: fiveo9/aiusage-site
 
 jobs:
   build-and-push:
@@ -48,11 +48,11 @@ jobs:
           labels: |
             org.opencontainers.image.title=aiusage-site
             org.opencontainers.image.description=Official website and documentation for AIUsage — track AI coding assistant usage, token consumption, costs, and tool calls across Claude Code, Codex, Cursor, and more
-            org.opencontainers.image.url=https://github.com/juliantanx/aiusage
-            org.opencontainers.image.source=https://github.com/juliantanx/aiusage
-            org.opencontainers.image.documentation=https://github.com/juliantanx/aiusage/tree/main/packages/site
+            org.opencontainers.image.url=https://github.com/Fiveo9/aiusage
+            org.opencontainers.image.source=https://github.com/Fiveo9/aiusage
+            org.opencontainers.image.documentation=https://github.com/Fiveo9/aiusage/tree/main/packages/site
             org.opencontainers.image.licenses=MIT
-            org.opencontainers.image.vendor=juliantanx
+            org.opencontainers.image.vendor=Fiveonine
 
       - name: Build and push
         uses: docker/build-push-action@v6

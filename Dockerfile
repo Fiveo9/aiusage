@@ -2,8 +2,8 @@ FROM node:20-slim
 
 LABEL org.opencontainers.image.title="aiusage" \
       org.opencontainers.image.description="Track AI coding assistant usage, token consumption, cost, and tool calls across Claude Code, Codex, OpenCode, and more" \
-      org.opencontainers.image.url="https://github.com/juliantanx/aiusage" \
-      org.opencontainers.image.source="https://github.com/juliantanx/aiusage" \
+      org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
@@ -22,7 +22,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 # Only build server packages (skip Electron widget)
-RUN pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @juliantanx/aiusage build
+RUN pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @fiveo9/aiusage build
 
 VOLUME /root/.aiusage
 EXPOSE 3847

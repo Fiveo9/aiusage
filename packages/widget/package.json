@@ -1,5 +1,5 @@
 {
-  "name": "@juliantanx/aiusage-widget",
+  "name": "@fiveo9/aiusage-widget",
   "version": "1.5.28",
   "private": false,
   "description": "System tray widget for AIUsage — view AI token usage from your system tray",
@@ -11,14 +11,14 @@
     "electron",
     "token-usage"
   ],
-  "homepage": "https://aiusage.jtanx.com",
+  "homepage": "https://github.com/Fiveo9/aiusage",
   "repository": {
     "type": "git",
-    "url": "https://github.com/juliantanx/aiusage.git",
+    "url": "https://github.com/Fiveo9/aiusage.git",
     "directory": "packages/widget"
   },
   "bugs": {
-    "url": "https://github.com/juliantanx/aiusage/issues"
+    "url": "https://github.com/Fiveo9/aiusage/issues"
   },
   "license": "MIT",
   "engines": {

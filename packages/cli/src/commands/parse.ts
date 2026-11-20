@@ -1,0 +1,1929 @@
+import Database from 'better-sqlite3'
+import { readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
+import { basename, join, dirname } from 'node:path'
+import { hostname } from 'node:os'
+import { Aggregator, resolveExchangeRate, generateToolCallId, claudeCodeToolCall, inferProvider, calculateCost, resolvePrice, recordIdFor, normalizeCodeFuseModel, parseTimestamp, type RecordIdBuilder, type StatsRecord, type Tool } from '@aiusage/core'
+import type { ToolCallRecord } from '@aiusage/core'
+import { insertChangedRecords, insertRecord, LOCAL_RECORDS_WHERE, backfillUnknownDeviceInstanceId, recordIdsForReread, type RereadRecordIds } from '../db/records.js'
+import { insertToolCall, deleteAdoptedToolCall, deletePositionalCounterpart, hasPositionalToolCallId } from '../db/tool-calls.js'
+import { getState } from '../init.js'
+import { loadConfig, AIUSAGE_DIR } from '../config.js'
+import { WatermarkManager } from '../watermark.js'
+import { discoverLogFiles, getDbPath } from '../discovery.js'
+import { runParseOpenCode } from './parse-opencode.js'
+import { runParseHermes } from './parse-hermes.js'
+import { runParseQoder } from './parse-qoder.js'
+import { runParseCursor } from './parse-cursor.js'
+import { runParseCursorTranscript } from './parse-cursor.js'
+import { runParseKilo } from './parse-kilo.js'
+import { isKelivoDatabaseFile, isKelivoSourceFile, runParseKelivo } from './parse-kelivo.js'
+import { runParseGoose } from './parse-goose.js'
+import { runParseZed } from './parse-zed.js'
+import { runParseKiro } from './parse-kiro.js'
+import { runParseZcode } from './parse-zcode.js'
+import { runParseTrae } from './parse-trae.js'
+import { runParseCodeBuddy } from './parse-codebuddy.js'
+import { runParseAntigravity } from './parse-antigravity.js'
+import { cursorTranscriptComposerId, deleteCursorTranscriptEstimates, hasCursorDatabaseRecord, kiroLogLineId, prefixFingerprint, repairImporterDuplicates, replaceKiroLogLines, replaceSourceRecords, replaceSourceSnapshot } from './importer-duplicates.js'
+import type { ProgressInfo } from '../progress.js'
+
+interface ParseResult {
+  parsedCount: number
+  toolCallCount: number
+  errors: string[]
+  /** Imports that succeeded but may be incomplete (e.g. a Kelivo database whose WAL is missing). */
+  warnings: string[]
+}
+
+interface ToolPaths {
+  tool: Tool
+  paths: string[]
+}
+
+const CURRENT_TOOL_CALL_BACKFILL_VERSION = 1
+
+// Re-export for backward compatibility with other modules that import from here
+export { defaultOpenCodeDbPath, defaultHermesDbPath, defaultQoderDbPath, defaultCursorDbPath, defaultKiloDbPath, defaultGooseDbPath, defaultZedDbPath, defaultZcodeDbPath } from '../discovery.js'
+
+/**
+ * Extract cwd from a parsed JSONL first-line object.
+ * Different tools store cwd in different locations:
+ * - Claude Code: top-level `cwd`
+ * - Codex: `payload.cwd` (type: session_meta)
+ * - Gemini/Kimi/CodeBuddy/Grok/Craft/Droid/OMP/Pi: top-level `cwd` (if present)
+ * - OpenClaw: `workspaceDir` is always .openclaw/workspace, not useful
+ * - Copilot: no cwd field
+ */
+function extractCwdFromJson(data: Record<string, unknown>): string | undefined {
+  // Top-level cwd (Claude Code, generic tools)
+  if (typeof data.cwd === 'string' && data.cwd) return data.cwd
+
+  // Nested payload.cwd (Codex session_meta)
+  const payload = data.payload
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const p = payload as Record<string, unknown>
+    if (typeof p.cwd === 'string' && p.cwd) return p.cwd
+  }
+
+  return undefined
+}
+
+function extractSessionId(filePath: string, tool: Tool): string {
+  if (tool === 'claude-code') {
+    // Extract from path like ~/.claude/projects/<project>/<session>.jsonl
+    const parts = filePath.split('/')
+    const filename = parts[parts.length - 1]
+    return filename.replace('.jsonl', '')
+  }
+  if (tool === 'codex') {
+    // Extract from path like ~/.codex/sessions/2026/04/22/rollout-<uuid>.jsonl
+    const filename = filePath.split('/').pop() ?? ''
+    const match = filename.match(/rollout-(.+)\.jsonl$/)
+    return match ? match[1] : filename.replace('.jsonl', '')
+  }
+  if (tool === 'openclaw') {
+    // Extract from path like ~/.openclaw/agents/main/sessions/<uuid>.jsonl
+    const filename = filePath.split('/').pop() ?? ''
+    return filename.replace('.jsonl', '')
+  }
+  if (tool === 'qoder') {
+    // Extract from path like ~/.qoder/logs/sessions/<project>/<session>/segments/<segment>.jsonl
+    const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean)
+    const segmentsIndex = parts.lastIndexOf('segments')
+    if (segmentsIndex > 0) return parts[segmentsIndex - 1]
+    const filename = parts[parts.length - 1] ?? ''
+    return filename.replace('.jsonl', '') || 'unknown'
+  }
+  if (tool === 'copilot') {
+    // OTEL: ~/.copilot/otel/copilot-otel-20250601.jsonl → filename
+    const parts = filePath.split('/')
+    return (parts.pop() ?? '').replace('.jsonl', '')
+  }
+  if (tool === 'pi') {
+    // Extract UUID from filename like 2026-06-08T14-04-37-182Z_019ea78c-b5be-711c-8f30-c8fc56c92b85.jsonl
+    const filename = filePath.split('/').pop() ?? ''
+    const match = filename.match(/_([^_]+)\.jsonl$/)
+    return match ? match[1] : filename.replace('.jsonl', '')
+  }
+  if (tool === 'codefuse') {
+    const filename = basename(filePath)
+    const snapshotMatch = filename.match(/^ant_cc_(.+)\.json$/)
+    if (snapshotMatch) return snapshotMatch[1]
+    const rolloutMatch = filename.match(/rollout-(.+)\.jsonl$/)
+    if (rolloutMatch) return rolloutMatch[1]
+    return filename.replace(/\.jsonl$/, '').replace(/\.json$/, '') || 'unknown'
+  }
+  return 'unknown'
+}
+
+const CHARS_PER_TOKEN = 4
+
+function toNumber(value: unknown): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+function parseUiMessagesFile(options: {
+  filePath: string
+  tool: 'roocode' | 'kilocode'
+  device: string
+  deviceInstanceId: string
+  recordId?: RecordIdBuilder
+  platform?: string
+  now: number
+  exchangeRate?: number
+}): { records: StatsRecord[]; errors: string[] } {
+  const { filePath, tool, device, deviceInstanceId, platform, now, exchangeRate } = options
+  const records: StatsRecord[] = []
+  const errors: string[] = []
+
+  let messages: any[]
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'))
+    messages = Array.isArray(parsed) ? parsed : []
+  } catch (e) {
+    return { records, errors: [`${filePath}: ${e instanceof Error ? e.message : e}`] }
+  }
+
+  const taskId = filePath.replace(/\\/g, '/').split('/').slice(-2, -1)[0] || 'unknown'
+  for (const [index, message] of messages.entries()) {
+    if (message?.say !== 'api_req_started' || typeof message.text !== 'string') continue
+    let payload: any
+    try {
+      payload = JSON.parse(message.text)
+    } catch {
+      continue
+    }
+
+    const inputTokens = toNumber(payload.tokensIn)
+    const outputTokens = toNumber(payload.tokensOut)
+    const cacheReadTokens = toNumber(payload.cacheReads)
+    const cacheWriteTokens = toNumber(payload.cacheWrites)
+    const thinkingTokens = toNumber(payload.reasoningTokens ?? payload.reasoning)
+    if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + thinkingTokens === 0) continue
+
+    const model = typeof payload.model === 'string' && payload.model.trim()
+      ? payload.model.trim()
+      : typeof payload.modelId === 'string' && payload.modelId.trim()
+        ? payload.modelId.trim()
+        : typeof payload.apiProtocol === 'string' && payload.apiProtocol.trim()
+          ? `protocol:${payload.apiProtocol.trim().toLowerCase()}`
+          : 'unknown'
+    const provider = typeof payload.inferenceProvider === 'string' && payload.inferenceProvider.trim()
+      ? payload.inferenceProvider.trim().toLowerCase()
+      : inferProvider(model)
+    const ts = typeof message.ts === 'number' ? message.ts : now
+    const recordId = recordIdFor(options, `${filePath}:${index}`, ts)
+    const tokenArgs = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, thinkingTokens }
+    const calculatedCost = model !== 'unknown' ? calculateCost(model, tokenArgs, exchangeRate) : 0
+    const logCost = Number(payload.cost)
+    const hasLogCost = Number.isFinite(logCost) && logCost > 0
+
+    records.push({
+      id: recordId,
+      ts,
+      ingestedAt: now,
+      updatedAt: now,
+      lineOffset: index,
+      tool,
+      model,
+      provider,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      thinkingTokens,
+      cost: hasLogCost ? logCost : calculatedCost,
+      costSource: hasLogCost ? 'log' : calculatedCost > 0 ? 'pricing' : 'unknown',
+      sessionId: taskId,
+      sourceFile: filePath,
+      device,
+      deviceInstanceId,
+      platform,
+    })
+  }
+
+  return { records, errors }
+}
+
+function normalizeKiroModel(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return 'kiro-agent'
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/^(anthropic\.|openai\.|aws\.)/, '')
+    .replace(/:\d+$/, '')
+    .replace(/-\d{8}-v\d+(?:-\d+)?$/i, '')
+}
+
+/**
+ * Store records of an import that reads rows again, each with the tool calls
+ * read for it now. A tool call's id contains its position among the calls of
+ * its record, so a call that appears in front of stored ones (a part that
+ * could not be read before) would shift them to new ids and leave the old
+ * rows behind. All calls of such a record come from the one row it was built
+ * from, so its stored calls are replaced as a whole.
+ *
+ * That holds only for a complete read. For a record in
+ * `incompleteRecordIds` part of the source could not be read, and the calls
+ * read now may be short of some: the calls stored for it are left as they
+ * are and the ones read now are dropped, since they could neither replace
+ * the stored ones nor be added to them without counting calls twice. When
+ * nothing is stored for the record yet, what could be read is stored. The
+ * importer reads such a record again, and the first complete read replaces
+ * whatever is stored.
+ *
+ * Returns how many records were added or changed and how many tool calls
+ * were stored that were not stored before, so a row read again unchanged is
+ * not counted as parsed again. A record has changed when `insertRecord`
+ * moved its `updated_at`. Unlike `insertChangedRecords`, that also counts
+ * `source_file`, in which Hermes keeps the session title.
+ */
+function insertRecordsWithToolCalls(
+  db: Database.Database,
+  records: StatsRecord[],
+  toolCalls: ToolCallRecord[],
+  incompleteRecordIds: string[],
+): { records: number; toolCalls: number } {
+  const incomplete = new Set(incompleteRecordIds)
+  const storedVersion = db.prepare('SELECT updated_at FROM records WHERE id = ?').pluck()
+  const storedToolCallIds = db.prepare('SELECT id FROM tool_calls WHERE record_id = ?').pluck()
+  const removeToolCalls = db.prepare('DELETE FROM tool_calls WHERE record_id = ?')
+  return db.transaction(() => {
+    let written = 0
+    const kept = new Set<string>()
+    const replaced = new Set<string>()
+    for (const record of records) {
+      const before = storedVersion.get(record.id)
+      insertRecord(db, record)
+      if (before === undefined || storedVersion.get(record.id) !== before) written++
+      const stored = storedToolCallIds.all(record.id) as string[]
+      if (incomplete.has(record.id) && stored.length > 0) {
+        kept.add(record.id)
+        continue
+      }
+      for (const id of stored) replaced.add(id)
+      removeToolCalls.run(record.id)
+    }
+    let added = 0
+    for (const tc of toolCalls) {
+      if (tc.recordId !== null && kept.has(tc.recordId)) continue
+      insertToolCall(db, tc)
+      if (!replaced.has(tc.id)) added++
+    }
+    return { records: written, toolCalls: added }
+  })()
+}
+
+/**
+ * The time of the record stored for a session, for an importer that reads
+ * every session on every run and keeps one record per session (Goose, Trae):
+ * the time its id is built from can change after it was first stored. The
+ * importer builds the id from this time with `recordId` (see
+ * `recordIdsForReread`), so it is the id the record is stored under, also
+ * one built from the `'unknown'` sentinel, whose rows `runParse` relabels
+ * before it reads anything.
+ */
+function storedSessionTime(db: Database.Database, tool: Tool, deviceInstanceId: string, sourceFile: string): (sessionId: string) => number | undefined {
+  const stored = db.prepare(`
+    SELECT ts FROM records
+    WHERE tool = ? AND ${LOCAL_RECORDS_WHERE} AND device_instance_id = ? AND source_file = ? AND session_id = ?
+    ORDER BY ts, id LIMIT 1
+  `).pluck()
+  return (sessionId) => stored.get(tool, deviceInstanceId, sourceFile, sessionId) as number | undefined
+}
+
+/**
+ * Record ids for an importer whose read of a row can be incomplete: a Cursor
+ * conversation with a bubble, an OpenCode message with a part, or a Hermes
+ * session with a `tool_calls` payload that cannot be read. Such a read leaves
+ * what is stored as it is (a total that may be short is not stored over a
+ * record, and stored tool calls are kept), but folding a copy stored under
+ * the device id (see `recordIdsForReread`) would not: the original would take
+ * the copy's measurements, and the copy's calls would go with it. `recordId`
+ * returns the parse's id without folding, and `foldCopies` folds the copies of
+ * the records read in full, before they are written. The copy of a record
+ * read in part stays until the record is read in full.
+ */
+function foldOnCompleteRead(recordIds: RereadRecordIds): { recordId: RecordIdBuilder; foldCopies(ids: Iterable<string>): void } {
+  const keys = new Map<string, [string, number]>()
+  return {
+    recordId: (seed, offset) => {
+      const id = recordIds.storedId(seed, offset)
+      keys.set(id, [seed, offset])
+      return id
+    },
+    foldCopies: (ids) => {
+      for (const id of ids) {
+        const key = keys.get(id)
+        if (key) recordIds.recordId(key[0], key[1])
+      }
+    },
+  }
+}
+
+/** The ids of `records` that are not in `incomplete`. */
+function completeRecordIds(records: StatsRecord[], incomplete: string[]): string[] {
+  const skip = new Set(incomplete)
+  return records.map(record => record.id).filter(id => !skip.has(id))
+}
+
+type RecordIds = { deviceInstanceId: string; recordId?: RecordIdBuilder }
+
+function codeFuseSnapshotRecordId(ids: RecordIds, sessionId: string): string {
+  return recordIdFor(ids, `codefuse:snapshot:${sessionId}`, 0)
+}
+
+function deleteCodeFuseSnapshotFallback(db: Database.Database, ids: RecordIds, sessionId: string): void {
+  const recordId = codeFuseSnapshotRecordId(ids, sessionId)
+  db.prepare('DELETE FROM tool_calls WHERE record_id = ?').run(recordId)
+  db.prepare("DELETE FROM records WHERE id = ? AND tool = 'codefuse'").run(recordId)
+}
+
+function parseCodeFuseSnapshotFile(options: {
+  db: Database.Database
+  filePath: string
+  device: string
+  deviceInstanceId: string
+  recordId?: RecordIdBuilder
+  platform?: string
+  now: number
+  exchangeRate?: number
+}): { records: StatsRecord[]; errors: string[] } {
+  const { db, filePath, device, deviceInstanceId, platform, now, exchangeRate } = options
+  const records: StatsRecord[] = []
+  const errors: string[] = []
+
+  let parsed: any
+  try {
+    parsed = JSON.parse(readFileSync(filePath, 'utf-8'))
+  } catch (e) {
+    return { records, errors: [`${filePath}: ${e instanceof Error ? e.message : e}`] }
+  }
+
+  const sessionId = typeof parsed?.session_id === 'string' && parsed.session_id
+    ? parsed.session_id
+    : extractSessionId(filePath, 'codefuse')
+  if (!sessionId || sessionId === 'unknown') return { records, errors }
+
+  const hasJsonlRecord = db.prepare(`
+    SELECT 1 FROM records
+    WHERE tool = 'codefuse' AND session_id = ? AND source_file LIKE '%.jsonl'
+    LIMIT 1
+  `).get(sessionId)
+  if (hasJsonlRecord) {
+    deleteCodeFuseSnapshotFallback(db, options, sessionId)
+    return { records, errors }
+  }
+
+  const usage = parsed?.last_status_line?.context_window?.current_usage
+  if (!usage || typeof usage !== 'object') return { records, errors }
+
+  const inputTokens = toNumber(usage.input_tokens)
+  const outputTokens = toNumber(usage.output_tokens)
+  const cacheReadTokens = toNumber(usage.cache_read_input_tokens)
+  const cacheWriteTokens = toNumber(usage.cache_creation_input_tokens)
+  const thinkingTokens = toNumber(usage.thinking_tokens)
+  if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + thinkingTokens === 0) {
+    return { records, errors }
+  }
+
+  const model = normalizeCodeFuseModel(parsed?.model_id ?? parsed?.model_name ?? parsed?.last_status_line?.model)
+  if (model === '<synthetic>') return { records, errors }
+
+  const provider = inferProvider(model)
+  const ts = parseTimestamp(
+    parsed?.last_status_line_time ?? parsed?.last_status_line?.update_time ?? parsed?.current_request_time,
+    now,
+  )
+  const tokenArgs = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, thinkingTokens }
+  const hasPrice = model !== 'unknown' && resolvePrice(model) != null
+  const cost = hasPrice ? calculateCost(model, tokenArgs, exchangeRate) : 0
+
+  records.push({
+    id: codeFuseSnapshotRecordId(options, sessionId),
+    ts,
+    ingestedAt: now,
+    updatedAt: now,
+    lineOffset: 0,
+    tool: 'codefuse',
+    model,
+    provider,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    thinkingTokens,
+    cost,
+    costSource: hasPrice ? 'pricing' : 'unknown',
+    sessionId,
+    sourceFile: filePath,
+    cwd: typeof parsed?.cwd === 'string' ? parsed.cwd : undefined,
+    device,
+    deviceInstanceId,
+    platform,
+  })
+
+  return { records, errors }
+}
+
+function pathIsFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile()
+  } catch {
+    return false
+  }
+}
+
+function parseKiroSessionFile(options: {
+  filePath: string
+  device: string
+  deviceInstanceId: string
+  recordId?: RecordIdBuilder
+  platform?: string
+  now: number
+  exchangeRate?: number
+}): { records: StatsRecord[]; errors: string[] } {
+  const { filePath, device, deviceInstanceId, platform, now, exchangeRate } = options
+  const records: StatsRecord[] = []
+  const errors: string[] = []
+
+  let parsed: any
+  try {
+    parsed = JSON.parse(readFileSync(filePath, 'utf-8'))
+  } catch (e) {
+    return { records, errors: [`${filePath}: ${e instanceof Error ? e.message : e}`] }
+  }
+
+  // Try workspace-sessions format: history[].promptLogs[]
+  if (Array.isArray(parsed?.history) && !parsed?.session_state) {
+    return parseKiroWorkspaceSession({ filePath, parsed, device, deviceInstanceId, recordId: options.recordId, platform, now, exchangeRate })
+  }
+
+  const turns = parsed?.session_state?.conversation_metadata?.user_turn_metadatas
+  if (!Array.isArray(turns)) return { records, errors }
+  const sessionId = typeof parsed?.session_id === 'string' && parsed.session_id
+    ? parsed.session_id
+    : extractSessionId(filePath, 'kiro')
+  const sessionModel = parsed?.session_state?.rts_model_state?.model_info?.model_id
+    ?? parsed?.session_state?.rts_model_state?.model_info?.model_name
+
+  for (const [index, turn] of turns.entries()) {
+    const inputTokens = toNumber(turn?.input_token_count)
+    const outputTokens = toNumber(turn?.output_token_count)
+    if (inputTokens + outputTokens === 0) continue
+
+    const model = normalizeKiroModel(turn?.model_id ?? sessionModel)
+    const recordTs = parseTimestamp(
+      turn?.request_start_timestamp_ms ?? turn?.start_timestamp ?? turn?.end_timestamp,
+      now,
+    )
+    const requestId = turn?.loop_id?.rand != null
+      ? `${sessionId}:${turn.loop_id.rand}`
+      : Array.isArray(turn?.message_ids) && turn.message_ids[0]
+        ? String(turn.message_ids[0])
+        : String(index)
+    const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
+    const cost = calculateCost(model, tokenArgs, exchangeRate)
+
+    records.push({
+      id: recordIdFor(options, `${filePath}:${requestId}`, recordTs),
+      ts: recordTs,
+      ingestedAt: now,
+      updatedAt: now,
+      lineOffset: index,
+      tool: 'kiro',
+      model,
+      provider: inferProvider(model),
+      inputTokens,
+      outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost,
+      costSource: cost > 0 ? 'pricing' : 'unknown',
+      sessionId,
+      sourceFile: filePath,
+      device,
+      deviceInstanceId,
+      platform,
+    })
+  }
+
+  return { records, errors }
+}
+
+function parseKiroWorkspaceSession(options: {
+  filePath: string
+  parsed: any
+  device: string
+  deviceInstanceId: string
+  recordId?: RecordIdBuilder
+  platform?: string
+  now: number
+  exchangeRate?: number
+}): { records: StatsRecord[]; errors: string[] } {
+  const { filePath, parsed, device, deviceInstanceId, platform, now, exchangeRate } = options
+  const records: StatsRecord[] = []
+  const errors: string[] = []
+
+  const sessionId = parsed?.sessionId ?? extractSessionId(filePath, 'kiro')
+
+  // Try to load dateCreated from sibling sessions.json
+  let sessionTs = now
+  try {
+    const dir = dirname(filePath)
+    const sessionsJson = readFileSync(join(dir, 'sessions.json'), 'utf-8')
+    const sessions = JSON.parse(sessionsJson)
+    const match = Array.isArray(sessions) && sessions.find((s: any) => s.sessionId === sessionId)
+    if (match?.dateCreated) {
+      const dc = Number(match.dateCreated)
+      if (Number.isFinite(dc) && dc > 0) sessionTs = dc < 1e12 ? dc * 1000 : dc
+    }
+  } catch {}
+
+  // Collect promptLogs from all history entries
+  const allLogs: Array<{ log: any; index: number }> = []
+  let logIndex = 0
+  for (const entry of parsed.history ?? []) {
+    for (const pl of entry?.promptLogs ?? []) {
+      allLogs.push({ log: pl, index: logIndex++ })
+    }
+  }
+
+  // Estimate tokens from context usage percentage if available
+  const contextLength = parsed?.config?.models?.[0]?.contextLength ?? 40000
+  const maxTokens = parsed?.config?.models?.[0]?.completionOptions?.maxTokens ?? 4000
+  const contextPct = Number(parsed?.contextUsagePercentageBySession?.[sessionId] ?? parsed?.contextUsagePercentage ?? 0) / 100
+  const totalInputEstimate = contextPct > 0 ? Math.floor(contextLength * contextPct) : 0
+  const hasNoTokenData = allLogs.every(({ log }) => {
+    const pl = typeof log.prompt === 'string' ? log.prompt.length : 0
+    const cl = typeof log.completion === 'string' ? log.completion.length : 0
+    return pl < 100 && cl === 0
+  })
+
+  for (const { log, index } of allLogs) {
+    const promptLen = typeof log.prompt === 'string' ? log.prompt.length : 0
+    const completionLen = typeof log.completion === 'string' ? log.completion.length : 0
+    let inputTokens: number
+    let outputTokens: number
+    if (hasNoTokenData) {
+      // Kiro does not record actual prompt/completion text; use heuristics
+      inputTokens = totalInputEstimate > 0 && allLogs.length > 0
+        ? Math.max(1, Math.floor(totalInputEstimate / allLogs.length))
+        : 200
+      outputTokens = Math.floor(maxTokens * 0.3)
+    } else {
+      inputTokens = totalInputEstimate > 0 && allLogs.length > 0
+        ? Math.max(1, Math.floor(totalInputEstimate / allLogs.length))
+        : Math.max(1, Math.floor(promptLen / CHARS_PER_TOKEN))
+      outputTokens = completionLen > 0
+        ? Math.floor(completionLen / CHARS_PER_TOKEN)
+        : Math.floor(maxTokens * 0.3)
+    }
+    if (inputTokens + outputTokens === 0) continue
+
+    const model = normalizeKiroModel(log.completionOptions?.model ?? log.modelTitle)
+    const provider = typeof log.provider === 'string' && log.provider.trim() ? log.provider.trim().toLowerCase() : inferProvider(model)
+    const recordTs = sessionTs + index
+    const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
+    const cost = calculateCost(model, tokenArgs, exchangeRate)
+    const sourceId = `${sessionId}:${index}`
+
+    records.push({
+      id: recordIdFor(options, `${filePath}:${sourceId}`, recordTs),
+      ts: recordTs,
+      ingestedAt: now,
+      updatedAt: now,
+      lineOffset: index,
+      tool: 'kiro',
+      model,
+      provider,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost,
+      costSource: cost > 0 ? 'pricing' : 'unknown',
+      sessionId,
+      sourceFile: filePath,
+      device,
+      deviceInstanceId,
+      platform,
+    })
+  }
+
+  return { records, errors }
+}
+
+export async function runParse(db: Database.Database, filterTool?: string, options?: { openCodeDbPath?: string; hermesDbPath?: string; qoderDbPath?: string; cursorDbPath?: string; onProgress?: (info: ProgressInfo) => void }): Promise<ParseResult> {
+  const state = getState(AIUSAGE_DIR)
+  const config = loadConfig()
+  const exchangeRate = resolveExchangeRate(config ?? {})
+  const device = config?.device || hostname() || state?.deviceInstanceId?.slice(0, 8) || 'unknown'
+  const deviceInstanceId = state?.deviceInstanceId ?? 'unknown'
+  const devicePlatform = config?.platform
+
+  // Rows parsed before this installation had a device id carry the 'unknown'
+  // sentinel, and their ids are built from it. They are relabelled before
+  // anything is read, and every record id below is built by
+  // recordIdsForReread, so a record read again is written to the row it is
+  // stored under instead of being stored a second time.
+  backfillUnknownDeviceInstanceId(db, deviceInstanceId, device)
+  const recordIds = recordIdsForReread(db, deviceInstanceId)
+  const recordId = recordIds.recordId
+
+  const watermarkPath = join(AIUSAGE_DIR, 'watermark.json')
+  const wm = new WatermarkManager(watermarkPath)
+  // Once per database: remove the rows the Kiro, Cursor transcript and
+  // CodeBuddy IDE importers used to add on every change of a source.
+  repairImporterDuplicates(db, wm)
+
+  const toolPaths = discoverLogFiles()
+  const aggregator = new Aggregator()
+
+  let parsedCount = 0
+  let toolCallCount = 0
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  const onProgress = options?.onProgress ?? (() => {})
+
+  for (const { tool, paths } of toolPaths) {
+    if (filterTool && tool !== filterTool) continue
+    const toolTotal = paths.length
+    let toolIndex = 0
+
+    for (const filePath of paths) {
+      toolIndex++
+      try {
+        const stat = statSync(filePath)
+        const entry = wm.getEntry(tool, filePath)
+        const offset = entry?.offset ?? 0
+
+        if (tool === 'antigravity' && filePath.endsWith('.db')) {
+          // Query from the row cursor even when the main file is unchanged because
+          // active Antigravity sessions can append usage through SQLite's WAL.
+          const antigravityDb = new Database(filePath, { readonly: true })
+          try {
+            const result = runParseAntigravity(antigravityDb, {
+              dbPath: filePath,
+              device,
+              deviceInstanceId,
+              recordId,
+              platform: devicePlatform,
+              now: Date.now(),
+              fallbackTs: stat.mtimeMs,
+              startIndex: entry && stat.size >= entry.size ? offset : 0,
+              exchangeRate,
+            })
+            for (const record of result.records) insertRecord(db, record)
+            parsedCount += result.records.length
+            errors.push(...result.errors.map((error) => `${filePath}: ${error}`))
+            wm.setEntry(tool, filePath, {
+              offset: result.nextIndex,
+              size: stat.size,
+              mtime: stat.mtimeMs,
+            })
+            wm.save()
+          } finally {
+            antigravityDb.close()
+          }
+          onProgress({ phase: 'Parsing SQLite', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        // Append-only logs are skipped once the watermark reached EOF. A Kelivo
+        // SQLite database is not append-only: SQLite rewrites pages in place and
+        // appends to its -wal without changing the main file's size, so the
+        // watermark's offset would hide every later message. Those files are
+        // re-read in full instead and deduplicated by record id.
+        // A Kiro token log that changed without growing was replaced; its
+        // branch below notices and reads it from the start. A shorter file
+        // is a replacement whatever its time says (a restored copy keeps it).
+        const kiroLogChanged = tool === 'kiro' && filePath.endsWith('.jsonl') && !!entry
+          && (entry.mtime !== stat.mtimeMs || stat.size < entry.size)
+        const skipUnchangedFile = !(tool === 'kelivo' && isKelivoDatabaseFile(filePath)) && !kiroLogChanged
+        if (skipUnchangedFile && offset >= stat.size) {
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue // No new data
+        }
+
+        if ((tool === 'roocode' || tool === 'kilocode') && filePath.endsWith('ui_messages.json')) {
+          const result = parseUiMessagesFile({
+            filePath,
+            tool,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            now: Date.now(),
+            exchangeRate,
+          })
+          for (const record of result.records) {
+            insertRecord(db, record)
+            parsedCount++
+          }
+          errors.push(...result.errors)
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        if (tool === 'codefuse' && basename(filePath).startsWith('ant_cc_') && filePath.endsWith('.json')) {
+          const result = parseCodeFuseSnapshotFile({
+            db,
+            filePath,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            now: Date.now(),
+            exchangeRate,
+          })
+          for (const record of result.records) {
+            insertRecord(db, record)
+            parsedCount++
+          }
+          errors.push(...result.errors)
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        if (tool === 'kiro' && filePath.endsWith('.json')) {
+          const result = parseKiroSessionFile({
+            filePath,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            now: Date.now(),
+            exchangeRate,
+          })
+          for (const record of result.records) {
+            insertRecord(db, record)
+            parsedCount++
+          }
+          errors.push(...result.errors)
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        if (tool === 'kiro' && filePath.endsWith('.jsonl')) {
+          const buffer = readFileSync(filePath)
+          // The log is append-only, so the part read last time is still there
+          // byte for byte. If it is not, the file was replaced: read it from
+          // the start.
+          const startOffset = offset > 0 && entry?.headFingerprint !== undefined
+            && entry.headFingerprint === prefixFingerprint(buffer, offset) ? offset : 0
+          const records: StatsRecord[] = []
+          let nextOffset = buffer.length
+          // Lines before the watermark are already stored.
+          for (let lineOffset = startOffset; lineOffset < buffer.length;) {
+            const newline = buffer.indexOf(0x0a, lineOffset)
+            const lineEnd = newline === -1 ? buffer.length : newline
+            const line = buffer.toString('utf-8', lineOffset, lineEnd)
+            const thisOffset = lineOffset
+            lineOffset = lineEnd + 1
+            if (!line.trim()) continue
+            try {
+              const data = JSON.parse(line)
+              const inputTokens = toNumber(data.promptTokens ?? data.inputTokens ?? data.tokensIn)
+              const outputTokens = toNumber(data.generatedTokens ?? data.outputTokens ?? data.tokensOut)
+              if (inputTokens + outputTokens === 0) continue
+              const model = normalizeKiroModel(data.model)
+              const provider = typeof data.provider === 'string' && data.provider.trim() ? data.provider.trim().toLowerCase() : inferProvider(model)
+              // The time of the request when the line records one; otherwise the
+              // file time, which is close to it now that a line is read only once.
+              const lineTs = parseTimestamp(data.timestamp ?? data.ts ?? data.time ?? data.createdAt, 0)
+              const recordTs = lineTs > 0 ? lineTs : stat.mtimeMs
+              const tokenArgs = { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
+              const cost = calculateCost(model, tokenArgs, exchangeRate)
+              const record: StatsRecord = {
+                // No time in the id: reading a line again replaces its record.
+                id: kiroLogLineId({ deviceInstanceId, recordId }, filePath, thisOffset, line),
+                ts: recordTs,
+                ingestedAt: Date.now(),
+                updatedAt: Date.now(),
+                lineOffset: thisOffset,
+                tool: 'kiro',
+                model,
+                provider,
+                inputTokens,
+                outputTokens,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                thinkingTokens: 0,
+                cost,
+                costSource: cost > 0 ? 'pricing' : 'unknown',
+                sessionId: filePath,
+                sourceFile: filePath,
+                device,
+                deviceInstanceId,
+                platform: devicePlatform,
+              }
+              records.push(record)
+            } catch {
+              // A last line without a newline that does not parse is still
+              // being written: leave it for the next parse.
+              if (newline === -1) nextOffset = thisOffset
+            }
+          }
+          // Each line also replaces the copies the old, time-based ids left of it.
+          replaceKiroLogLines(db, filePath, records)
+          parsedCount += records.length
+          wm.setEntry(tool, filePath, {
+            offset: nextOffset,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+            headFingerprint: prefixFingerprint(buffer, nextOffset) ?? undefined,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        if (tool === 'kelivo' && isKelivoSourceFile(filePath)) {
+          const result = await runParseKelivo({
+            filePath,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            now: Date.now(),
+            exchangeRate,
+          })
+          if (isKelivoDatabaseFile(filePath)) {
+            // A discovered live database is scanned repeatedly. Only changed
+            // rows count as newly parsed, and unchanged rows stay untouched.
+            parsedCount += insertChangedRecords(db, result.records)
+          } else {
+            // A backup selected again is still a user-visible import. Keep the
+            // record version and sync state, but advance its import timestamp.
+            const stampImport = db.prepare('UPDATE records SET ingested_at = ? WHERE id = ?')
+            for (const record of result.records) {
+              insertRecord(db, record)
+              stampImport.run(record.ingestedAt, record.id)
+              parsedCount++
+            }
+          }
+          errors.push(...result.errors)
+          warnings.push(...result.warnings)
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        // Cursor agent-transcript JSONL (fallback for PRIVACY_MODE_NO_STORAGE)
+        if (tool === 'cursor' && filePath.endsWith('.jsonl') && filePath.includes('agent-transcripts')) {
+          // The transcript is an estimate for conversations state.vscdb has no
+          // token counts for. One that is counted from there is not estimated
+          // as well, and an estimate stored for it earlier is dropped.
+          const countedFromDatabase = hasCursorDatabaseRecord(db, cursorTranscriptComposerId(filePath))
+          const est = countedFromDatabase ? { inputTextChars: 0, outputTextChars: 0 } : runParseCursorTranscript({
+            jsonlPath: filePath,
+            device,
+            deviceInstanceId,
+            platform: devicePlatform,
+            now: Date.now(),
+          })
+          if (countedFromDatabase) {
+            replaceSourceRecords(db, 'cursor', filePath, [])
+          } else if (est.inputTextChars + est.outputTextChars > 0) {
+            const sessionId = filePath.split('/').slice(-2, -1)[0] || 'unknown'
+            const recordTs = stat.mtimeMs
+            const tokenArgs = { inputTokens: est.inputTextChars, outputTokens: est.outputTextChars, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
+            const cost = calculateCost('cursor-composer', tokenArgs, exchangeRate)
+            const record: StatsRecord = {
+              // The file alone: one record per transcript, replaced when it grows.
+              id: recordId(filePath, 0),
+              ts: recordTs,
+              ingestedAt: Date.now(),
+              updatedAt: Date.now(),
+              lineOffset: 0,
+              tool: 'cursor',
+              model: 'cursor-composer',
+              provider: 'cursor',
+              inputTokens: est.inputTextChars,
+              outputTokens: est.outputTextChars,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              thinkingTokens: 0,
+              cost,
+              costSource: cost > 0 ? 'pricing' : 'unknown',
+              sessionId,
+              sourceFile: filePath,
+              device,
+              deviceInstanceId,
+              platform: devicePlatform,
+            }
+            // Also removes the estimates stored under the old, time-based ids.
+            // A transcript only grows: an estimate with less input or less
+            // output than the stored one means part of the file could not be
+            // parsed, and is not stored.
+            if (replaceSourceSnapshot(db, 'cursor', filePath, record, 'larger')) parsedCount++
+          }
+          wm.setEntry(tool, filePath, {
+            offset: stat.size,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+          wm.save()
+          onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+          continue
+        }
+
+        const content = readFileSync(filePath, 'utf-8')
+        const lines = content.split('\n')
+        let byteOffset = 0
+
+        // Extract cwd from the first line (Claude Code: top-level, Codex: payload.cwd)
+        let fileCwd: string | undefined
+        let firstData: any
+        try {
+          firstData = JSON.parse(lines[0])
+          fileCwd = extractCwdFromJson(firstData)
+        } catch {}
+
+        const sessionId = tool === 'codefuse' && typeof firstData?.sessionId === 'string' && firstData.sessionId
+          ? firstData.sessionId
+          : extractSessionId(filePath, tool)
+
+        // Written once the whole file is read, one write per record id. Claude
+        // Code logs one line per content block of a message and every line
+        // yields the message's record again, each time with that line's
+        // offset, timestamp and running usage; the last line holds the final
+        // values. Writing only that one means a file that is read again
+        // compares final state against final state, so an unchanged record
+        // keeps its updated_at and stays synced.
+        const pendingRecords = new Map<string, StatsRecord>()
+        const pendingToolCalls: Array<{ tc: ToolCallRecord; lineOffset: number }> = []
+        // A Claude Code log read from its start writes all of its tool calls
+        // again under block-keyed ids, so the row an earlier release stored
+        // for each of those calls under a positional id is removed with it.
+        // This is the cleanup half of the one-time re-import (the watermark's
+        // claudeCodeParserVersion gate resets every file to offset 0). It is
+        // tied to the calls a file actually yields rather than to that gate,
+        // so calls that cannot be read again (their log is gone) are kept,
+        // and a re-import that was interrupted finishes file by file.
+        const replacesPositionalToolCalls = tool === 'claude-code' && offset === 0
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+            continue
+          }
+
+          if (byteOffset < offset) {
+            // Still run through the parser to update stateful fields like currentModel,
+            // but discard results — we only emit records from the watermark onwards.
+            aggregator.parseLine(line, aggregator.createContext({
+              tool,
+              sourceFile: filePath,
+              lineOffset: byteOffset,
+              sessionId,
+              device,
+              deviceInstanceId,
+              recordId,
+              platform: devicePlatform,
+              exchangeRate,
+            }))
+            byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+            continue
+          }
+
+          const context = aggregator.createContext({
+            tool,
+            sourceFile: filePath,
+            lineOffset: byteOffset,
+            sessionId,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            exchangeRate,
+          })
+
+          const result = aggregator.parseLine(line, context)
+          if (result) {
+            if (result.record) {
+              pendingRecords.set(result.record.id, result.record)
+              parsedCount++
+            }
+
+            for (const tc of result.toolCalls) {
+              pendingToolCalls.push({ tc, lineOffset: byteOffset })
+              toolCallCount++
+            }
+          }
+
+          byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+        }
+
+        // One transaction: a positional row is deleted only together with
+        // the insert of the row that replaces it, and a CodeFuse snapshot
+        // record only together with the records of the log that replaces it.
+        db.transaction(() => {
+          if (tool === 'codefuse' && filePath.endsWith('.jsonl')) {
+            deleteCodeFuseSnapshotFallback(db, { deviceInstanceId, recordId }, sessionId)
+          }
+          // Where each record was stored under this file before this pass.
+          const storedLines = new Map<string, number>()
+          const storedLine = db.prepare('SELECT line_offset FROM records WHERE id = ? AND source_file = ?')
+          for (const pending of pendingRecords.values()) {
+            if (replacesPositionalToolCalls) {
+              const stored = storedLine.get(pending.id, filePath) as { line_offset: number } | undefined
+              if (stored) storedLines.set(pending.id, stored.line_offset)
+            }
+            const record = tool === 'claude-code' ? resolveClaudeCodeRecord(db, pending, filePath) : pending
+            if (!record) continue
+            // The cwd is part of the row as it is written, so a record this
+            // pass changes gets its new updated_at from insertRecord alone;
+            // the UPDATE below only reaches rows this pass did not write.
+            // A record stored under another transcript keeps that file's cwd.
+            insertRecord(db, fileCwd && !record.cwd && record.sourceFile === filePath ? { ...record, cwd: fileCwd } : record)
+          }
+          const toolCallExists = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
+          for (const { tc, lineOffset } of pendingToolCalls) {
+            if (replacesPositionalToolCalls) {
+              // An earlier release kept only the calls of the line its record
+              // was last written from, so an old row under another name (see
+              // deletePositionalCounterpart) is this call only when the record
+              // is still stored at this very line by such a release. Once
+              // this release has written the record from a line, that line's
+              // calls are stored under their block-keyed ids, and any old row
+              // still there was kept from somewhere else. That holds for this
+              // block wherever it was written from: a block already stored
+              // under its block-keyed id replaces nothing, so a log read in
+              // full again (a later one-time re-import) leaves alone an old
+              // row of another block with the same name, timestamp and index.
+              const storedByBlock = toolCallExists.get(tc.id) !== undefined
+              const fromStoredLine = storedLines.get(tc.recordId!) === lineOffset && !storedByBlock
+              if (!storedByBlock) deletePositionalCounterpart(db, tc, fromStoredLine)
+            }
+            if (tc.recordId) deleteAdoptedToolCall(db, tc, recordIds.copyOf(tc.recordId), filePath, lineOffset)
+            insertToolCall(db, tc)
+          }
+        })()
+
+        // Handle finalize (orphan tool calls for Codex, deduped fallback records for Copilot OTEL, etc.)
+        const orphanResults = aggregator.finalize()
+        for (const result of orphanResults) {
+          if (result.record) {
+            insertRecord(db, result.record)
+            parsedCount++
+          }
+          for (const tc of result.toolCalls) {
+            insertToolCall(db, tc)
+            toolCallCount++
+          }
+        }
+
+        // Write cwd for all records from this file that don't have it yet.
+        // Bump updated_at so a cwd added to already-synced records re-propagates.
+        if (fileCwd) {
+          db.prepare(`UPDATE records SET cwd = ?, updated_at = ? WHERE source_file = ? AND cwd = ''`).run(fileCwd, Date.now(), filePath)
+        }
+
+        wm.setEntry(tool, filePath, {
+          offset: stat.size,
+          size: stat.size,
+          mtime: stat.mtimeMs,
+        })
+        wm.save()
+        onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
+      } catch (e) {
+        errors.push(`${filePath}: ${e instanceof Error ? e.message : e}`)
+        // The pass did not reach finalize(), so the parsers may still hold
+        // state of this file (a Codex function call waiting for its usage
+        // line). Drop it so it is not attached to the next file.
+        try { aggregator.finalize() } catch {}
+      }
+    }
+  }
+
+  // OpenCode: SQLite database
+  const openCodeDbPath = options?.openCodeDbPath ?? getDbPath('opencode') ?? ''
+  if ((!filterTool || filterTool === 'opencode') && existsSync(openCodeDbPath)) {
+    try {
+      const openCodeDb = new Database(openCodeDbPath, { readonly: true })
+      try {
+        const ids = foldOnCompleteRead(recordIds)
+        const result = runParseOpenCode(openCodeDb, {
+          dbPath: openCodeDbPath,
+          device,
+          deviceInstanceId,
+          recordId: ids.recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getOpenCodeCursor(),
+          exchangeRate,
+        })
+
+        ids.foldCopies(completeRecordIds(result.records, result.incompleteToolCallRecordIds))
+        const stored = insertRecordsWithToolCalls(db, result.records, result.toolCalls, result.incompleteToolCallRecordIds)
+        if (result.nextCursor) {
+          wm.setOpenCodeCursor(result.nextCursor)
+          wm.save()
+        }
+        parsedCount += stored.records
+        toolCallCount += stored.toolCalls
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'opencode', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        openCodeDb.close()
+      }
+    } catch (e) {
+      errors.push(`${openCodeDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Hermes: SQLite database
+  const hermesDbPath = options?.hermesDbPath ?? getDbPath('hermes') ?? ''
+  if ((!filterTool || filterTool === 'hermes') && existsSync(hermesDbPath)) {
+    try {
+      const hermesDb = new Database(hermesDbPath, { readonly: true })
+      try {
+        const ids = foldOnCompleteRead(recordIds)
+        const result = runParseHermes(hermesDb, {
+          dbPath: hermesDbPath,
+          device,
+          deviceInstanceId,
+          recordId: ids.recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getHermesCursor(),
+          exchangeRate,
+        })
+
+        ids.foldCopies(completeRecordIds(result.records, result.incompleteToolCallRecordIds))
+        const stored = insertRecordsWithToolCalls(db, result.records, result.toolCalls, result.incompleteToolCallRecordIds)
+        if (result.nextCursor) {
+          wm.setHermesCursor(result.nextCursor)
+          wm.save()
+        }
+        parsedCount += stored.records
+        toolCallCount += stored.toolCalls
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'hermes', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        hermesDb.close()
+      }
+    } catch (e) {
+      errors.push(`${hermesDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Qoder: SQLite database (Mac/Linux/Windows desktop app)
+  const qoderDbPath = options?.qoderDbPath ?? getDbPath('qoder-db') ?? ''
+  if ((!filterTool || filterTool === 'qoder') && existsSync(qoderDbPath)) {
+    try {
+      const qoderDb = new Database(qoderDbPath, { readonly: true })
+      try {
+        const result = runParseQoder(qoderDb, {
+          dbPath: qoderDbPath,
+          device,
+          deviceInstanceId,
+          recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getQoderCursor(),
+          exchangeRate,
+        })
+
+        for (const record of result.records) insertRecord(db, record)
+        for (const tc of result.toolCalls) insertToolCall(db, tc)
+        if (result.nextCursor) {
+          wm.setQoderCursor(result.nextCursor)
+          wm.save()
+        }
+        parsedCount += result.records.length
+        toolCallCount += result.toolCalls.length
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'qoder', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        qoderDb.close()
+      }
+    } catch (e) {
+      errors.push(`${qoderDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Cursor: SQLite database (state.vscdb)
+  const cursorDbPath = options?.cursorDbPath ?? getDbPath('cursor') ?? ''
+  if ((!filterTool || filterTool === 'cursor') && existsSync(cursorDbPath)) {
+    try {
+      const cursorDb = new Database(cursorDbPath, { readonly: true })
+      try {
+        let cursorProgressFired = false
+        const ids = foldOnCompleteRead(recordIds)
+        const result = runParseCursor(cursorDb, {
+          dbPath: cursorDbPath,
+          device,
+          deviceInstanceId,
+          recordId: ids.recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getCursorCursor(),
+          onProgress: (current, total, recordsFound) => {
+            cursorProgressFired = true
+            onProgress({ phase: 'Parsing SQLite', tool: 'cursor', current, total, records: parsedCount + recordsFound, toolCalls: toolCallCount })
+          },
+        })
+
+        // A total that may be short never replaces a stored one: neither
+        // itself, nor through the copy of its record (see foldOnCompleteRead).
+        ids.foldCopies(result.records.map(record => record.id))
+        const hasRecord = db.prepare('SELECT 1 FROM records WHERE id = ?')
+        const partialRecords = result.partialRecords.filter((record) => !hasRecord.get(record.id))
+        // Every conversation is read on every run: only the records that are
+        // new or changed are written and counted.
+        parsedCount += insertChangedRecords(db, [...result.records, ...partialRecords])
+        for (const tc of result.toolCalls) insertToolCall(db, tc)
+        // Transcripts are read before this database: an estimate stored for a
+        // conversation that now has real token counts is superseded.
+        deleteCursorTranscriptEstimates(db, result.records.map((record) => record.sessionId))
+        if (result.nextCursor) {
+          wm.setCursorCursor(result.nextCursor)
+          wm.save()
+        }
+        toolCallCount += result.toolCalls.length
+        errors.push(...result.errors)
+        if (!cursorProgressFired) {
+          onProgress({ phase: 'Parsing SQLite', tool: 'cursor', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+        }
+      } finally {
+        cursorDb.close()
+      }
+    } catch (e) {
+      errors.push(`${cursorDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Kilo: SQLite database (new Kilo local storage)
+  const kiloDbPath = getDbPath('kilocode-db') ?? ''
+  if ((!filterTool || filterTool === 'kilocode') && existsSync(kiloDbPath)) {
+    try {
+      const kiloDb = new Database(kiloDbPath, { readonly: true })
+      try {
+        const result = runParseKilo(kiloDb, {
+          dbPath: kiloDbPath,
+          device,
+          deviceInstanceId,
+          recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getKiloCursor(),
+          exchangeRate,
+        })
+
+        // Messages kept pending are read again: only new or changed records
+        // are written and counted.
+        parsedCount += insertChangedRecords(db, result.records)
+        if (result.nextCursor) {
+          wm.setKiloCursor(result.nextCursor)
+          wm.save()
+        }
+
+        // 输出KiloCode统计信息
+        if (result.records.length > 0) {
+          const inputTokens = result.records.reduce((sum, r) => sum + r.inputTokens, 0)
+          const outputTokens = result.records.reduce((sum, r) => sum + r.outputTokens, 0)
+          const cacheReadTokens = result.records.reduce((sum, r) => sum + r.cacheReadTokens, 0)
+          const cacheWriteTokens = result.records.reduce((sum, r) => sum + r.cacheWriteTokens, 0)
+          const thinkingTokens = result.records.reduce((sum, r) => sum + r.thinkingTokens, 0)
+          const totalCost = result.records.reduce((sum, r) => sum + r.cost, 0)
+          console.log(`[KiloCode] Parsed ${result.records.length} records`)
+          console.log(`[KiloCode] Input: ${inputTokens.toLocaleString()}, Output: ${outputTokens.toLocaleString()}, CacheRead: ${cacheReadTokens.toLocaleString()}, CacheWrite: ${cacheWriteTokens.toLocaleString()}, Thinking: ${thinkingTokens.toLocaleString()}`)
+          console.log(`[KiloCode] Total Cost: ${totalCost.toFixed(4)} USD`)
+        }
+
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'kilocode', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        kiloDb.close()
+      }
+    } catch (e) {
+      errors.push(`${kiloDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Goose: SQLite sessions database
+  const gooseDbPath = getDbPath('goose') ?? ''
+  if ((!filterTool || filterTool === 'goose') && existsSync(gooseDbPath)) {
+    try {
+      const gooseDb = new Database(gooseDbPath, { readonly: true })
+      try {
+        const result = runParseGoose(gooseDb, {
+          dbPath: gooseDbPath,
+          device,
+          deviceInstanceId,
+          recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getGooseCursor(),
+          exchangeRate,
+          // A session is found again by its session id and keeps the time,
+          // and so the id, it was first stored under: both are built from its
+          // creation time, or from the time of the import when that cannot be
+          // read.
+          storedTime: storedSessionTime(db, 'goose', deviceInstanceId, gooseDbPath),
+        })
+        // Every session is read on every run: only the records that are new
+        // or changed are written and counted.
+        parsedCount += insertChangedRecords(db, result.records)
+        if (result.nextCursor) {
+          wm.setGooseCursor(result.nextCursor)
+          wm.save()
+        }
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'goose', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        gooseDb.close()
+      }
+    } catch (e) {
+      errors.push(`${gooseDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Kiro: tokens_generated or conversations_v2 SQLite data
+  const kiroDbPath = getDbPath('kiro') ?? ''
+  if ((!filterTool || filterTool === 'kiro') && pathIsFile(kiroDbPath)) {
+    try {
+      const kiroDb = new Database(kiroDbPath, { readonly: true })
+      try {
+        const result = runParseKiro(kiroDb, {
+          dbPath: kiroDbPath,
+          device,
+          deviceInstanceId,
+          recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getKiroCursor(),
+          exchangeRate,
+        })
+        for (const record of result.records) insertRecord(db, record)
+        if (result.nextCursor) {
+          wm.setKiroCursor(result.nextCursor)
+          wm.save()
+        }
+        parsedCount += result.records.length
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'kiro', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        kiroDb.close()
+      }
+    } catch (e) {
+      errors.push(`${kiroDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Zed: SQLite threads database. Currently imports JSON-encoded thread rows.
+  const zedDbPath = getDbPath('zed') ?? ''
+  if ((!filterTool || filterTool === 'zed') && existsSync(zedDbPath)) {
+    try {
+      const zedDb = new Database(zedDbPath, { readonly: true })
+      try {
+        const result = runParseZed(zedDb, {
+          dbPath: zedDbPath,
+          device,
+          deviceInstanceId,
+          recordId,
+          platform: devicePlatform,
+          now: Date.now(),
+          cursor: wm.getZedCursor(),
+          exchangeRate,
+        })
+        for (const record of result.records) insertRecord(db, record)
+        if (result.nextCursor) {
+          wm.setZedCursor(result.nextCursor)
+          wm.save()
+        }
+        parsedCount += result.records.length
+        errors.push(...result.errors)
+        onProgress({ phase: 'Parsing SQLite', tool: 'zed', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+      } finally {
+        zedDb.close()
+      }
+    } catch (e) {
+      errors.push(`${zedDbPath}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // ZCode: SQLite usage database (model_usage + tool_usage tables).
+  if (!filterTool || filterTool === 'zcode') {
+    const zcodeDbPath = getDbPath('zcode') ?? ''
+    if (existsSync(zcodeDbPath)) {
+      try {
+        const zcodeDb = new Database(zcodeDbPath, { readonly: true })
+        try {
+          const result = runParseZcode(zcodeDb, {
+            dbPath: zcodeDbPath,
+            device,
+            deviceInstanceId,
+            recordId,
+            platform: devicePlatform,
+            now: Date.now(),
+            cursor: wm.getZcodeCursor(),
+            toolCursor: wm.getZcodeToolCursor(),
+            exchangeRate,
+          })
+          for (const record of result.records) insertRecord(db, record)
+          for (const tc of result.toolCalls) insertToolCall(db, tc)
+          if (result.nextCursor) {
+            wm.setZcodeCursor(result.nextCursor)
+          }
+          if (result.nextToolCursor) {
+            wm.setZcodeToolCursor(result.nextToolCursor)
+          }
+          if (result.nextCursor || result.nextToolCursor) {
+            wm.save()
+          }
+          parsedCount += result.records.length
+          toolCallCount += result.toolCalls.length
+          errors.push(...result.errors)
+          onProgress({ phase: 'Parsing SQLite', tool: 'zcode', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+        } finally {
+          zcodeDb.close()
+        }
+      } catch (e) {
+        errors.push(`${zcodeDbPath}: ${e instanceof Error ? e.message : e}`)
+      }
+    }
+  }
+
+  // Trae: parse cursorDiskKV if present (Trae is a Cursor/VS Code fork).
+  // Trae/Cursor CN stores chat data in encrypted database.db; token counts are unavailable.
+  // Fall back to reading git tags from snapshot directories for session metadata.
+  const traeDbPath = getDbPath('trae') ?? ''
+  if ((!filterTool || filterTool === 'trae') && pathIsFile(traeDbPath)) {
+    const traeLastImported = wm.getTraeLastImported?.() ?? 0
+    const result = runParseTrae({
+      dbPath: traeDbPath,
+      device,
+      deviceInstanceId,
+      recordId,
+      platform: devicePlatform,
+      now: Date.now(),
+      lastImportedAt: traeLastImported,
+      // As for Goose: a session keeps the time, and so the id, it was first
+      // stored under.
+      storedTime: storedSessionTime(db, 'trae', deviceInstanceId, traeDbPath),
+    })
+    // Every session is emitted on every run: only the records that are new
+    // or changed are written and counted. A Trae tool call's id is built
+    // from everything stored for it, so one that is stored already is left
+    // as it is.
+    parsedCount += insertChangedRecords(db, result.records)
+    const hasToolCall = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
+    for (const tc of result.toolCalls) {
+      if (hasToolCall.get(tc.id)) continue
+      insertToolCall(db, tc)
+      toolCallCount++
+    }
+    errors.push(...result.errors)
+    if (result.lastImportedAt > traeLastImported) {
+      wm.setTraeLastImported?.(result.lastImportedAt)
+      wm.save()
+    }
+    onProgress({ phase: 'Parsing SQLite', tool: 'trae', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+  }
+
+  // CodeBuddy IDE: per-message JSON files under CodeBuddyExtension/Data.
+  const codeBuddyIdeDir = getDbPath('codebuddy-ide') ?? ''
+  if ((!filterTool || filterTool === 'codebuddy') && existsSync(codeBuddyIdeDir)) {
+    try {
+      const cbCursor = wm.getCodeBuddyIdeCursor()
+      const result = runParseCodeBuddy({
+        dataDir: codeBuddyIdeDir,
+        device,
+        deviceInstanceId,
+        recordId,
+        platform: devicePlatform,
+        now: Date.now(),
+        cursor: cbCursor,
+        exchangeRate,
+      })
+      // One record per conversation: a conversation imported again replaces
+      // its record, including one stored under the old, time-based id, unless
+      // what is stored is newer than what could be read.
+      for (const record of result.records) {
+        if (replaceSourceSnapshot(db, 'codebuddy', record.sourceFile, record, 'later')) parsedCount++
+      }
+      errors.push(...result.errors)
+      if (result.nextCursor > cbCursor) {
+        wm.setCodeBuddyIdeCursor(result.nextCursor)
+        wm.save()
+      }
+      onProgress({ phase: 'Parsing logs', tool: 'codebuddy', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+    } catch (e) {
+      errors.push(`${codeBuddyIdeDir}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  // Backfill platform for existing records that have an empty platform field.
+  if (devicePlatform) {
+    db.prepare(
+      `UPDATE records SET platform = ? WHERE platform = '' AND ${LOCAL_RECORDS_WHERE}`
+    ).run(devicePlatform)
+  }
+
+  // Backfill Hermes records that used a bare dbPath as source_file.
+  // Now we use "dbPath:session:<id>:<title>" for better project grouping.
+  backfillHermesSourceFiles(db)
+
+  // Backfill cwd for records parsed before this feature was added.
+  backfillCwd(db)
+
+  // Backfill legacy tool_calls with name='Skill' to extract the specific skill name.
+  // Historical rows were stored before the parser learned to read block.input.skill.
+  backfillSkillNames(db)
+
+  // Backfill Codex records whose model was stored as 'unknown' because the
+  // turn_context line was before the watermark when they were parsed.
+  backfillCodexModels(db)
+
+  // Backfill historical tool calls once. Records that legitimately have no tool calls
+  // remain unmatched, so rerunning this scan on every refresh would repeatedly parse
+  // every historical source file and can block the dashboard for minutes.
+  if (wm.getToolCallBackfillVersion() < CURRENT_TOOL_CALL_BACKFILL_VERSION) {
+    await backfillMissingToolCalls(db, exchangeRate)
+    wm.setToolCallBackfillVersion(CURRENT_TOOL_CALL_BACKFILL_VERSION)
+    wm.save()
+  }
+
+  return { parsedCount, toolCallCount, errors, warnings }
+}
+
+/**
+ * Backfill cwd for records parsed before cwd extraction existed.
+ * Reads only the first 2 KB of each source file — enough to find the cwd field.
+ *
+ * Bumps updated_at on every changed record so the enriched cwd propagates to
+ * other devices on the next sync. getUnsyncedRecords selects records where
+ * updated_at > synced_at, and mergeRecords only overwrites a remote record when
+ * the incoming updatedAt is strictly newer — so without this bump, backfilled
+ * cwd never reaches peers and cross-device project stats stay broken (issue #12).
+ */
+export function backfillCwd(db: Database.Database): void {
+  const staleFiles = db.prepare(
+    `SELECT DISTINCT source_file FROM records WHERE cwd = '' AND ${LOCAL_RECORDS_WHERE}`
+  ).all() as { source_file: string }[]
+  const updateStmt = db.prepare(
+    `UPDATE records SET cwd = ?, updated_at = ? WHERE source_file = ? AND cwd = ''`
+  )
+  for (const { source_file } of staleFiles) {
+    try {
+      const fd = openSync(source_file, 'r')
+      const buf = Buffer.alloc(2048)
+      const n = readSync(fd, buf, 0, 2048, 0)
+      closeSync(fd)
+      const firstLine = buf.subarray(0, n).toString('utf8').split('\n')[0]
+      const data = JSON.parse(firstLine)
+      const cwd = extractCwdFromJson(data)
+      if (cwd) {
+        updateStmt.run(cwd, Date.now(), source_file)
+      }
+    } catch {}
+  }
+}
+
+export function backfillHermesSourceFiles(db: Database.Database): void {
+  // Old hermes records used the bare dbPath as source_file.
+  // Update them to "dbPath:session:<id>:<title>" for per-session project grouping.
+  const rows = db.prepare(`
+    SELECT DISTINCT r.source_file, r.session_id
+    FROM records r
+    WHERE r.tool = 'hermes'
+      AND r.source_file NOT LIKE '%:session:%'
+      AND r.${LOCAL_RECORDS_WHERE}
+  `).all() as { source_file: string; session_id: string }[]
+
+  if (rows.length === 0) return
+
+  // Try to read session titles from the hermes DB
+  const dbPath = rows[0].source_file
+  let titleMap: Map<string, string> = new Map()
+  try {
+    if (existsSync(dbPath)) {
+      const hermesDb = new Database(dbPath, { readonly: true })
+      try {
+        const sessions = hermesDb.prepare(
+          `SELECT id, title FROM sessions WHERE title IS NOT NULL AND title != ''`
+        ).all() as { id: string; title: string }[]
+        for (const s of sessions) titleMap.set(s.id, s.title)
+      } finally {
+        hermesDb.close()
+      }
+    }
+  } catch {}
+
+  // Bump updated_at so the rewritten source_file propagates cross-device on the
+  // next sync (see backfillCwd for why the bump is required).
+  const updateStmt = db.prepare(`UPDATE records SET source_file = ?, updated_at = ? WHERE tool = 'hermes' AND session_id = ? AND source_file = ?`)
+  for (const row of rows) {
+    const title = (titleMap.get(row.session_id) || '').replace(/[/\\:]/g, '_').slice(0, 80)
+    const newSourceFile = title
+      ? `${row.source_file}:session:${row.session_id}:${title}`
+      : `${row.source_file}:session:${row.session_id}`
+    updateStmt.run(newSourceFile, Date.now(), row.session_id, row.source_file)
+  }
+}
+
+/**
+ * Decide what one pass over a Claude Code log writes for a message's record.
+ *
+ * Claude Code can copy a message into a second transcript (a resumed
+ * session), so the same record id can come from two files, and either file
+ * may hold more of the message's lines than the other. Each line carries its
+ * own timestamp and the usage so far, so the state of a message is ordered by
+ * timestamp and, between lines on one timestamp, by output tokens.
+ *
+ * - A pass never replaces the stored state with an earlier one.
+ * - While the file the record is stored under still exists, the record stays
+ *   with it: `source_file` and `line_offset` form the record's sync wire id,
+ *   and `session_id` its session. Letting each file claim the record in turn
+ *   would rewrite it twice on every re-import and queue an unchanged record
+ *   for upload. Another file's copy contributes only its content, when it
+ *   holds a later state, or the same state as the stored one: the same
+ *   model and usage, whose derived fields (the cost under current prices)
+ *   insertRecord then writes only if they differ.
+ *
+ * Returns the record to write, or null when nothing is to be written.
+ */
+function resolveClaudeCodeRecord(db: Database.Database, record: StatsRecord, filePath: string): StatsRecord | null {
+  const stored = db.prepare(
+    'SELECT ts, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, source_file, line_offset, session_id FROM records WHERE id = ?'
+  ).get(record.id) as { ts: number; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; thinking_tokens: number; source_file: string; line_offset: number; session_id: string } | undefined
+  if (!stored) return record
+  const order = record.ts !== stored.ts ? record.ts - stored.ts : record.outputTokens - stored.output_tokens
+  if (order < 0) return null
+  if (stored.source_file === filePath || !existsSync(stored.source_file)) return record
+  // On equal order only the stored state itself is written again; a line
+  // that differs from it in what it reports is neither earlier nor later.
+  if (order === 0 && (record.model !== stored.model || record.inputTokens !== stored.input_tokens
+    || record.cacheReadTokens !== stored.cache_read_tokens || record.cacheWriteTokens !== stored.cache_write_tokens
+    || record.thinkingTokens !== stored.thinking_tokens)) return null
+  return { ...record, sourceFile: stored.source_file, lineOffset: stored.line_offset, sessionId: stored.session_id }
+}
+
+function backfillSkillNames(db: Database.Database): void {
+  const rows = db.prepare(`
+    SELECT tc.id, tc.record_id, tc.name, tc.ts, tc.call_index,
+           r.tool, r.source_file, r.line_offset
+    FROM tool_calls tc
+    JOIN records r ON r.id = tc.record_id
+    WHERE (tc.name = 'Skill' OR tc.name = 'skill__unknown')
+      AND r.${LOCAL_RECORDS_WHERE}
+  `).all() as { id: string; record_id: string; name: string; ts: number; call_index: number; tool: Tool; source_file: string; line_offset: number }[]
+
+  if (rows.length === 0) return
+
+  const updateStmt = db.prepare('UPDATE tool_calls SET id = ?, name = ? WHERE id = ?')
+  const toolCallExists = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
+
+  for (const row of rows) {
+    // The parser no longer writes a Claude Code call under a positional id,
+    // so a row that is not under one was named by the current parser from
+    // its own block: there is nothing to backfill, and the lookup below does
+    // not apply to it. It finds a block by call_index in the record's line,
+    // which is the last line of the message and not necessarily the line the
+    // call came from, and it would move the row to a positional id. Rows
+    // still under a positional id were written by an earlier release, always
+    // from that last line.
+    if (row.tool === 'claude-code' && !hasPositionalToolCallId(row)) continue
+    try {
+      const fd = openSync(row.source_file, 'r')
+      const buf = Buffer.alloc(65536)
+      const n = readSync(fd, buf, 0, buf.length, row.line_offset)
+      closeSync(fd)
+
+      let lineEnd = 0
+      while (lineEnd < n && buf[lineEnd] !== 0x0a) lineEnd++
+      const line = buf.subarray(0, lineEnd).toString('utf8')
+
+      const parsed = JSON.parse(line)
+      if (!Array.isArray(parsed.message?.content)) continue
+
+      if (row.tool === 'claude-code') {
+        // An earlier release stored the call of the last line of its message,
+        // which is the line read here, unless the record has since moved: a
+        // call kept from a transcript that is gone stays with its record when
+        // another transcript takes the record over. Only a row that carries
+        // this line's timestamp is matched against this line's blocks, and
+        // (below) only a block that is not stored yet.
+        const rawTs = parsed.message.timestamp ?? parsed.timestamp
+        const lineTs = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+        if (lineTs !== row.ts) continue
+      }
+
+      let callIndex = 0
+      let skillArg = ''
+      let alreadyStored = false
+      for (const block of parsed.message.content) {
+        if (block.type !== 'tool_use') continue
+        if (callIndex === row.call_index) {
+          if (row.tool === 'claude-code') {
+            // A timestamp and an index do not identify a block: another
+            // block of the message can share both. When this release has
+            // read the line, the block found here is stored under its own
+            // id, and the row is a different call that was kept beside it.
+            const current = claudeCodeToolCall(block, row.record_id, row.ts, row.call_index)
+            alreadyStored = current !== null && toolCallExists.get(current.id) !== undefined
+          }
+          if (block.name === 'Skill') {
+            const raw = block.input?.skill ?? block.input?.skillName ?? block.input?.name ?? ''
+            skillArg = typeof raw === 'string' ? raw.trim() : ''
+          }
+          break
+        }
+        callIndex++
+      }
+      if (alreadyStored) continue
+
+      const storedName = skillArg ? `skill__${skillArg}` : 'skill__unknown'
+      const newId = generateToolCallId(row.record_id, storedName, row.ts, row.call_index)
+      updateStmt.run(newId, storedName, row.id)
+    } catch {
+      // File missing or line unreadable — leave this row as-is
+    }
+  }
+}
+
+function backfillCodexModels(db: Database.Database): void {
+  const rows = db.prepare(`
+    SELECT id, source_file, line_offset
+    FROM records
+    WHERE tool = 'codex' AND model = 'unknown'
+      AND ${LOCAL_RECORDS_WHERE}
+  `).all() as { id: string; source_file: string; line_offset: number }[]
+
+  if (rows.length === 0) return
+
+  // Group by source_file so we only read each file once
+  const byFile = new Map<string, typeof rows>()
+  for (const row of rows) {
+    const list = byFile.get(row.source_file) ?? []
+    list.push(row)
+    byFile.set(row.source_file, list)
+  }
+
+  const updateStmt = db.prepare(
+    `UPDATE records SET model = ?, provider = ?, cost = ?, cost_source = ?, updated_at = ? WHERE id = ?`
+  )
+
+  for (const [sourceFile, fileRows] of byFile) {
+    try {
+      const content = readFileSync(sourceFile, 'utf-8')
+      const lines = content.split('\n')
+
+      // Build a map: line_offset → model at that point in the file
+      const offsetToModel = new Map<number, string>()
+      let currentModel = ''
+      let byteOffset = 0
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const parsed = JSON.parse(line)
+            // track turn_context model
+            const turnModel = parsed.type === 'turn_context' ? parsed.payload?.model : undefined
+            if (turnModel) currentModel = turnModel
+            // record model at this offset if it's a token_count event
+            const payload = parsed.event_msg?.payload ?? (parsed.type === 'event_msg' ? parsed.payload : undefined)
+            if (payload?.type === 'token_count' && currentModel) {
+              offsetToModel.set(byteOffset, currentModel)
+            }
+          } catch {}
+        }
+        byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+      }
+
+      for (const row of fileRows) {
+        const model = offsetToModel.get(row.line_offset)
+        if (!model) continue
+        const provider = inferProvider(model)
+        updateStmt.run(model, provider, 0, 'unknown', Date.now(), row.id)
+      }
+    } catch {
+      // File missing or unreadable — skip
+    }
+  }
+}
+
+async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: number): Promise<void> {
+  const rows = db.prepare(`
+    SELECT r.id, r.source_file, r.tool, r.line_offset, r.session_id
+    FROM records r
+    LEFT JOIN tool_calls tc ON tc.record_id = r.id
+    WHERE r.tool IN ('codex', 'openclaw', 'qoder')
+      AND r.${LOCAL_RECORDS_WHERE}
+      AND tc.id IS NULL
+  `).all() as { id: string; source_file: string; tool: Tool; line_offset: number; session_id: string }[]
+
+  if (rows.length === 0) return
+
+  const rowsByFile = new Map<string, typeof rows>()
+  for (const row of rows) {
+    const list = rowsByFile.get(row.source_file) ?? []
+    list.push(row)
+    rowsByFile.set(row.source_file, list)
+  }
+
+  for (const [sourceFile, fileRows] of rowsByFile) {
+    try {
+      const content = readFileSync(sourceFile, 'utf-8')
+      const lines = content.split('\n')
+      const aggregator = new Aggregator()
+      const recordIdByOffset = new Map<number, string>()
+      const sessionIdByOffset = new Map<number, string>()
+      const tool = fileRows[0]?.tool
+      if (!tool) continue
+
+      for (const row of fileRows) {
+        recordIdByOffset.set(row.line_offset, row.id)
+        sessionIdByOffset.set(row.line_offset, row.session_id)
+      }
+
+      let byteOffset = 0
+      for (const line of lines) {
+        if (!line.trim()) {
+          byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+          continue
+        }
+
+        const context = aggregator.createContext({
+          tool,
+          sourceFile,
+          lineOffset: byteOffset,
+          sessionId: sessionIdByOffset.get(byteOffset) ?? deriveSessionId(tool, sourceFile),
+          device: '',
+          deviceInstanceId: '',
+          exchangeRate,
+        })
+        const result = aggregator.parseLine(line, context)
+        if (result?.toolCalls?.length) {
+          insertBackfilledToolCalls(db, result.toolCalls, tool, recordIdByOffset.get(byteOffset) ?? null)
+        }
+        byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+      }
+
+      const orphanResults = aggregator.finalize()
+      for (const result of orphanResults) {
+        if (result.toolCalls.length) insertBackfilledToolCalls(db, result.toolCalls, tool, null)
+      }
+    } catch {
+      // File missing or unreadable — skip
+    }
+    // The backfill can touch hundreds of files. Yield between them so an API server
+    // running in the same process can continue accepting requests during the one-time scan.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
+function insertBackfilledToolCalls(db: Database.Database, toolCalls: ToolCallRecord[], tool: Tool, actualRecordId: string | null): void {
+  for (const tc of toolCalls) {
+    if (actualRecordId) {
+      const name = tc.name
+      const id = generateToolCallId(actualRecordId, name, tc.ts, tc.callIndex)
+      const dup = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?').get(id)
+      if (!dup) insertToolCall(db, { ...tc, id, recordId: actualRecordId })
+      continue
+    }
+
+    const dup = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?').get(tc.id)
+    if (!dup) insertToolCall(db, { ...tc, tool } as ToolCallRecord)
+  }
+}
+
+function deriveSessionId(tool: Tool, sourceFile: string): string {
+  const normalized = sourceFile.replace(/\\/g, '/')
+  const fileName = normalized.split('/').pop() ?? sourceFile
+  if (tool === 'openclaw') return fileName.replace(/\.(trajectory\.)?jsonl$/, '')
+  if (tool === 'qoder') return normalized.split('/').slice(-2, -1)[0] ?? fileName.replace(/\.jsonl$/, '')
+  return fileName.replace(/\.jsonl$/, '')
+}

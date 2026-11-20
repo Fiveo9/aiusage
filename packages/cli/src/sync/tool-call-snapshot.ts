@@ -1,0 +1,66 @@
+import type Database from 'better-sqlite3'
+import type { SyncBackend } from './index.js'
+import { contentDigest } from './manifest.js'
+
+const fileName = 'tool-calls.v1.json'
+export const isToolCallPath = (path: string) => /^[^/]+\/tool-calls\.v1\.json$/.test(path)
+
+interface Call {
+  id: string; recordId: string | null; tool: string; name: string; ts: number; callIndex: number
+}
+
+function parseCalls(content: string, owner: string): Call[] {
+  const snapshot = JSON.parse(content)
+  if (snapshot?.version !== 1 || snapshot.owner !== owner || !Array.isArray(snapshot.calls)) {
+    throw new Error('Invalid tool call snapshot')
+  }
+  const ids = new Set<string>()
+  for (const call of snapshot.calls) {
+    if (!call || typeof call.id !== 'string' || !call.id || ids.has(call.id)
+      || !(call.recordId === null || typeof call.recordId === 'string' && call.recordId.length > 0)
+      || typeof call.tool !== 'string' || typeof call.name !== 'string'
+      || !Number.isSafeInteger(call.ts) || !Number.isSafeInteger(call.callIndex)) throw new Error('Invalid tool call entry')
+    ids.add(call.id)
+  }
+  return snapshot.calls
+}
+
+export async function syncToolCallSnapshots(db: Database.Database, backend: SyncBackend, target: string,
+  own: string, paths: string[], digests: Map<string, string> | undefined, wireIds: Map<string, string>): Promise<number> {
+  const listed = new Set(paths.filter(isToolCallPath))
+  const known = db.prepare('SELECT DISTINCT owner FROM synced_tool_calls WHERE target = ?').all(target) as { owner: string }[]
+  const owners = new Set([...known.map(row => row.owner), ...Array.from(listed, path => path.split('/')[0])])
+  owners.delete(own)
+  const clear = db.prepare('DELETE FROM synced_tool_calls WHERE target = ? AND owner = ?')
+  const insert = db.prepare(`INSERT INTO synced_tool_calls (target, owner, id, record_id, tool, name, ts, call_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  for (const owner of owners) {
+    const path = `${owner}/${fileName}`
+    const remote = await backend.readFile(path)
+    if (remote === null && listed.has(path)) throw new Error('Listed tool call snapshot is missing; retry sync')
+    const calls = remote === null ? [] : parseCalls(remote, owner)
+    db.transaction(() => {
+      clear.run(target, owner)
+      for (const call of calls) insert.run(target, owner, call.id, call.recordId, call.tool, call.name, call.ts, call.callIndex)
+    })()
+  }
+
+  const calls: Call[] = []
+  const local = db.prepare(`SELECT tc.id, tc.record_id AS recordId, COALESCE(r.tool, tc.tool, '') AS tool,
+      tc.name, tc.ts, tc.call_index AS callIndex FROM tool_calls tc LEFT JOIN records r ON r.id = tc.record_id
+      WHERE tc.record_id IS NULL OR (r.origin = 'local' AND r.device_instance_id = ?) ORDER BY tc.id`)
+  for (const row of local.iterate(own) as Iterable<Call>) {
+    if (row.recordId !== null) {
+      const wireId = wireIds.get(row.recordId)
+      if (!wireId) continue
+      row.recordId = wireId
+    }
+    calls.push(row)
+  }
+  const path = `${own}/${fileName}`
+  if (!calls.length && !listed.has(path)) return 0
+  const content = JSON.stringify({ version: 1, owner: own, calls })
+  if (digests?.get(path) === contentDigest(content) || (listed.has(path) && await backend.readFile(path) === content)) return 0
+  await backend.writeFile(path, content)
+  return 1
+}

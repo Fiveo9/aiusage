@@ -1,0 +1,236 @@
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
+
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
+}))
+
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  mkdir: vi.fn(),
+  readdir: vi.fn().mockResolvedValue([]),
+  stat: vi.fn().mockResolvedValue({}),
+}))
+
+// Keep the Windows empty global config out of the real ~/.aiusage.
+vi.mock('../../src/config.js', async importOriginal => {
+  const [{ mkdtempSync }, { tmpdir }, { join }] = await Promise.all([import('node:fs'), import('node:os'), import('node:path')])
+  return { ...await importOriginal<typeof import('../../src/config.js')>(), AIUSAGE_DIR: mkdtempSync(join(tmpdir(), 'aiusage-dir-')) }
+})
+
+import { execFile } from 'node:child_process'
+import { rmSync } from 'node:fs'
+import { AIUSAGE_DIR } from '../../src/config.js'
+const mockExecFile = vi.mocked(execFile)
+afterAll(() => rmSync(AIUSAGE_DIR, { recursive: true, force: true }))
+
+function gitResolves(stdout = '') {
+  mockExecFile.mockImplementationOnce((...args: any[]) => {
+    const cb = args[args.length - 1]
+    if (typeof cb === 'function') cb(null, { stdout })
+    return {} as any
+  })
+}
+
+function gitRejects(message: string, stderr?: string) {
+  mockExecFile.mockImplementationOnce((...args: any[]) => {
+    const cb = args[args.length - 1]
+    if (typeof cb === 'function') {
+      const err = Object.assign(new Error(message), { stderr: stderr ?? message })
+      cb(err, { stdout: '' })
+    }
+    return {} as any
+  })
+}
+
+describe('GitSyncBackend.flush', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('retries push after pull --rebase when rejected', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+
+    gitResolves('M data/x.ndjson') // status
+    gitResolves()                    // add
+    gitResolves()                    // commit
+    gitRejects('rejected')           // push 1 → fail
+    gitResolves()                    // pull --rebase
+    gitResolves()                    // push 2 → ok
+
+    const result = await backend.flush()
+    expect(result).toBe(true)
+
+    const pullCall = mockExecFile.mock.calls.find((c: any) =>
+      Array.isArray(c[1]) && c[1].includes('pull') && c[1].includes('--rebase')
+    )
+    expect(pullCall).toBeTruthy()
+  })
+
+  it('throws after max retries', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+
+    gitResolves('M data/x.ndjson') // status
+    gitResolves()                    // add
+    gitResolves()                    // commit
+    gitRejects('rejected')           // push 1
+    gitResolves()                    // pull --rebase 1
+    gitRejects('rejected')           // push 2
+    gitResolves()                    // pull --rebase 2
+    gitRejects('rejected')           // push 3
+
+    await expect(backend.flush()).rejects.toThrow('rejected')
+  })
+
+  it('pushes without retry on success', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+
+    gitResolves('M data/x.ndjson') // status
+    gitResolves()                    // add
+    gitResolves()                    // commit
+    gitResolves()                    // push → ok
+
+    const result = await backend.flush()
+    expect(result).toBe(true)
+    // No pull --rebase called
+    const pullCall = mockExecFile.mock.calls.find((c: any) =>
+      Array.isArray(c[1]) && c[1].includes('pull')
+    )
+    expect(pullCall).toBeUndefined()
+  })
+
+  it('returns false when no changes', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+
+    gitResolves('') // status → empty (no changes)
+
+    const result = await backend.flush()
+    expect(result).toBe(false)
+  })
+
+  it('strips token from error message and stderr when push fails after max retries', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'secret-token-abc', cacheDir: '/tmp/s' })
+    const tokenUrl = 'https://x-access-token:secret-token-abc@github.com/u/r.git'
+
+    gitResolves('M data/x.ndjson') // status
+    gitResolves()                    // add
+    gitResolves()                    // commit
+    gitRejects(`fatal: ${tokenUrl}: access denied`, `fatal: ${tokenUrl}: access denied`)
+    gitResolves()                    // pull --rebase 1
+    gitRejects(`fatal: ${tokenUrl}: access denied`, `fatal: ${tokenUrl}: access denied`)
+    gitResolves()                    // pull --rebase 2
+    gitRejects(`fatal: ${tokenUrl}: access denied`, `fatal: ${tokenUrl}: access denied`)
+
+    let thrown: unknown
+    try {
+      await backend.flush()
+    } catch (e) {
+      thrown = e
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    const err = thrown as any
+    expect(err.message).not.toContain('secret-token-abc')
+    expect(err.stderr).toBeUndefined()
+    expect(err.stdout).toBeUndefined()
+    expect(err.cause).toBeUndefined()
+    expect(err.stack).not.toContain('secret-token-abc')
+  })
+
+  it('surfaces the fatal line from git stderr for local commands', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+    gitRejects('Command failed: git status', "fatal: unable to access 'NUL': Invalid argument\n")
+    await expect(backend.flush()).rejects.toThrow(
+      "GitHub Git operation failed or was rejected (git status: fatal: unable to access 'NUL': Invalid argument). Check repository access, network connectivity, and Git identity.")
+  })
+
+  it('surfaces only a fixed phrase for network failures, never the token or server text', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'ghs_SecretToken123', cacheDir: '/tmp/s' })
+    const stderr = "remote: echoed ghs_SecretToken123\nfatal: unable to access 'https://x-access-token:ghs_SecretToken123@github.com/u/r.git/': The requested URL returned error: 403\n"
+    gitResolves('M data/x.ndjson'); gitResolves(); gitResolves()
+    gitRejects('push', stderr); gitResolves(); gitRejects('push', stderr); gitResolves(); gitRejects('push', stderr)
+    const error = await backend.flush().catch(e => e as Error)
+    expect(error.message).toBe('GitHub Git operation failed or was rejected (git push: HTTP 403). Check repository access, network connectivity, and Git identity.')
+  })
+
+  it('keeps unrecognized network failures generic', async () => {
+    const { readFile } = await import('node:fs/promises')
+    vi.mocked(readFile).mockResolvedValue('[remote "origin"]\nurl = https://github.com/u/r.git\n')
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'ghs_SecretToken123', cacheDir: '/tmp/s' })
+    gitResolves(); gitResolves()
+    gitRejects('fetch', "fatal: invalid server response; got 'Basic eC1hY2Nlc3MtdG9rZW46Z2hzX1NlY3JldFRva2VuMTIz'\n")
+    await expect(backend.prepare()).rejects.toThrow(/^GitHub Git operation failed or was rejected\. Check repository access/)
+  })
+
+  it('does not surface credential-helper configuration in errors', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s' })
+    gitRejects('status', "fatal: bad config value for 'credential.helper': !'node' -e 'if(process.argv[1]===\"get\")'\n")
+    const error = await backend.flush().catch(e => e as Error)
+    expect(error.message).toContain('(git status: fatal: credential helper failed)')
+    expect(error.message).not.toContain('process.argv')
+  })
+
+  it('uses custom branch name in push operations', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: '/tmp/s', branch: 'master' })
+
+    gitResolves('M data/x.ndjson') // status
+    gitResolves()                    // add
+    gitResolves()                    // commit
+    gitResolves()                    // push → ok
+
+    await backend.flush()
+
+    const pushCalls = mockExecFile.mock.calls.filter((c: any) =>
+      Array.isArray(c[1]) && c[1].includes('push')
+    )
+    expect(pushCalls.length).toBeGreaterThan(0)
+    for (const call of pushCalls) {
+      expect(call[1]).toContain('master')
+      expect(call[1]).not.toContain('main')
+    }
+  })
+
+  it('uses temporary credentials only for network operations and never in arguments', async () => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const getToken = vi.fn().mockResolvedValue('secret-from-keychain')
+    const backend = new GitSyncBackend({ repo: 'u/r', getToken, cacheDir: '/tmp/s' })
+    gitResolves('M data/x.ndjson'); gitResolves(); gitResolves(); gitResolves()
+    await backend.flush()
+    expect(getToken).toHaveBeenCalledTimes(1)
+    for (const call of mockExecFile.mock.calls as any[]) {
+      expect(JSON.stringify(call[1])).not.toContain('secret-from-keychain')
+      expect(JSON.stringify(call[1])).not.toContain('x-access-token:')
+      expect(call[2].env.AIUSAGE_GIT_CREDENTIAL).toBe(call[1].includes('push') ? 'secret-from-keychain' : undefined)
+    }
+  })
+
+  it('removes legacy authenticated remote URLs before fetching with current credentials', async () => {
+    const { readFile, writeFile } = await import('node:fs/promises')
+    vi.mocked(readFile).mockResolvedValue('[remote "origin"]\nurl = https://x-access-token:old-pat@github.com/u/r.git\npushurl = https://x-access-token:old-pat@github.com/u/r.git\n')
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'new-pat', cacheDir: '/tmp/s' })
+    gitResolves(); gitResolves(); gitResolves(); gitResolves()
+    await backend.prepare()
+    expect(vi.mocked(writeFile).mock.calls[0][1]).not.toContain('old-pat')
+    expect(vi.mocked(writeFile).mock.calls[0][1]).toContain('https://github.com/u/r.git')
+    expect(mockExecFile.mock.calls.find((c: any) => c[1].includes('fetch'))?.[1]).toContain('https://github.com/u/r.git')
+  })
+
+  it('does not fall back to clone when an existing repository fetch fails', async () => {
+    const { readFile } = await import('node:fs/promises')
+    vi.mocked(readFile).mockResolvedValue('[remote "origin"]\nurl = https://github.com/u/r.git\n')
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'secret', cacheDir: '/tmp/s' })
+    gitResolves(); gitResolves(); gitRejects('secret')
+    await expect(backend.prepare()).rejects.toThrow('GitHub Git operation')
+    expect(mockExecFile.mock.calls.some((c: any) => c[1].includes('clone'))).toBe(false)
+  })
+})

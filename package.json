@@ -1,0 +1,28 @@
+{
+  "name": "aiusage",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @juliantanx/aiusage build && pnpm --filter @juliantanx/aiusage-widget build",
+    "dev": "pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @juliantanx/aiusage dev",
+    "dev:widget": "pnpm --filter @aiusage/core build && pnpm --filter @juliantanx/aiusage-widget dev",
+    "start:widget": "pnpm --filter @juliantanx/aiusage-widget build && node packages/widget/bin/launcher.js",
+    "dev:site": "pnpm --filter @aiusage/site dev",
+    "cli": "pnpm --dir packages/cli cli",
+    "build:site": "pnpm --filter @aiusage/site build",
+    "db:migrate": "pnpm --filter @aiusage/site db:migrate",
+    "docker:site": "docker build -f packages/site/Dockerfile -t aiusage-site .",
+    "demo:db": "pnpm --dir packages/cli exec tsx scripts/generate-demo-db.ts",
+    "demo:api": "pnpm --dir packages/cli exec tsx scripts/serve-demo-api.ts",
+    "demo:gif": "node scripts/record-demo-gif.mjs",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "rebuild:sqlite": "node -e \"const path=require('path'),{execSync}=require('child_process'),dir=path.dirname(require.resolve('better-sqlite3/package.json',{paths:['packages/cli/node_modules','node_modules']}));execSync('npm run install',{cwd:dir,stdio:'inherit'})\"",
+    "pm2:start": "node packages/cli/dist/index.js pm2-start",
+    "pm2:stop": "pm2 stop ~/.aiusage/ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ~/.aiusage/ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 list",
+    "pm2:save": "pm2 save"
+  }
+}

@@ -1,0 +1,324 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import Database from 'better-sqlite3'
+import { initializeDatabase } from '../../src/db/index.js'
+import { SyncOrchestrator, getSyncPath } from '../../src/sync/index.js'
+import { getUnsyncedRecords } from '../../src/db/records.js'
+import { generateSyncRecordId } from '@aiusage/core'
+import type { SyncRecord } from '@aiusage/core'
+
+describe('SyncOrchestrator', () => {
+  let db: Database.Database
+  const mockBackend = {
+    readFile: vi.fn<(path: string) => Promise<string | null>>(),
+    writeFile: vi.fn<(path: string, content: string) => Promise<void>>(),
+    listFiles: vi.fn<() => Promise<string[]>>(),
+  }
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    initializeDatabase(db)
+    vi.clearAllMocks()
+  })
+
+  it('skips sync when consent is not verified', async () => {
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'device-123',
+      target: 'github:user/repo',
+      consentVerified: false,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.status).toBe('blocked_pending_consent')
+    expect(mockBackend.readFile).not.toHaveBeenCalled()
+  })
+
+  it('pulls records from remote', async () => {
+    const remoteRecord: SyncRecord = {
+      id: 'remote-1',
+      ts: 1776738085346,
+      tool: 'claude-code',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 200,
+      thinkingTokens: 0,
+      cost: 0.001,
+      costSource: 'pricing',
+      sessionKey: 'abc123',
+      device: 'other-device',
+      deviceInstanceId: 'device-456',
+      updatedAt: 1776738085700,
+    }
+
+    mockBackend.listFiles.mockResolvedValueOnce(['device-456/2026/05/13.ndjson'])
+    mockBackend.readFile.mockImplementation(async path => path === 'device-456/2026/05/13.ndjson' ? JSON.stringify(remoteRecord) + '\n' : null)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'device-123',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.pulledCount).toBe(1)
+
+    const synced = db.prepare('SELECT * FROM synced_records WHERE id = ?').get('remote-1')
+    expect(synced).not.toBeNull()
+  })
+
+  it('uploads unsynced local records', async () => {
+    db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r1', 1000, 1000, 1000, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run()
+
+    mockBackend.listFiles.mockResolvedValue([])
+    mockBackend.readFile.mockResolvedValue(null)
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.uploadedCount).toBe(1)
+    expect(mockBackend.writeFile).toHaveBeenCalled()
+    expect(mockBackend.writeFile.mock.calls[0][0]).toBe('di1/1970/01/01.ndjson')
+
+    // Verify the written content contains only the unsynced record
+    const written = mockBackend.writeFile.mock.calls[0][1] as string
+    const records = written.trim().split('\n').map((l: string) => JSON.parse(l))
+    expect(records).toHaveLength(1)
+    // Sync record ID is generated from deviceInstanceId + sourceFile + lineOffset
+    const expectedSyncId = generateSyncRecordId('di1', '/f1', 0)
+    expect(records[0].id).toBe(expectedSyncId)
+  })
+
+  it('acknowledges a record whose updated_at is ahead of the clock', async () => {
+    // A changed record is put above every earlier acknowledgement, which can
+    // be ahead of the wall clock after the clock was set back.
+    const ahead = Date.now() + 86_400_000
+    db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r1', 1000, 1000, ?, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run(ahead)
+
+    mockBackend.listFiles.mockResolvedValue([])
+    mockBackend.readFile.mockResolvedValue(null)
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    expect((await orchestrator.sync()).uploadedCount).toBe(1)
+    expect(getUnsyncedRecords(db, 'github:user/repo', 'di1')).toEqual([])
+    expect((await orchestrator.sync()).uploadedCount).toBe(0)
+  })
+
+  it('groups uploads by day per device', async () => {
+    // Two records on the same day but different hours → same file
+    db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r1', 1778634900000, 1000, 1000, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run()
+    db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r2', 1778640300000, 1000, 1000, 1, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run()
+
+    mockBackend.listFiles.mockResolvedValue([])
+    mockBackend.readFile.mockResolvedValue(null)
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.uploadedCount).toBe(2)
+    const dataWrites = mockBackend.writeFile.mock.calls.filter(c => c[0].endsWith('.ndjson'))
+    expect(dataWrites).toHaveLength(1)
+    expect(dataWrites[0][0]).toBe('di1/2026/05/13.ndjson')
+    // The namespace manifest follows the day files it describes.
+    expect(mockBackend.writeFile.mock.calls.map(c => c[0])).toEqual(['di1/2026/05/13.ndjson', 'di1/manifest.json'])
+  })
+
+  it('replaces its own namespace file with the local snapshot, dropping lines that no longer exist locally', async () => {
+    db.prepare("INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('local-1', 2000, 2000, 2000, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')").run()
+
+    // A line left behind by an earlier upload whose local record has since
+    // been deleted (or re-keyed). The namespace is authoritative, so it goes.
+    const previousRecord: SyncRecord = {
+      id: 'prev-1',
+      ts: 1000,
+      tool: 'claude-code',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 500,
+      outputTokens: 200,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost: 0.001,
+      costSource: 'pricing',
+      sessionKey: 'abc',
+      device: 'd1',
+      deviceInstanceId: 'di1',
+      updatedAt: 1000,
+    }
+
+    mockBackend.listFiles.mockResolvedValue(['di1/1970/01/01.ndjson'])
+    mockBackend.readFile.mockImplementation(async path => path === 'di1/1970/01/01.ndjson' ? JSON.stringify(previousRecord) + '\n' : null)
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.uploadedCount).toBe(1)
+    expect(result.retiredCount).toBe(1)
+
+    const dataWrites = mockBackend.writeFile.mock.calls.filter(c => c[0].endsWith('.ndjson'))
+    expect(dataWrites).toHaveLength(1)
+    const written = dataWrites[0][1] as string
+    const records = written.trim().split('\n').map((l: string) => JSON.parse(l))
+    expect(records).toHaveLength(1)
+    expect(records[0].id).toBe(generateSyncRecordId('di1', '/f1', 0))
+    expect(records.some((r: any) => r.id === 'prev-1')).toBe(false)
+  })
+
+  it('keeps newer record when local and remote have same sync id', async () => {
+    // generateSyncRecordId('di1', '/f1', 0) is deterministic
+    const syncId = generateSyncRecordId('di1', '/f1', 0)
+
+    // Local record with newer updatedAt
+    db.prepare(`INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('local-${syncId}', 2000, 2000, 3000, 0, 'claude-code', 'new-model', 'test', 's1', '/f1', 'd1', 'di1')`).run()
+
+    // Remote has same sync ID but older updatedAt
+    const remoteRecord: SyncRecord = {
+      id: syncId,
+      ts: 1000,
+      tool: 'claude-code',
+      model: 'old-model',
+      provider: 'test',
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost: 0.001,
+      costSource: 'pricing',
+      sessionKey: 'abc',
+      device: 'd1',
+      deviceInstanceId: 'di1',
+      updatedAt: 1000,
+    }
+
+    mockBackend.listFiles.mockResolvedValue(['di1/1970/01/01.ndjson'])
+    mockBackend.readFile.mockResolvedValue(JSON.stringify(remoteRecord) + '\n')
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    expect(result.uploadedCount).toBe(1)
+
+    // Verify the written content uses the local (newer) record
+    const written = mockBackend.writeFile.mock.calls[0][1] as string
+    const records = written.trim().split('\n').map((l: string) => JSON.parse(l))
+    expect(records).toHaveLength(1)
+    expect(records[0].model).toBe('new-model')
+    expect(records[0].updatedAt).toBe(3000)
+  })
+
+  it('skips own device files during pull', async () => {
+    const otherRecord: SyncRecord = {
+      id: 'other-1',
+      ts: 1000,
+      tool: 'claude-code',
+      model: 'test',
+      provider: 'test',
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost: 0.001,
+      costSource: 'pricing',
+      sessionKey: 'abc',
+      device: 'other',
+      deviceInstanceId: 'device-456',
+      updatedAt: 1000,
+    }
+
+    mockBackend.listFiles.mockResolvedValue([
+      'device-123/2026/05/13.ndjson',  // own device — should be skipped
+      'device-456/2026/05/13.ndjson',  // other device — should be read
+    ])
+    mockBackend.readFile.mockImplementation(async path => path === 'device-456/2026/05/13.ndjson' ? JSON.stringify(otherRecord) + '\n' : null)
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'device-123',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    // Pull reads the other device's manifest and file only; our own file is
+    // handled by the upload phase (compared against the local snapshot, then
+    // retired here).
+    const readsBeforeUpload = mockBackend.readFile.mock.calls.map(c => c[0]).slice(0, 2)
+    expect(readsBeforeUpload).toEqual(['device-456/manifest.json', 'device-456/2026/05/13.ndjson'])
+    expect(result.pulledCount).toBe(1)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM synced_records').get()).toEqual({ n: 1 })
+  })
+
+  it('derives a daily device-partitioned sync path from timestamps', () => {
+    expect(getSyncPath(1778664420000, 'device-abc')).toBe('device-abc/2026/05/13.ndjson')
+  })
+
+  it('counts already-existing remote records when local rows are marked synced', async () => {
+    const syncId = generateSyncRecordId('di1', '/f1', 0)
+
+    db.prepare(`INSERT INTO records (id, ts, ingested_at, updated_at, line_offset, tool, model, provider, session_id, source_file, device, device_instance_id) VALUES ('r1', 2000, 2000, 1000, 0, 'claude-code', 'test', 'test', 's1', '/f1', 'd1', 'di1')`).run()
+
+    // Remote already has the same record with the same updatedAt (not newer)
+    const remoteRecord: SyncRecord = {
+      id: syncId,
+      ts: 1000,
+      tool: 'claude-code',
+      model: 'test',
+      provider: 'test',
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      thinkingTokens: 0,
+      cost: 0.001,
+      costSource: 'pricing',
+      sessionKey: 'abc',
+      device: 'd1',
+      deviceInstanceId: 'di1',
+      updatedAt: 1000,
+    }
+
+    mockBackend.listFiles.mockResolvedValue(['di1/1970/01/01.ndjson'])
+    mockBackend.readFile.mockResolvedValue(JSON.stringify(remoteRecord) + '\n')
+    mockBackend.writeFile.mockResolvedValue(undefined)
+
+    const orchestrator = new SyncOrchestrator(db, mockBackend as any, {
+      deviceInstanceId: 'di1',
+      target: 'github:user/repo',
+      consentVerified: true,
+    })
+
+    const result = await orchestrator.sync()
+    // The local row was still processed successfully and marked as synced.
+    expect(result.uploadedCount).toBe(1)
+  })
+})

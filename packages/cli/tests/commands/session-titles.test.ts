@@ -50,6 +50,30 @@ function file(name: string, content: string): string {
 }
 
 describe('stored session titles', () => {
+  it.each([10, 9000])('fills a legacy merged title when its usage version is %s without rewriting usage', version => {
+    const sync = mapStatsRecordToSyncRecord(record({ sessionTitle: '已同步的真实标题' }))
+    insertSyncedRecord(db, sync)
+    mergeSyncedRecordsIntoRecords(db, 'receiver')
+    db.prepare("UPDATE records SET session_title = '', updated_at = ?, cost = 9 WHERE id = ?").run(version, sync.id)
+    mergeSyncedRecordsIntoRecords(db, 'receiver')
+    expect(getSessionTitle(db, sync.sessionKey, 'device-a')).toBe('已同步的真实标题')
+    expect(getRecordById(db, sync.id)).toMatchObject({ sessionTitle: '已同步的真实标题', inputTokens: 100, cost: 9, updatedAt: version })
+  })
+
+  it('does not repair local/own records from remote metadata or erase titles from an empty payload', () => {
+    const sync = mapStatsRecordToSyncRecord(record({ sessionTitle: '远端标题' }))
+    insertSyncedRecord(db, sync)
+    insertRecord(db, record({ id: sync.id, sessionTitle: '本机标题', origin: 'local' }))
+    mergeSyncedRecordsIntoRecords(db, 'receiver')
+    expect(getRecordById(db, sync.id)?.sessionTitle).toBe('本机标题')
+    db.prepare("UPDATE records SET origin = 'synced', session_title = '本设备副本' WHERE id = ?").run(sync.id)
+    mergeSyncedRecordsIntoRecords(db, 'device-a')
+    expect(getRecordById(db, sync.id)?.sessionTitle).toBe('本设备副本')
+    db.prepare("UPDATE synced_records SET session_title = '' WHERE id = ?").run(sync.id)
+    mergeSyncedRecordsIntoRecords(db, 'receiver')
+    expect(getRecordById(db, sync.id)?.sessionTitle).toBe('本设备副本')
+  })
+
   it('creates the schema and remains idempotent', () => {
     insertRecord(db, record())
     runMigrations(db)

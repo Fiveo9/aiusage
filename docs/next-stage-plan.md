@@ -2,7 +2,7 @@
 
 日期：2026-11-20。按用户授权依次实施以下三项，每项完成定向验证与只读 review 后单独提交，不自动推送或发布。
 
-当前验收状态：三项功能已提交，并于 2026-11-20 补齐本机根构建、site 构建、Linux 六步构建及五包全量回归；最终 1,926 通过、0 失败、1 项 Windows 专属用例在 Linux 跳过。各阶段下方保留其当时验证边界，最新结果见文末「构建与 Linux 全量补验」。
+当前验收状态：此前构建与 Linux 全量回归通过，但用户随后复现会话页直达 Loading/按钮禁用和全部未命名，不能据此前结果判定完整 UI 验收通过。冷启动已复现并修复，生产 Web 的真实 Chromium 11 项场景通过；另修复已同步标题被旧合并副本隐藏的兼容问题。用户实际数据全部未命名的来源尚待定位，不能表述为已全面解决。历史构建结果与本次缺陷补验分别保留如下。
 
 ## 执行约束
 
@@ -135,3 +135,37 @@ node packages/site/node_modules/vitest/vitest.mjs run --config .artifacts/next-s
 备份位于 `backups/next-stage-full-20261120/`。本机隔离 home/tmp、回收内容及旧构建产物经路径/链接检查移入 `backups/build-recycle/`，可恢复。远程实例和失败运行保留，依赖实例自动挂起；没有物理删除、销毁实例、推送或发布。
 
 剩余边界：本轮没有人工浏览器/Electron GUI 验收、Linux Electron 原生模块重编译、真实用户日志导入/云同步、独立 PostgreSQL 服务或 Docker 镜像重验。站点迁移测试使用 PGlite，不表述为独立 PostgreSQL 部署验收。
+
+## 会话页冷启动与标题兼容修复（2026-11-20）
+
+用户反馈：直接打开会话页停在 Loading，搜索按钮禁用；API 返回 200，从费用页站内进入正常，同时会话全部显示未命名。
+
+### 根因与修复
+
+- 生产 Web + 隔离 Electron Chromium 复现：鉴权请求延迟返回后，会话页才挂载；当前 SvelteKit `afterNavigate` 注册不会补发已完成的初始导航。页面只在导航回调初始化，因此 `ready=false`、无会话请求；费用页站内导航正常。现改为挂载时读取当前 URL 初始化，导航时更新，并按 URL 去重；相同查询再次提交仍可刷新。
+- 标题合成回归复现：`synced_records` 已有标题，但旧版 `records` 合并副本标题为空且版本相同或更高，原合并条件不会复制标题，标题视图又优先使用合并副本。现独立更新同步副本的非空标题，不改 Token、费用、记录版本，不触及本地记录/本设备副本，也不以空载荷清除已有标题。
+- 以上标题缺陷有失败证据，但没有读取用户实际数据库或确认其来源，不认定它解释了所有未命名。当前标题采集只支持已实现的 Codex、Claude Code、OpenCode/Kilo、Hermes 元数据；接收端无法从缺少标题的同步载荷恢复真实标题，需进一步确认受影响工具、导入/同步来源及 API 是否含非空 `sessionTitle`，无需提供标题、会话 ID 或正文。
+
+### 验证
+
+- 修复前浏览器结果：`.artifacts/sessions-browser/before-fix/result.json`。直达卡住、未发会话请求、API 200、站内导航成功均复现。
+- 修复前标题用例：`title-before.log` 中 2 项失败（标题 undefined）；修复后 `title-final.log` 中 14/14 通过。Web 导航/分页/标题 17 项、会话搜索 9 项、同步记录 3 项也通过；合计 43 项定向回归（不含重复运行）。
+- 修复后生产 Web 的 Chromium 检查：`.artifacts/sessions-browser/after-fix-final/result.json`，11 项通过，零浏览器控制台错误。覆盖延迟/即时鉴权直达、首次仅一个会话请求、真实标题与未命名区分、带搜索排序 URL 直达、刷新、搜索提交、后退恢复、站内导航、登录后挂载。API 为合成响应；不等同于真实来源端到端验收。
+- 首次修复后浏览器执行前八项通过，但测试脚本关闭旧窗口触发 Electron 默认退出，登录场景未运行；补上显式窗口生命周期后完整重跑通过，失败证据保留于 `after-fix/result.json`。
+- 本机 Web/CLI 生产构建、CLI TypeScript 检查均退出 0，日志为 `web-build.log`、`cli-build.log`。浏览器入口为 `scripts/check-sessions-browser.cjs`，使用 workspace Electron，隐藏窗口、独立 profile、合成 API、本机随机端口，结束后服务关闭。
+- 只读 review 覆盖挂载/导航去重、相同查询刷新、卸载失效、同步元数据隔离、旧载荷保护与浏览器测试生命周期。没有把旧的 HTTP package smoke 视作完整浏览器 UI 验收。
+
+备份：`backups/sessions-ui-20261120/`。未读取或更改真实会话数据、同步同意或凭据，未推送或发布。上轮打包脚本改动继续独立保留。
+
+最终浏览器命令（根目录，使用已构建 Web）：
+
+```powershell
+$env:AIUSAGE_UI_EXPECT_BUG='0'; $env:AIUSAGE_UI_RUN='after-fix-final'
+node -e 'const {spawn}=require("node:child_process");const c=spawn(require("./packages/widget/node_modules/electron"),["scripts/check-sessions-browser.cjs"],{stdio:"inherit",windowsHide:true});c.on("exit",code=>process.exit(code??1));'
+```
+
+远程修复包命令：`pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task build -Target linux -Scope package -Machine linux-01 -ResumeMachine -ReuseRunId 20261120T022055Z-76646039`。runId `20261120T045848Z-c86ae7da`，本地/远程 exit 0，core/Web/CLI 构建和 17 项解压运行检查通过。未在本轮重跑 Linux 全量套件；浏览器检查是本机 Chromium + 同一源码的生产 Web，不宣称 Linux 真实用户数据已验收。
+
+替换包：`.artifacts/remote-check/20261120T045848Z-c86ae7da/aiusage-1.5.28-linux-x64-node22-20261120T045848Z-c86ae7da.tar.gz`，9,355,071 字节，SHA256 `631687b8e900501b75270a3358d7729678e15abcf4ba0c23ad96272991f98c5e`；下载后校验一致。旧包 `20261120T022055Z-76646039` 仍保留但含已确认的冷启动缺陷，应使用本次替换包。
+
+本轮浏览器 profile、隔离 home/tmp、合成标题夹具与回收内容经路径/链接检查移入 `backups/build-recycle/`，可恢复；结果 JSON、测试/构建日志与新旧包保留。

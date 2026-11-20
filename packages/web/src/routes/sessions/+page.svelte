@@ -1,7 +1,8 @@
 <script>
   import '$lib/activity.css'
   import { afterNavigate, goto } from '$app/navigation'
-  import { onDestroy } from 'svelte'
+  import { page as currentPage } from '$app/stores'
+  import { onDestroy, onMount } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, formatTokens, formatCost, formatDateTime, formatNumber } from '$lib/stores.js'
   import { fetchSessions, sessionDetailUrl } from '$lib/api.js'
   import { createRequestTracker, resolvePage } from '$lib/sessions-paging.js'
@@ -23,10 +24,14 @@
   let state = null
   let filterKey = ''
   let ready = false
+  let lastUrl = ''
 
-  afterNavigate(({ to }) => {
-    if (!to || to.url.pathname !== '/sessions') return
-    state = readSessionQuery(to.url.searchParams, { ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+  function initializeFromUrl(url) {
+    if (url.pathname !== '/sessions') return
+    const key = url.pathname + url.search
+    if (ready && key === lastUrl) return
+    lastUrl = key
+    state = readSessionQuery(url.searchParams, { ...$dateRange, device: $selectedDevice, tool: $selectedTool })
     const range = state.from && state.to ? { from: state.from, to: state.to, month: state.month } : { range: state.range }
     filterKey = sessionFilterKey(range, state.device, state.tool)
     dateRange.set(range)
@@ -36,15 +41,21 @@
     sort = state.sort
     page = state.page
     ready = true
-    if (to.url.pathname + to.url.search !== sessionListUrl(state)) {
+    if (key !== sessionListUrl(state)) {
       navigate(state, true)
       return
     }
     loadData(state)
-  })
+  }
+
+  // Auth can mount this page after the router's initial navigation notification.
+  // Always initialize on mount; deduplicate the subsequent navigation callback.
+  onMount(() => initializeFromUrl($currentPage.url))
+  afterNavigate(({ to }) => { if (to) initializeFromUrl(to.url) })
   onDestroy(() => { ready = false; beginRequest() })
 
   function navigate(next, replaceState = false) {
+    if (sessionListUrl(next) === lastUrl) return loadData(next)
     beginRequest()
     return goto(sessionListUrl(next), { keepFocus: true, noScroll: true, replaceState })
   }

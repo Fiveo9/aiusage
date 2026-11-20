@@ -553,6 +553,17 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
       ${ownFilter}
   `).run(params)
 
+  // Older receivers can already have this usage version but no title column
+  // value. Repair metadata independently: a local reprice may have advanced
+  // the merged copy's version/cost, neither of which a title repair should undo.
+  db.prepare(`
+    UPDATE records SET session_title = sr.session_title
+    FROM synced_records sr
+    WHERE sr.id = records.id AND records.origin = 'synced'
+      AND sr.session_title != '' AND records.session_title != sr.session_title
+      ${ownFilter}
+  `).run(params)
+
   const newRows = db.prepare(`
     SELECT sr.* FROM synced_records sr
     LEFT JOIN records r ON sr.id = r.id

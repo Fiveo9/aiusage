@@ -42,7 +42,16 @@
 - 保持日期、设备和工具筛选，搜索/排序变化重置分页；URL 保存搜索、排序和页码，支持刷新与浏览器返回。
 - 参数校验、总数/分页一致性、跨设备隔离、无标题搜索、排序与迟到响应有定向回归。
 
-状态：待实施。提交：待记录。
+状态：已完成验证与只读 review，随本阶段提交。提交标题：`feat(sessions): 新增会话搜索与稳定排序`。
+
+本机验证：
+
+- `node packages/cli/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/cli.config.ts tests/api/session-search.test.ts tests/api/sessions-endpoints.test.ts tests/commands/session-titles.test.ts`：49/49，退出 0。
+- `node packages/web/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/web.config.ts tests/sessions-page-reset.test.ts tests/sessions-paging.test.ts tests/session-title.test.ts tests/api.test.ts`：25/25，退出 0。
+- CLI `tsc --noEmit` 退出 0；两个会话 Svelte 页面 DOM/SSR 编译零警告；`git diff --check` 通过。日志：`.artifacts/next-stage/s2-*`。
+- 只读 review：搜索为绑定参数的字面子串匹配，作用于会话聚合后、分页前；最新非空标题与显示一致，不因日期窗口而丢失。费用和 Token 汇总保留全部符合筛选的记录；Token 排序按项目既有存储口径包含独立的 thinking。最近活动按最后记录时间排序，所有排序均以会话 ID/设备 ID 打破平局。URL 保存筛选、搜索、排序、页码，返回链接限于会话列表；迟到响应与卸载后的响应不会写入页面状态。
+- S3 衔接检查发现初版 S2 Token 排序漏加独立存储的 thinking 字段；对照既有 token-composition 回归确认后补齐，并增加仅 reasoning 用量改变排序的用例。9 项搜索回归重新通过，修订本轮未推送的 S2 提交。
+- 边界：已覆盖实际 SQLite/HTTP 及页面脚本导航回调，未进行人工浏览器验收；搜索支持中文原文及 ASCII 大小写折叠，不宣称任意语言的大小写归一化。
 
 ## S3 费用来源与未计价提示
 
@@ -60,3 +69,5 @@
 ## 交付记录
 
 计划已先于本轮实现写入。各阶段的实际验证、review 和提交记录在完成时追加。
+
+- S1 提交：`e6d4d50`。

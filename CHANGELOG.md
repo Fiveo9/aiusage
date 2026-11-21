@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Sessions stuck on direct entry** — Initialize from the current URL when the page mounts after the authentication check, even if it missed the router's initial notification. Keep navigation updates and deduplicate initial requests. Production-web Chromium checks cover direct entry, reload, search, back navigation and login.
+- **Titles hidden by legacy synced copies** — Refresh nonempty titles on merged synced records even when their usage version is equal or ahead, without rewriting tokens, cost or versions. Missing source titles still require diagnosis; this does not manufacture names for untitled sessions.
+
 ### Added
 - **Cost provenance and unpriced models** — Cost now shows logged versus estimated costs, known-cost record coverage and a full-name list of unpriced models with a pricing-management link. Known zero costs remain distinct from missing prices. Counts follow the same date/tool/device filters and deduplication as existing totals; stale filter responses are ignored. Logged costs are not presented as actual bills.
 - **Session search and sorting** — Search saved titles or session IDs across all matching sessions before pagination. Sort by latest activity, highest cost or most tokens with deterministic ties. Search, filters, sorting and page are preserved in URLs and detail back links; late responses cannot overwrite a newer navigation.

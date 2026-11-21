@@ -39,14 +39,9 @@
   $: $dateRange, $selectedDevice, $selectedTool, loadData()
   $: modelCosts = groupModelCosts(data?.byModel || {}, $modelDisplayMode)
   $: days = data?.data || []
-  $: totalCost = getTotalCost()
+  $: totalCost = days.reduce((sum, d) => sum + (d.cost || 0), 0)
   $: dailyAvg = days.length ? totalCost / days.length : 0
   $: peakDay = getPeakDay(days)
-
-  function getTotalCost() {
-    if (!data?.data.length) return 0
-    return data.data.reduce((sum, d) => sum + d.cost, 0)
-  }
 
   function getPeakDay(list) {
     if (!list?.length) return null

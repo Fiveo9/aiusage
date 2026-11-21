@@ -26,38 +26,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Set version from tag
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          elif [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION=$(node -p "require('./packages/cli/package.json').version")
-          fi
-          echo "Publishing version: $VERSION"
-          # Update version in all package.json files
-          node -e "
-            const fs = require('fs');
-            ['packages/core/package.json', 'packages/cli/package.json', 'packages/widget/package.json'].forEach(f => {
-              const pkg = JSON.parse(fs.readFileSync(f, 'utf-8'));
-              pkg.version = '$VERSION';
-              fs.writeFileSync(f, JSON.stringify(pkg, null, 2) + '\n');
-            });
-          "
+      - name: Set package versions
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: node scripts/set-release-version.mjs
 
       - name: Build
         run: pnpm build
 
       - name: Publish CLI to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
           VERSION=$(node -p "require('./packages/cli/package.json').version")
           if npm view "@fiveo9/aiusage@${VERSION}" version >/dev/null 2>&1; then
             echo "@fiveo9/aiusage@${VERSION} already exists; skipping."
@@ -66,8 +53,9 @@ jobs:
           fi
 
       - name: Publish Widget to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
           VERSION=$(node -p "require('./packages/widget/package.json').version")
           if npm view "@fiveo9/aiusage-widget@${VERSION}" version >/dev/null 2>&1; then
             echo "@fiveo9/aiusage-widget@${VERSION} already exists; skipping."

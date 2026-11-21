@@ -10,7 +10,7 @@ const attempt = process.env.AIUSAGE_CHECK_ATTEMPT
 if (attempt && !/^\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(attempt)) throw Error('Invalid attempt ID')
 const results = attempt ? join(root, 'attempts', attempt) : join(root, 'results')
 const [task, scope] = process.argv.slice(2)
-if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres'].includes(scope)) throw Error('Invalid task/scope')
+if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres', 'docker'].includes(scope)) throw Error('Invalid task/scope')
 mkdirSync(results, { recursive: true })
 const summary = { task, scope, status: 'running', category: 'source-integrity', exitCode: null, steps: [], tests: { passed: 0, failed: 0, skipped: 0, total: 0 }, node: process.version }
 const save = () => writeFileSync(join(results, 'summary.json'), JSON.stringify(summary, null, 2))
@@ -115,6 +115,16 @@ try {
     const pgResult = JSON.parse(readFileSync(join(results, 'postgres-result.json'), 'utf8'))
     if (pgResult.status !== 'passed' || !pgResult.stopped) throw Error('PostgreSQL acceptance incomplete')
     summary.integrationAssertions = pgResult.assertions
+  } else if (scope === 'docker') {
+    try {
+      await step('docker-acceptance', process.execPath, ['scripts/remote-check-docker.mjs'], 'container-integration')
+      const result = JSON.parse(readFileSync(join(results, 'docker-result.json'), 'utf8'))
+      if (result.status !== 'passed' || !result.stopped) throw Error('Container acceptance incomplete')
+      summary.integrationAssertions = result.assertions
+    } finally {
+      summary.evidenceFiles = ['docker-result.json', 'docker-cli-build.log', 'docker-site-build.log', 'docker-cli-runtime.log', 'docker-site-runtime.log', 'docker-pg-runtime.log'].filter(file => existsSync(join(results, file)))
+      save()
+    }
   } else if (task === 'test') {
     if (scope === 'full') {
       const failedPackages = []

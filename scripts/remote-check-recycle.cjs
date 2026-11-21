@@ -7,12 +7,14 @@ const { fileURLToPath } = require('node:url')
 const { syncBuiltinESMExports } = require('node:module')
 const { randomUUID } = require('node:crypto')
 const root = path.resolve(process.env.AIUSAGE_CHECK_ROOT || '')
-if (!/^\/data\/home\/aiusage-check\/\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(root)) throw Error('Missing isolated remote-check root')
+if (!/^\/data\/home\/aiusage-check\/\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(root)
+    && !(['/app', '/deploy'].includes(root) && process.env.AIUSAGE_CONTAINER_CHECK === '1')) throw Error('Missing isolated remote-check root')
 const recycleDir = path.join(root, 'recycle')
 fs.mkdirSync(recycleDir, { recursive: true })
 const linkAudit = path.join(root, 'created-hardlinks.jsonl')
 const originalLink = fs.linkSync
-fs.linkSync = (from, to) => {
+const originalAsyncLink = fsp.link
+function inspectLink(from, to) {
   for (const input of [from, to]) {
     const candidate = path.resolve(String(input))
     if (!candidate.startsWith(root + '/')) throw Error('Hard link outside isolated run refused')
@@ -22,9 +24,22 @@ fs.linkSync = (from, to) => {
   }
   const original = fs.lstatSync(from)
   if (!original.isFile() || original.isSymbolicLink()) throw Error('Invalid hard-link source')
-  originalLink(from, to)
+  return original
+}
+function recordLink(original, from, to) {
   fs.appendFileSync(linkAudit, JSON.stringify({ dev: original.dev, ino: original.ino, from: String(from), to: String(to) }) + '\n')
 }
+fs.linkSync = (from, to) => {
+  const original = inspectLink(from, to)
+  originalLink(from, to)
+  recordLink(original, from, to)
+}
+fsp.link = async (from, to) => {
+  const original = inspectLink(from, to)
+  await originalAsyncLink(from, to)
+  recordLink(original, from, to)
+}
+fs.link = (from, to, callback) => { fsp.link(from, to).then(() => callback(null), callback) }
 function recycle(input) {
   const source = path.resolve(input instanceof URL ? fileURLToPath(input) : String(input))
   const rel = path.relative(root, source)

@@ -7,6 +7,9 @@ packages/core/dist/
 packages/cli/dist/
 packages/web/.svelte-kit/
 packages/widget/
+packages/web/build/
+packages/site/build/
+packages/site/.svelte-kit/
 
 # Local secrets, backups and runtime/test artifacts (at any depth).
 **/.env

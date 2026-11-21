@@ -2,6 +2,8 @@
 
 日期：2026-11-20。按用户授权依次实施以下三项，每项完成定向验证与只读 review 后单独提交，不自动推送或发布。
 
+当前验收状态：三项功能已提交，并于 2026-11-20 补齐本机根构建、site 构建、Linux 六步构建及五包全量回归；最终 1,926 通过、0 失败、1 项 Windows 专属用例在 Linux 跳过。各阶段下方保留其当时验证边界，最新结果见文末「构建与 Linux 全量补验」。
+
 ## 执行约束
 
 - 保留工作区现有会话标题改动，在其基础上收尾；重要文件修改前备份到 `backups/next-stage-20261120/`。
@@ -83,6 +85,53 @@
 
 - S1 提交：`e6d4d50`。
 - S2 提交：`9b7e28e`。
-- S3：本次费用来源提交，以上标题可在 Git 历史定位。
+- S3 提交：`a0a62ec`。
 - 本轮源码备份：`backups/next-stage-20261120/`。合成标题夹具、隔离 home/tmp、测试回收内容、未使用临时脚本与暂存补丁均经路径/链接审查移入 `backups/build-recycle/`，可恢复；没有物理删除。
 - 三项均在各自验证与只读 review 后提交；未推送或发布，未更改真实使用数据或本机同步同意状态。
+
+## 构建与 Linux 全量补验（2026-11-20）
+
+用户授权继续构建、远程 Linux 全量回归、修复实际失败并提交；不推送或发布。
+
+### 本机构建与定向修复验证
+
+仓库根目录设置既有回收保护后执行：
+
+```powershell
+$env:NODE_OPTIONS = '--require=C:/Repositories/aiusage/.artifacts/next-stage/recycle.cjs'
+pnpm build
+pnpm build:site
+```
+
+两条命令均退出 0。根构建包括 core、Web、CLI（内嵌最新 Web）和 widget；site 单独生产构建通过。widget 的 native 步骤命中已有绑定，没有从零编译原生模块。本机 CLI、Web、site、widget 产物已生成，日志位于 `.artifacts/next-stage-build-20261120/build.log` 和 `site-build.log`。
+
+首轮 Linux 全量回归在五个测试文件中出现 6 项失败：旧迁移夹具回退版本账本却保留 v19 标题列，4 项报 `SqliteError: duplicate column name: session_title`；CLI 状态仍断言 schema 18，实际为 19；站点迁移原子性断言缺少新增版本 18。修复在重放迁移前恢复夹具的旧标题 schema，并更新版本/视图数量断言；站点另确认重试后标题列真实存在。生产迁移和业务实现未修改，重复打开、Token/费用一致性、回滚和重试断言继续保留。
+
+本机复验命令（沿用上述 NODE_OPTIONS）：
+
+```powershell
+node packages/cli/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/cli.config.ts --maxWorkers=1 --minWorkers=1 tests/db/migration-v15.test.ts tests/db/migration-v16.test.ts tests/commands/parse-codex-reasoning.test.ts tests/commands/status.test.ts
+node packages/site/node_modules/vitest/vitest.mjs run --config .artifacts/next-stage/site.config.ts tests/db/migration-atomicity.pg.test.ts
+```
+
+分别 33/33、1/1，通过且退出 0；日志为同目录 `migration-cli.log`、`migration-site.log`。
+
+### 远程结果
+
+所有命令均从仓库根目录通过统一脚手架运行，使用现有 `linux-01`、Node 22.23.3，校验锁文件及 610 个源码文件后复用隔离依赖。
+
+| 命令 | 最终结果 | 本地证据目录 |
+| --- | --- | --- |
+| `pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope full -Machine linux-01 -ResumeMachine -ReuseRunId 20261119T141038Z-65bd95bf` | 首轮本地/远程 exit 1；1,920 通过、6 失败、1 跳过；分类为单元测试失败 | `.artifacts/remote-check/20261120T013538Z-c8fb722b/` |
+| `pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task build -Target linux -Scope review -Machine linux-01 -ReuseRunId 20261120T013538Z-c8fb722b` | 本地/远程 exit 0；core、Web、CLI、site 生产构建，widget renderer 和类型检查，6 步通过；此命令不运行测试 | `.artifacts/remote-check/20261120T014107Z-58f78b6c/` |
+| `pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope full -Machine linux-01 -ReuseRunId 20261120T014107Z-58f78b6c` | 最终本地/远程 exit 0；1,926 通过、0 失败、1 跳过，共 1,927 项 | `.artifacts/remote-check/20261120T014318Z-07e05b2c/` |
+
+最终分包统计：core 137/137、CLI 1,513/1,514（1 项平台跳过）、widget 34/34、site 160/160、Web 82/82。跳过项为 Windows 文件被其他进程占用时的损坏数据库恢复测试。没有扩大跳过范围，也未修改测试运行配置以绕过失败。
+
+最终源码归档 SHA256：`7a4eb133c4722a09e40e4800df03b0adf3562be39b03eba80d39bf946b77de12`。已确认五个修正文件与本次上传 manifest 的哈希一致。各运行的 summary、分包 JSON 报告与日志均已回收；首轮失败证据保留。
+
+只读 review 已检查五个测试文件及直接迁移依赖：schema 回退只发生于内存合成夹具，数据断言未弱化；生产 v19 仍由迁移账本和事务保证只执行一次；站点验证保留实际 PGlite SQL 回滚/重试。`git diff --check` 通过。
+
+备份位于 `backups/next-stage-full-20261120/`。本机隔离 home/tmp、回收内容及旧构建产物经路径/链接检查移入 `backups/build-recycle/`，可恢复。远程实例和失败运行保留，依赖实例自动挂起；没有物理删除、销毁实例、推送或发布。
+
+剩余边界：本轮没有人工浏览器/Electron GUI 验收、Linux Electron 原生模块重编译、真实用户日志导入/云同步、独立 PostgreSQL 服务或 Docker 镜像重验。站点迁移测试使用 PGlite，不表述为独立 PostgreSQL 部署验收。

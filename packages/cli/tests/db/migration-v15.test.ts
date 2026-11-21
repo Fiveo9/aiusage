@@ -183,13 +183,21 @@ describe('migration v15 (Codex input tokens exclude cached tokens)', () => {
     insertRecord(db, makeRecord({ id: 'codex-cached' }))
     setUserPrice(db, MODEL, PRICE)
 
+    // Seed with today's record writer, then restore the pre-title schema to
+    // match the downgraded version ledger before replaying all migrations.
+    db.exec(`DROP VIEW activity_session_titles;
+      DROP TABLE session_title_sources;
+      DROP INDEX idx_records_session_title;
+      DROP INDEX idx_synced_session_title;
+      ALTER TABLE records DROP COLUMN session_title;
+      ALTER TABLE synced_records DROP COLUMN session_title;`)
     initializeDatabase(db)
     initializeDatabase(db)
 
     expect(row(db, 'codex-cached').input_tokens).toBe(100_000)
     expect(row(db, 'codex-cached').cost).toBeCloseTo(1.38, 10)
     const version = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get() as { version: number }
-    expect(version.version).toBe(18)
+    expect(version.version).toBe(19)
   })
 })
 

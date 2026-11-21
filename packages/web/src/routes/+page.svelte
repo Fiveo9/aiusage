@@ -6,7 +6,7 @@
   import { t } from '$lib/i18n.js'
   import { formatCost, displayCurrency, exchangeRate } from '$lib/stores.js'
   import { tokenComposition } from '$lib/token-composition.js'
-  import { Settings } from 'lucide-svelte'
+  import { SlidersHorizontal, RefreshCw, AlertTriangle, ArrowRight, X } from 'lucide-svelte'
 
   const DISPLAY_KEY = 'aiusage-home-display'
 
@@ -53,24 +53,24 @@
   let refreshing = false
   let barsReady  = false
 
-  const tTokens   = tweened(0, { duration: 2600, easing: cubicOut })
-  const tCost     = tweened(0, { duration: 2300, easing: cubicOut })
-  const tSessions = tweened(0, { duration: 1900, easing: cubicOut })
-  const tDays     = tweened(0, { duration: 1600, easing: cubicOut })
+  const tTokens   = tweened(0, { duration: 1800, easing: cubicOut })
+  const tCost     = tweened(0, { duration: 1500, easing: cubicOut })
+  const tSessions = tweened(0, { duration: 1300, easing: cubicOut })
+  const tDays     = tweened(0, { duration: 1100, easing: cubicOut })
 
   async function fetchAndApply(fast = false) {
-    const d = fast ? 500 : 2600
+    const d = fast ? 400 : 1800
     error = null
     try {
       const newData = await fetchHomeSummary({ range: display.range })
       if (newData) {
         data = newData
         tTokens.set(newData.totalTokens,       { duration: d })
-        tCost.set(newData.totalCost,           { duration: Math.round(d * 0.88) })
-        tSessions.set(newData.totalSessions || 0, { duration: Math.round(d * 0.73) })
+        tCost.set(newData.totalCost,           { duration: Math.round(d * 0.85) })
+        tSessions.set(newData.totalSessions || 0, { duration: Math.round(d * 0.72) })
         tDays.set(newData.activeDays,          { duration: Math.round(d * 0.62) })
         barsReady = false
-        setTimeout(() => { barsReady = true }, fast ? 80 : 400)
+        setTimeout(() => { barsReady = true }, fast ? 60 : 250)
       }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load'
@@ -220,7 +220,7 @@
     if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B'
     if (n >= 1_000_000)     return (n / 1_000_000).toFixed(1) + 'M'
     if (n >= 1_000)         return (n / 1_000).toFixed(1) + 'K'
-    return n.toLocaleString()
+    return (n || 0).toLocaleString()
   }
 
   function setRange(v) {
@@ -246,14 +246,16 @@
   <div class="config-panel" role="dialog" aria-modal="true" aria-labelledby="cfg-title-id">
     <div class="cfg-header">
       <span class="cfg-title" id="cfg-title-id">{$t('home.cfgTitle')}</span>
-      <button class="cfg-close" on:click={() => showConfig = false} aria-label="Close">✕</button>
+      <button type="button" class="cfg-close" on:click={() => showConfig = false} aria-label="Close">
+        <X size={14} strokeWidth={2} />
+      </button>
     </div>
 
     <div class="cfg-section">
       <div class="cfg-label">{$t('home.timeRange')}</div>
       <div class="cfg-pills">
         {#each RANGE_OPTIONS as opt}
-          <button class="pill" class:active={display.range === opt.value} on:click={() => setRange(opt.value)}>
+          <button type="button" class="pill" class:active={display.range === opt.value} on:click={() => setRange(opt.value)}>
             {$t(opt.tKey)}
           </button>
         {/each}
@@ -263,11 +265,11 @@
     <div class="cfg-section">
       <div class="cfg-label">{$t('home.numFormat')}</div>
       <div class="cfg-pills">
-        <button class="pill" class:active={display.precision === 'exact'} on:click={() => setPrecision('exact')}>
-          {$t('home.numExact')} <span class="pill-eg">{$t('home.numExactEx')}</span>
+        <button type="button" class="pill" class:active={display.precision === 'exact'} on:click={() => setPrecision('exact')}>
+          {$t('home.numExact')} <span class="pill-eg numeric">{$t('home.numExactEx')}</span>
         </button>
-        <button class="pill" class:active={display.precision === 'abbr'} on:click={() => setPrecision('abbr')}>
-          {$t('home.numShort')} <span class="pill-eg">{$t('home.numShortEx')}</span>
+        <button type="button" class="pill" class:active={display.precision === 'abbr'} on:click={() => setPrecision('abbr')}>
+          {$t('home.numShort')} <span class="pill-eg numeric">{$t('home.numShortEx')}</span>
         </button>
       </div>
     </div>
@@ -276,29 +278,49 @@
       <span class="refresh-info-text">
         {$t('home.refreshInfo')}
         <a href="/settings" class="settings-link" on:click={() => showConfig = false}>{$t('nav.settings')}</a>
-        · {refreshSecs}{$t('home.seconds')}
+        · <span class="numeric">{refreshSecs}{$t('home.seconds')}</span>
       </span>
     </div>
   </div>
 {/if}
 
 <div class="top-bar">
-  <div class="live-indicator">
-    <span class="live-dot-glow"></span>
-    <span class="live-dot"></span>
-    <span class="live-label">LIVE</span>
+  <div class="top-bar-left">
+    <div class="live-indicator">
+      <span class="live-dot"></span>
+      <span class="live-label">LIVE</span>
+    </div>
+
+    <div class="segmented range-segmented" role="group" aria-label={$t('home.timeRange')}>
+      {#each RANGE_OPTIONS as opt}
+        <button
+          type="button"
+          class="segmented-btn"
+          class:active={display.range === opt.value}
+          on:click={() => setRange(opt.value)}
+        >
+          {$t(opt.tKey)}
+        </button>
+      {/each}
+    </div>
   </div>
 
-  <span class="range-badge">{$t(rangeKey)}</span>
+  <div class="top-bar-right">
+    <div class="clock-block">
+      <span class="clock-time numeric">{timeStr}</span>
+      <span class="clock-date">{dateStr}</span>
+    </div>
 
-  <div class="clock-block">
-    <span class="clock-time">{timeStr}</span>
-    <span class="clock-date">{dateStr}</span>
+    <button
+      type="button"
+      class="eng-btn icon-only-btn"
+      on:click={() => showConfig = !showConfig}
+      title={$t('home.cfgTitle')}
+      aria-label={$t('home.cfgTitle')}
+    >
+      <SlidersHorizontal size={14} strokeWidth={1.85} />
+    </button>
   </div>
-
-  <button class="cfg-btn" on:click={() => showConfig = !showConfig} title={$t('home.cfgTitle')} aria-label={$t('home.cfgTitle')}>
-    <Settings size={16} strokeWidth={1.8} />
-  </button>
 </div>
 
 {#if quotaWarnings.length > 0}
@@ -306,679 +328,556 @@
     {#each quotaWarnings as w (w.tool + w.tier)}
       {@const color = warningColor(w.utilization)}
       <div class="quota-warning" class:quota-red={color === 'red'} class:quota-orange={color === 'orange'}>
-        <span class="warn-icon">{color === 'red' ? '▲' : '△'}</span>
+        <span class="warn-icon" aria-hidden="true"><AlertTriangle size={14} strokeWidth={2} /></span>
         <span class="warn-text">
           <strong>{TOOL_SHORT[w.tool] ?? w.tool}</strong>
           {TIER_SHORT[w.tier] ?? w.tier}
-          {$t('home.quotaWarningDesc')}: <strong>{w.utilization}%</strong>
+          {$t('home.quotaWarningDesc')}: <strong class="numeric">{w.utilization}%</strong>
         </span>
-        <a href="/quotas" class="warn-link">{$t('home.quotaWarningLink')} →</a>
+        <a href="/quotas" class="warn-link">
+          <span>{$t('home.quotaWarningLink')}</span>
+          <ArrowRight size={13} strokeWidth={2} />
+        </a>
       </div>
     {/each}
   </div>
 {/if}
 
 {#if loading}
-  <div class="splash-loading">
-    <span class="splash-spinner"></span>
-    <span class="splash-text">{$t('common.loading')}</span>
+  <div class="bento-skeleton">
+    <div class="card hero-skeleton">
+      <div class="skeleton skeleton-line" style="width: 140px;"></div>
+      <div class="skeleton" style="height: 3.5rem; width: 280px; margin: 1.25rem 0;"></div>
+      <div class="skeleton skeleton-line" style="width: 240px;"></div>
+    </div>
+    <div class="kpi-grid kpi-grid-3">
+      {#each [1, 2, 3] as _}
+        <div class="kpi-card">
+          <div class="skeleton skeleton-line" style="width: 45%;"></div>
+          <div class="skeleton skeleton-value"></div>
+        </div>
+      {/each}
+    </div>
   </div>
 {:else if error}
-  <div class="splash-error">
-    <span class="err-msg">{error}</span>
-    <button class="retry-btn" on:click={manualRefresh}>{$t('home.refreshBtn')}</button>
+  <div class="state-msg error">
+    <span>{error}</span>
+    <button type="button" class="eng-btn" on:click={manualRefresh}>
+      <RefreshCw size={13} strokeWidth={1.85} />
+      <span>{$t('home.refreshBtn')}</span>
+    </button>
   </div>
 {:else if !data || data.totalTokens === 0}
-  <div class="splash-empty">
-    <span class="empty-title">{$t('common.noData')}</span>
-    <span class="empty-hint">{$t('common.noDataHint')}</span>
+  <div class="state-msg">
+    <h2>{$t('common.noData')}</h2>
+    <p>{$t('common.noDataHint')}</p>
   </div>
 {:else}
 
-  <section class="counter-section">
-    <div class="counter-header">
-      <span class="counter-label">{$t('home.counterLabel')}</span>
+  <section class="card hero-panel">
+    <div class="hero-top">
+      <div class="hero-title-group">
+        <span class="hero-kicker">{$t('home.counterLabel')}</span>
+        <span class="range-tag">{$t(rangeKey)}</span>
+      </div>
+
+      <div class="refresh-controls">
+        <span class="refresh-status">
+          {#if refreshSecs > 0}
+            {#if countdown > 0}
+              <span class="refresh-clock-dot"></span>
+              <span class="numeric">{$t('home.nextRefresh')} {countdown}{$t('home.seconds')}</span>
+            {:else}
+              <span class="refresh-clock-dot active"></span>
+              <span class="refreshing-label">{$t('home.refreshing')}</span>
+            {/if}
+          {:else}
+            <span>{$t('home.manualMode')}</span>
+          {/if}
+        </span>
+        <button type="button" class="eng-btn now-btn" on:click={manualRefresh} disabled={refreshing}>
+          <span class="refresh-spin-wrap" class:spinning={refreshing}>
+            <RefreshCw size={12} strokeWidth={2} />
+          </span>
+          <span>{refreshSecs > 0 ? $t('home.refreshNow') : $t('home.refreshBtn')}</span>
+        </button>
+      </div>
     </div>
 
-    <div class="counter-number" class:refreshing>
-      {fmtMain($tTokens)}
-    </div>
+    <div class="hero-main">
+      <div class="counter-number numeric" class:refreshing>
+        {fmtMain($tTokens)}
+      </div>
 
-    <div class="counter-sub">
-      <div class="sub-item sub-input">
-        <span class="sub-indicator"></span>
-        <div class="sub-content">
+      <div class="counter-sub">
+        <div class="sub-item">
+          <span class="sub-indicator sub-input"></span>
           <span class="sub-label">{$t('home.input')}</span>
-          <span class="sub-value">{fmtShort(data.inputTokens)}</span>
+          <span class="sub-value numeric">{fmtShort(data.inputTokens)}</span>
         </div>
-      </div>
-      <div class="sub-divider"></div>
-      <div class="sub-item sub-output">
-        <span class="sub-indicator"></span>
-        <div class="sub-content">
+        <span class="sub-sep" aria-hidden="true">/</span>
+        <div class="sub-item">
+          <span class="sub-indicator sub-output"></span>
           <span class="sub-label">{$t('home.output')}</span>
-          <span class="sub-value">{fmtShort(data.outputTokens)}</span>
+          <span class="sub-value numeric">{fmtShort(data.outputTokens)}</span>
         </div>
-      </div>
-      <div class="sub-divider"></div>
-      <div class="sub-item sub-cache">
-        <span class="sub-indicator"></span>
-        <div class="sub-content">
+        <span class="sub-sep" aria-hidden="true">/</span>
+        <div class="sub-item">
+          <span class="sub-indicator sub-cache"></span>
           <span class="sub-label">{$t('home.cache')}</span>
-          <span class="sub-value">{fmtShort((data.cacheReadTokens||0)+(data.cacheWriteTokens||0))}</span>
+          <span class="sub-value numeric">{fmtShort((data.cacheReadTokens || 0) + (data.cacheWriteTokens || 0))}</span>
         </div>
       </div>
     </div>
 
-    <div class="refresh-bar-track">
+    <div class="refresh-bar-track" aria-hidden="true">
       {#if refreshSecs > 0}
         <div class="refresh-bar-fill" style="width: {refreshPct}%"></div>
       {/if}
     </div>
-    <div class="refresh-meta">
-      <div class="refresh-status">
-        {#if refreshSecs > 0}
-          {#if countdown > 0}
-            <span class="refresh-clock-dot"></span>
-            <span>{$t('home.nextRefresh')} {countdown}{$t('home.seconds')}</span>
-          {:else}
-            <span class="refresh-clock-dot active"></span>
-            <span class="refreshing-label">{$t('home.refreshing')}</span>
-          {/if}
-        {:else}
-          <span>{$t('home.manualMode')}</span>
-        {/if}
-      </div>
-      <button class="now-btn" on:click={manualRefresh}>
-        {refreshSecs > 0 ? $t('home.refreshNow') : $t('home.refreshBtn')}
-      </button>
-    </div>
   </section>
 
-  <div class="stats-strip">
-    <div class="stat-block stat-block-cost">
-      <div class="stat-header">
-        <span class="stat-dot"></span>
-        <span class="stat-label">{$t('overview.totalCost')}</span>
-      </div>
-      <span class="stat-value stat-cost">{formattedCost}</span>
+  <div class="kpi-grid kpi-grid-3">
+    <div class="kpi-card">
+      <span class="kpi-label">{$t('overview.totalCost')}</span>
+      <span class="kpi-value accent numeric">{formattedCost}</span>
     </div>
-    <div class="stat-block">
-      <div class="stat-header">
-        <span class="stat-label">{$t('overview.totalSessions')}</span>
-      </div>
-      <span class="stat-value">{Math.round($tSessions).toLocaleString()}</span>
+    <div class="kpi-card">
+      <span class="kpi-label">{$t('overview.totalSessions')}</span>
+      <span class="kpi-value numeric">{Math.round($tSessions).toLocaleString()}</span>
     </div>
-    <div class="stat-block">
-      <div class="stat-header">
-        <span class="stat-label">{$t('overview.activeDays')}</span>
-      </div>
-      <span class="stat-value">{Math.round($tDays).toLocaleString()}</span>
+    <div class="kpi-card">
+      <span class="kpi-label">{$t('overview.activeDays')}</span>
+      <span class="kpi-value numeric">{Math.round($tDays).toLocaleString()}</span>
     </div>
   </div>
 
-  <div class="comp-wrap card">
+  <div class="card comp-card">
     <div class="comp-header">
-      <span class="section-title">Token Composition</span>
+      <span class="section-title">{$t('home.composition')}</span>
+      <span class="comp-total numeric">{fmtShort(data.totalTokens)}</span>
     </div>
-    <div class="comp-bar">
-      <div class="seg seg-input"  style="width:{barsReady ? inputPct     : 0}%" title="{$t('home.input')} {inputPct.toFixed(1)}%">
-        {#if inputPct > 9}<span class="seg-lbl">{$t('home.input')} {inputPct.toFixed(0)}%</span>{/if}
-      </div>
-      <div class="seg seg-output" style="width:{barsReady ? outputPct    : 0}%" title="{$t('home.output')} {outputPct.toFixed(1)}%">
-        {#if outputPct > 9}<span class="seg-lbl">{$t('home.output')} {outputPct.toFixed(0)}%</span>{/if}
-      </div>
-      <div class="seg seg-cr"     style="width:{barsReady ? cacheReadPct : 0}%" title="Cache R {cacheReadPct.toFixed(1)}%">
-        {#if cacheReadPct > 9}<span class="seg-lbl">Cache R {cacheReadPct.toFixed(0)}%</span>{/if}
-      </div>
-      <div class="seg seg-cw"     style="width:{barsReady ? cacheWritePct: 0}%" title="Cache W {cacheWritePct.toFixed(1)}%">
-        {#if cacheWritePct > 9}<span class="seg-lbl">Cache W {cacheWritePct.toFixed(0)}%</span>{/if}
-      </div>
+
+    <div class="comp-bar" aria-label={$t('home.composition')}>
+      {#if inputPct > 0}
+        <div class="seg seg-input" style="width:{barsReady ? inputPct : 0}%" title="{$t('home.input')} {inputPct.toFixed(1)}%"></div>
+      {/if}
+      {#if outputPct > 0}
+        <div class="seg seg-output" style="width:{barsReady ? outputPct : 0}%" title="{$t('home.output')} {outputPct.toFixed(1)}%"></div>
+      {/if}
+      {#if cacheReadPct > 0}
+        <div class="seg seg-cr" style="width:{barsReady ? cacheReadPct : 0}%" title="{$t('overview.cacheRead')} {cacheReadPct.toFixed(1)}%"></div>
+      {/if}
+      {#if cacheWritePct > 0}
+        <div class="seg seg-cw" style="width:{barsReady ? cacheWritePct : 0}%" title="{$t('overview.cacheWrite')} {cacheWritePct.toFixed(1)}%"></div>
+      {/if}
     </div>
-    <div class="comp-legend">
-      <span class="leg leg-i"><span class="leg-pill"></span>{$t('home.input')}</span>
-      <span class="leg leg-o"><span class="leg-pill"></span>{$t('home.output')}</span>
-      <span class="leg leg-cr"><span class="leg-pill"></span>Cache Read</span>
-      <span class="leg leg-cw"><span class="leg-pill"></span>Cache Write</span>
+
+    <div class="comp-grid">
+      <div class="comp-cell">
+        <div class="comp-cell-head">
+          <span class="leg-swatch seg-input"></span>
+          <span class="comp-cell-label">{$t('home.input')}</span>
+          <span class="comp-cell-pct numeric">{inputPct.toFixed(1)}%</span>
+        </div>
+        <span class="comp-cell-val numeric">{fmtShort(data.inputTokens)}</span>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-cell-head">
+          <span class="leg-swatch seg-output"></span>
+          <span class="comp-cell-label">{$t('home.output')}</span>
+          <span class="comp-cell-pct numeric">{outputPct.toFixed(1)}%</span>
+        </div>
+        <span class="comp-cell-val numeric">{fmtShort(data.outputTokens)}</span>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-cell-head">
+          <span class="leg-swatch seg-cr"></span>
+          <span class="comp-cell-label">{$t('overview.cacheRead')}</span>
+          <span class="comp-cell-pct numeric">{cacheReadPct.toFixed(1)}%</span>
+        </div>
+        <span class="comp-cell-val numeric">{fmtShort(data.cacheReadTokens || 0)}</span>
+      </div>
+      <div class="comp-cell">
+        <div class="comp-cell-head">
+          <span class="leg-swatch seg-cw"></span>
+          <span class="comp-cell-label">{$t('overview.cacheWrite')}</span>
+          <span class="comp-cell-pct numeric">{cacheWritePct.toFixed(1)}%</span>
+        </div>
+        <span class="comp-cell-val numeric">{fmtShort(data.cacheWriteTokens || 0)}</span>
+      </div>
     </div>
   </div>
 
 {/if}
 
 <style>
-  /* ── Modern Top Bar ─────────────────────────────────────────────────────── */
+  /* ── Top Status Bar ─────────────────────────────────────────────────────── */
   .top-bar {
     display: flex;
     align-items: center;
-    gap: 0.875rem;
-    margin-bottom: 1.5rem;
-    padding: 0.75rem 1.125rem;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    padding: 0.45rem 0.625rem;
     background: var(--surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
-    backdrop-filter: blur(12px);
+  }
+
+  .top-bar-left {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.625rem;
+  }
+
+  .top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    margin-left: auto;
   }
 
   .live-indicator {
-    position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.2rem 0.625rem;
-    border-radius: 999px;
+    gap: 0.4rem;
+    padding: 0 0.55rem;
+    height: var(--control-height);
+    border-radius: var(--radius-sm);
     background: var(--green-dim);
+    border: 1px solid color-mix(in oklch, var(--green) 25%, transparent);
     flex-shrink: 0;
   }
+
   .live-dot {
-    position: relative;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--green);
+    animation: liveBlink 2.2s ease-in-out infinite;
   }
-  .live-dot-glow {
-    position: absolute;
-    left: 0.625rem;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--green);
-    animation: livePulse 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+
+  @keyframes liveBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
-  @keyframes livePulse {
-    0%   { transform: scale(1); opacity: 0.8; }
-    50%  { transform: scale(2.6); opacity: 0; }
-    100% { transform: scale(1); opacity: 0; }
-  }
+
   .live-label {
-    font-family: var(--font-sans);
     font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     color: var(--green);
   }
 
-  .range-badge {
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border: 1px solid var(--accent-dim);
-    border-radius: 999px;
-    padding: 0.175rem 0.625rem;
-  }
-
   .clock-block {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    margin-left: auto;
-    gap: 0;
+    align-items: baseline;
+    gap: 0.45rem;
   }
+
   .clock-time {
-    font-family: var(--font-numeric);
-    font-size: 0.875rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
-    letter-spacing: -0.01em;
   }
+
   .clock-date {
-    font-family: var(--font-sans);
-    font-size: 0.6875rem;
-    font-weight: 500;
+    font-size: var(--text-2xs);
     color: var(--text-muted);
   }
 
-  .cfg-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .icon-only-btn {
     width: var(--control-height);
-    height: var(--control-height);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--raised);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.16s ease;
-    flex-shrink: 0;
-  }
-  .cfg-btn:hover {
-    color: var(--text);
-    border-color: var(--border-medium);
-    transform: translateY(-1px);
+    padding: 0;
   }
 
-  /* ── Linear Hero Counter ────────────────────────────────────────────────── */
-  .counter-section {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 3.5rem 2rem 2rem;
-    margin-bottom: 1.5rem;
-    background: radial-gradient(circle at 50% -20%, var(--accent-dim) 0%, transparent 65%), var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-md);
+  /* ── Hero Token Panel ───────────────────────────────────────────────────── */
+  .hero-panel {
+    padding: 1.35rem 1.5rem 0;
+    margin-bottom: 1rem;
     overflow: hidden;
   }
 
-  .counter-header {
-    margin-bottom: 0.875rem;
-  }
-
-  .counter-label {
-    font-family: var(--font-sans);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .counter-number {
-    font-family: var(--font-numeric);
-    font-size: clamp(2.25rem, 6.5vw, 5.25rem);
-    font-weight: 700;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    letter-spacing: -0.04em;
-    line-height: 1.1;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-    transition: opacity 0.2s;
-  }
-  .counter-number.refreshing { opacity: 0.55; }
-
-  /* Sub Breakdown Pills */
-  .counter-sub {
+  .hero-top {
     display: flex;
     align-items: center;
-    gap: 1.25rem;
-    margin-top: 1.75rem;
-    padding: 0.625rem 1.25rem;
-    background: var(--raised);
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
   }
-  .sub-item {
+
+  .hero-title-group {
     display: flex;
     align-items: center;
     gap: 0.5rem;
   }
-  .sub-indicator {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-  }
-  .sub-input .sub-indicator { background: var(--chart-input); }
-  .sub-output .sub-indicator { background: var(--chart-output); }
-  .sub-cache .sub-indicator { background: var(--chart-cache-read); }
 
-  .sub-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
-  }
-  .sub-label {
-    font-family: var(--font-sans);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    color: var(--text-muted);
-  }
-  .sub-value {
-    font-family: var(--font-numeric);
-    font-size: 0.875rem;
+  .hero-kicker {
+    font-size: var(--text-2xs);
     font-weight: 600;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-  }
-  .sub-divider {
-    width: 1px;
-    height: 20px;
-    background: var(--border-subtle);
-  }
-
-  /* Refresh Glow Progress Bar */
-  .refresh-bar-track {
-    width: 100%;
-    height: 3px;
-    background: var(--border-subtle);
-    border-radius: 999px;
-    margin-top: 2rem;
-    overflow: hidden;
-  }
-  .refresh-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
-    box-shadow: 0 0 8px var(--accent-dim);
-    border-radius: 999px;
-    transition: width 1s linear;
-  }
-
-  .refresh-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 0.625rem;
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--text-muted);
-    width: 100%;
   }
-  .refresh-status {
+
+  .range-tag {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-xs);
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+  }
+
+  .refresh-controls {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.625rem;
   }
+
+  .refresh-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
   .refresh-clock-dot {
     width: 5px;
     height: 5px;
     border-radius: 50%;
     background: var(--border-medium);
   }
+
   .refresh-clock-dot.active {
     background: var(--accent);
   }
+
   .refreshing-label {
     color: var(--accent);
     font-weight: 600;
   }
 
   .now-btn {
-    padding: 0.25rem 0.75rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--raised);
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.16s ease;
-  }
-  .now-btn:hover {
-    color: var(--text);
-    border-color: var(--border-medium);
-    background: var(--hover);
+    height: 1.75rem;
+    padding: 0 0.55rem;
+    font-size: var(--text-2xs);
   }
 
-  /* ── Stats Metric Cards (Grid 3) ─────────────────────────────────────────── */
-  .stats-strip {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
+  .refresh-spin-wrap {
+    display: inline-flex;
+    align-items: center;
   }
-  .stat-block {
+
+  .refresh-spin-wrap.spinning {
+    animation: spin 0.9s linear infinite;
+  }
+
+  .hero-main {
+    padding: 1.5rem 0 1.625rem;
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
-    padding: 1.35rem 1.5rem;
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    gap: 0.875rem;
   }
-  .stat-block:hover {
-    border-color: var(--border-medium);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+
+  .counter-number {
+    font-size: clamp(2.125rem, 5.2vw, 3.875rem);
+    font-weight: 700;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    letter-spacing: -0.04em;
+    line-height: 1.08;
+    color: var(--text);
+    transition: opacity 0.2s ease;
   }
-  .stat-header {
+
+  .counter-number.refreshing {
+    opacity: 0.55;
+  }
+
+  .counter-sub {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.875rem;
+  }
+
+  .sub-item {
+    display: inline-flex;
     align-items: center;
     gap: 0.375rem;
   }
-  .stat-dot {
+
+  .sub-indicator {
     width: 6px;
     height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-  .stat-label {
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--text-muted);
-    text-transform: uppercase;
-  }
-  .stat-value {
-    font-family: var(--font-numeric);
-    font-size: 1.875rem;
-    font-weight: 700;
-    overflow-wrap: anywhere;
-    letter-spacing: -0.03em;
-    line-height: 1.2;
-    color: var(--text);
-  }
-  .stat-cost {
-    color: var(--accent);
+    border-radius: 2px;
+    flex-shrink: 0;
   }
 
-  /* ── Composition Bar Card ───────────────────────────────────────────────── */
-  .comp-wrap {
-    margin-bottom: 1.5rem;
+  .sub-input { background: var(--chart-input); }
+  .sub-output { background: var(--chart-output); }
+  .sub-cache { background: var(--chart-cache-read); }
+
+  .sub-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
   }
+
+  .sub-value {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .sub-sep {
+    color: var(--border-medium);
+    font-size: var(--text-xs);
+  }
+
+  .refresh-bar-track {
+    margin-inline: -1.5rem;
+    height: 2px;
+    background: var(--border-subtle);
+    overflow: hidden;
+  }
+
+  .refresh-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 1s linear;
+  }
+
+  /* ── Composition Card ───────────────────────────────────────────────────── */
+  .comp-card {
+    padding: 1.125rem 1.25rem;
+  }
+
   .comp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     margin-bottom: 0.875rem;
   }
+
   .comp-header .section-title {
     margin-bottom: 0;
   }
 
+  .comp-total {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
   .comp-bar {
     display: flex;
-    height: 28px;
-    border-radius: 8px;
+    height: 10px;
+    border-radius: 5px;
     overflow: hidden;
     background: var(--raised);
-    padding: 2px;
     gap: 2px;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
   }
+
   .seg {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    min-width: 0;
-    border-radius: 6px;
-    transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+    height: 100%;
+    min-width: 2px;
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .seg-lbl {
-    font-family: var(--font-sans);
-    font-size: 0.6875rem;
-    font-weight: 700;
-    white-space: nowrap;
-    padding: 0 4px;
-    color: #ffffff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
+
   .seg-input  { background: var(--chart-input); }
   .seg-output { background: var(--chart-output); }
   .seg-cr     { background: var(--chart-cache-read); }
   .seg-cw     { background: var(--chart-cache-write); }
 
-  .comp-legend {
-    display: flex;
-    gap: 1.25rem;
+  .comp-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
     margin-top: 1rem;
-    flex-wrap: wrap;
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--border-subtle);
   }
-  .leg {
+
+  .comp-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .comp-cell-head {
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary);
   }
-  .leg-pill {
-    width: 8px;
-    height: 8px;
+
+  .leg-swatch {
+    width: 7px;
+    height: 7px;
     border-radius: 2px;
-  }
-  .leg-i .leg-pill  { background: var(--chart-input); }
-  .leg-o .leg-pill  { background: var(--chart-output); }
-  .leg-cr .leg-pill { background: var(--chart-cache-read); }
-  .leg-cw .leg-pill { background: var(--chart-cache-write); }
-
-  /* ── Config Panel ───────────────────────────────────────────────────────── */
-  .overlay-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    background: var(--overlay);
-    backdrop-filter: blur(12px);
-    animation: fadeIn 0.15s ease;
-  }
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-  .config-panel {
-    position: fixed;
-    z-index: 201;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(420px, 92vw);
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-    box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(16px);
+    flex-shrink: 0;
   }
 
-  .cfg-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1.25rem;
+  .comp-cell-label {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .cfg-title {
-    font-family: var(--font-sans);
-    font-size: 1.0625rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
+
+  .comp-cell-pct {
+    margin-left: auto;
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+  }
+
+  .comp-cell-val {
+    font-size: var(--text-sm);
+    font-weight: 600;
     color: var(--text);
   }
-  .cfg-close {
-    width: 26px;
-    height: 26px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
-    background: var(--raised);
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  .cfg-close:hover {
-    color: var(--rose);
-    border-color: var(--rose);
-  }
-
-  .cfg-section { margin-bottom: 1.25rem; }
-  .cfg-label {
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 0.5rem;
-  }
-  .cfg-pills { display: flex; gap: 0.375rem; flex-wrap: wrap; }
-  .pill {
-    min-height: var(--control-height);
-    padding: 0.375rem 0.75rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--raised);
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.16s ease;
-    white-space: nowrap;
-  }
-  .pill:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .pill.active {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--accent-dim);
-    font-weight: 600;
-  }
-  .pill-eg { opacity: 0.55; font-size: 0.75rem; margin-left: 0.25rem; }
-
-  .cfg-refresh-info {
-    margin-top: 0.75rem;
-    padding: 0.625rem 0.875rem;
-    border-radius: var(--radius-sm);
-    background: var(--raised);
-    border: 1px solid var(--border-subtle);
-  }
-  .refresh-info-text {
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-muted);
-    line-height: 1.5;
-  }
-  .settings-link {
-    color: var(--accent);
-    text-decoration: none;
-    font-weight: 600;
-  }
-  .settings-link:hover { text-decoration: underline; }
 
   /* ── Quota Warning Banner ───────────────────────────────────────────────── */
   .quota-warning-list {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
   }
 
   .quota-warning {
     display: flex;
     align-items: center;
     gap: 0.625rem;
-    padding: 0.625rem 1rem;
+    padding: 0.55rem 0.875rem;
     border-radius: var(--radius-md);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     border: 1px solid transparent;
-    box-shadow: var(--shadow-sm);
   }
 
   .quota-orange {
     background: var(--amber-dim);
-    border-color: var(--amber);
+    border-color: color-mix(in oklch, var(--amber) 35%, transparent);
     color: var(--amber);
   }
 
   .quota-red {
     background: var(--rose-dim);
-    border-color: var(--rose);
+    border-color: color-mix(in oklch, var(--rose) 35%, transparent);
     color: var(--rose);
   }
 
   .warn-icon {
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
   }
 
@@ -988,90 +887,170 @@
   }
 
   .warn-link {
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     text-decoration: none;
     color: inherit;
-    opacity: 0.85;
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .warn-link:hover { opacity: 1; text-decoration: underline; }
 
-  /* ── Splash States ──────────────────────────────────────────────────────── */
-  .splash-loading, .splash-error, .splash-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.875rem;
-    min-height: 360px;
-    text-align: center;
-    background: var(--surface);
-    border: 1px dashed var(--border-subtle);
+  .warn-link:hover {
+    text-decoration: underline;
+  }
+
+  /* ── Config Modal ───────────────────────────────────────────────────────── */
+  .overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    background: var(--overlay);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.12s ease;
+  }
+
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .config-panel {
+    position: fixed;
+    z-index: 410;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(420px, 92vw);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-medium);
     border-radius: var(--radius-lg);
-  }
-  .splash-spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--border-medium);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .splash-text {
-    font-family: var(--font-sans);
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--text-muted);
+    padding: 1.25rem;
+    box-shadow: var(--shadow-lg);
   }
 
-  .err-msg { font-size: 0.875rem; color: var(--rose); }
-  .retry-btn {
-    margin-top: 0.5rem;
-    padding: 0.4rem 1.125rem;
-    border: 1px solid var(--rose);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--rose);
-    cursor: pointer;
-    transition: background 0.15s;
+  .cfg-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
   }
-  .retry-btn:hover { background: var(--rose-dim); }
 
-  .empty-title {
-    font-size: 1rem;
-    font-weight: 600;
+  .cfg-title {
+    font-size: var(--text-base);
+    font-weight: 650;
     color: var(--text);
   }
-  .empty-hint { font-size: 0.8125rem; color: var(--text-muted); }
+
+  .cfg-close {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--raised);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .cfg-close:hover {
+    color: var(--text);
+    border-color: var(--border-medium);
+  }
+
+  .cfg-section { margin-bottom: 1rem; }
+
+  .cfg-label {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.45rem;
+  }
+
+  .cfg-pills {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  .pill {
+    height: var(--control-height);
+    padding: 0 0.7rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+    white-space: nowrap;
+  }
+
+  .pill:hover {
+    border-color: var(--border-medium);
+    color: var(--text);
+  }
+
+  .pill.active {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: var(--accent-dim);
+    font-weight: 600;
+  }
+
+  .pill-eg {
+    opacity: 0.6;
+    font-size: var(--text-2xs);
+    margin-left: 0.25rem;
+  }
+
+  .cfg-refresh-info {
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .refresh-info-text {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
+
+  .settings-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .settings-link:hover { text-decoration: underline; }
+
+  /* ── Skeleton ───────────────────────────────────────────────────────────── */
+  .bento-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .hero-skeleton {
+    padding: 1.5rem;
+  }
 
   /* ── Responsive ─────────────────────────────────────────────────────────── */
   @media (max-width: 800px) {
-    .counter-section { padding: 2.25rem 1.25rem 1.5rem; }
-    .counter-sub {
-      flex-direction: column;
-      border-radius: var(--radius-md);
-      gap: 0.75rem;
-      width: 100%;
-    }
-    .sub-divider { display: none; }
-    .stats-strip { grid-template-columns: 1fr; gap: 0.75rem; }
-    .top-bar {
-      display: grid;
-      grid-template-columns: auto auto 1fr auto;
-      gap: 0.5rem;
-    }
-    .clock-block {
-      margin-left: 0;
-      align-items: flex-end;
-      justify-self: end;
-    }
-    .cfg-btn { justify-self: end; }
+    .hero-panel { padding: 1.125rem 1.125rem 0; }
+    .refresh-bar-track { margin-inline: -1.125rem; }
+    .comp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .clock-date { display: none; }
+    .range-segmented { order: 3; width: 100%; overflow-x: auto; }
+  }
+
+  @media (max-width: 480px) {
+    .comp-grid { grid-template-columns: 1fr; }
   }
 </style>

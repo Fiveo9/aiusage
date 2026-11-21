@@ -1,7 +1,6 @@
 <script>
   import { dateRange, selectedDevice, selectedTool, setTool } from '../stores.js'
   import { fetchTools } from '../api.js'
-  import { t } from '../i18n.js'
 
   let tools = []
   let loading = true
@@ -33,16 +32,18 @@
 </script>
 
 {#if !loading && tools.length > 0}
-  <div class="tool-toggles">
-    {#each tools as t}
+  <div class="tool-toggles" role="group" aria-label="AI Tools">
+    {#each tools as item}
       <button
+        type="button"
         class="tool-btn"
-        class:active={$selectedTool === t.tool}
-        on:click={() => toggle(t.tool)}
-        title="{t.tool} ({t.sessionCount})"
+        class:active={$selectedTool === item.tool}
+        aria-pressed={$selectedTool === item.tool}
+        on:click={() => toggle(item.tool)}
+        title="{item.tool} ({item.sessionCount})"
       >
-        {t.tool}
-        <span class="tool-count">{t.sessionCount}</span>
+        <span>{item.tool}</span>
+        <span class="tool-count numeric">{item.sessionCount}</span>
       </button>
     {/each}
   </div>
@@ -52,44 +53,48 @@
   .tool-toggles {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.3rem;
     flex-wrap: wrap;
   }
+
   .tool-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.3rem 0.625rem;
+    gap: 0.35rem;
+    height: var(--control-height);
+    padding: 0 0.6rem;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    background: transparent;
+    background: var(--surface);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 500;
     cursor: pointer;
-    transition: color 0.12s, background 0.12s, border-color 0.12s;
-    min-height: var(--control-height);
     white-space: nowrap;
+    transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
   }
+
   .tool-btn:hover {
     color: var(--text);
-    background: var(--hover);
+    background: var(--raised);
+    border-color: var(--border-medium);
   }
+
   .tool-btn.active {
-    color: var(--accent);
+    color: var(--accent-strong);
     background: var(--accent-dim);
-    border-color: var(--accent);
+    border-color: color-mix(in oklch, var(--accent) 45%, transparent);
     font-weight: 600;
   }
+
   .tool-count {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     font-weight: 500;
     color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
   }
+
   .tool-btn.active .tool-count {
     color: var(--accent);
-    opacity: 0.7;
   }
 </style>

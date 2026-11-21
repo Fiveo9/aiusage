@@ -6,6 +6,7 @@
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
+  import { ChevronRight } from 'lucide-svelte'
 
   let data = null
   let error = null
@@ -91,54 +92,58 @@
         <span class="activity-count mono">{formatNumber(data.toolCalls.length)}</span>
       {/if}
     </div>
-<div class="type-tabs activity-type-tabs" role="group" aria-label={$t('activity.toolType')}>
-  {#each TYPES as type}
-    <button
-      class="activity-type-tab"
-      class:active={selectedType === type.key}
-      aria-pressed={selectedType === type.key}
-      on:click={() => { selectedType = type.key }}
-    >
-      {type.label()}
-    </button>
-  {/each}
-</div>
+    <div class="type-tabs activity-type-tabs" role="group" aria-label={$t('activity.toolType')}>
+      {#each TYPES as type}
+        <button
+          class="activity-type-tab"
+          class:active={selectedType === type.key}
+          aria-pressed={selectedType === type.key}
+          on:click={() => { selectedType = type.key }}
+        >
+          {type.label()}
+        </button>
+      {/each}
+    </div>
   </div>
 
-{#if loading}
-  <div class="state-msg" role="status">{$t('common.loading')}</div>
-{:else if error}
-  <div class="state-msg error" role="alert">{error}</div>
-{:else if !data?.toolCalls.length}
-  <div class="state-msg">
-    <h2>{$t('toolCalls.noData')}</h2>
-    <p>{$t('toolCalls.noDataHint')}</p>
-  </div>
-{:else}
-  <div class="activity-ranking">
-    {#each data.toolCalls as tc, i}
-      <a class="activity-rank-row" href={activityDetailUrl('/tool-calls/events', { ...$dateRange, device: $selectedDevice, tool: $selectedTool, toolType: selectedType, name: tc.name })}>
-        <span class="activity-rank mono">{String(i + 1).padStart(2, '0')}</span>
-        <div class="activity-rank-body">
-        <div class="activity-name-line">
-          <span class="activity-name mono" title={tc.name}>{tc.displayName}</span>
-          {#if tc.type === 'mcp'}
-            <span class="activity-badge activity-badge-mcp">{$t('toolCalls.badgeMcp')}</span>
-          {:else if tc.type === 'skill'}
-            <span class="activity-badge activity-badge-skill">{$t('toolCalls.badgeSkill')}</span>
-          {/if}
-        </div>
-        <div class="activity-bar-track" aria-hidden="true">
-          <div class="activity-bar-fill" style="width: {tc.percentage}%"></div>
-        </div>
-        </div>
-        <div class="activity-stats">
-          <span class="activity-stat"><span class="activity-stat-label">{$t('activity.calls')}</span><span class="activity-stat-value mono">{formatNumber(tc.count)}</span></span>
-          <span class="activity-stat"><span class="activity-stat-label">{$t('projects.share')}</span><span class="activity-stat-value mono">{tc.percentage.toFixed(1)}%</span></span>
-        </div>
-        <span class="activity-chevron" aria-hidden="true">→</span>
-      </a>
-    {/each}
-  </div>
-{/if}
+  {#if loading && !data}
+    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+      {#each [1, 2, 3, 4] as _}
+        <div class="skeleton" style="height: 48px;"></div>
+      {/each}
+    </div>
+  {:else if error}
+    <div class="state-msg error" role="alert">{error}</div>
+  {:else if !data?.toolCalls.length}
+    <div class="state-msg">
+      <h2>{$t('toolCalls.noData')}</h2>
+      <p>{$t('toolCalls.noDataHint')}</p>
+    </div>
+  {:else}
+    <div class="activity-ranking" class:is-stale={loading}>
+      {#each data.toolCalls as tc, i}
+        <a class="activity-rank-row" href={activityDetailUrl('/tool-calls/events', { ...$dateRange, device: $selectedDevice, tool: $selectedTool, toolType: selectedType, name: tc.name })}>
+          <span class="activity-rank mono">{String(i + 1).padStart(2, '0')}</span>
+          <div class="activity-rank-body">
+            <div class="activity-name-line">
+              <span class="activity-name mono" title={tc.name}>{tc.displayName}</span>
+              {#if tc.type === 'mcp'}
+                <span class="activity-badge activity-badge-mcp">{$t('toolCalls.badgeMcp')}</span>
+              {:else if tc.type === 'skill'}
+                <span class="activity-badge activity-badge-skill">{$t('toolCalls.badgeSkill')}</span>
+              {/if}
+            </div>
+            <div class="activity-bar-track" aria-hidden="true">
+              <div class="activity-bar-fill" style="width: {tc.percentage}%"></div>
+            </div>
+          </div>
+          <div class="activity-stats">
+            <span class="activity-stat"><span class="activity-stat-label">{$t('activity.calls')}</span><span class="activity-stat-value mono">{formatNumber(tc.count)}</span></span>
+            <span class="activity-stat"><span class="activity-stat-label">{$t('projects.share')}</span><span class="activity-stat-value mono">{tc.percentage.toFixed(1)}%</span></span>
+          </div>
+          <span class="activity-chevron" aria-hidden="true"><ChevronRight size={15} strokeWidth={1.85} /></span>
+        </a>
+      {/each}
+    </div>
+  {/if}
 </div>

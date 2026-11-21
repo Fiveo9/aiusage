@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { selectedDevice, setDevice } from '../stores.js'
   import { t } from '../i18n.js'
+  import DropdownSelect from './ui/DropdownSelect.svelte'
+  import { Monitor } from 'lucide-svelte'
 
   let devices = []
   let loading = true
@@ -19,19 +21,13 @@
   })
 
   function handleChange(e) {
-    setDevice(e.target.value)
+    setDevice(e.detail)
   }
 
   function formatLabel(d) {
-    // e.g. "Windows DESKTOP-ID9N81U (10174)" or "macOS MacBook-Pro (816)"
     const parts = []
-    if (d.platform) {
-      parts.push(d.platform)
-    } else {
-      parts.push('Unknown')
-    }
+    parts.push(d.platform || 'Unknown')
     parts.push(d.displayName)
-    parts.push(`(${d.recordCount})`)
     return parts.join(' ')
   }
 
@@ -43,49 +39,37 @@
     return lines.join('\n')
   }
 
-  $: selectedInfo = devices.find(d => d.deviceInstanceId === $selectedDevice)
+  $: selectedInfo = devices.find((d) => d.deviceInstanceId === $selectedDevice)
+  $: deviceOptions = [
+    { value: '', label: $t('device.allDevices') },
+    ...devices.map((d) => ({
+      value: d.deviceInstanceId,
+      label: formatLabel(d),
+      meta: String(d.recordCount),
+      title: getTooltip(d),
+    })),
+  ]
 </script>
 
 <div class="device-selector">
-  <select
+  <DropdownSelect
+    options={deviceOptions}
     value={$selectedDevice}
-    on:change={handleChange}
+    placeholder={$t('device.allDevices')}
     disabled={loading}
+    active={Boolean($selectedDevice)}
+    icon={Monitor}
+    minWidth="13.5rem"
+    ariaLabel={$t('device.allDevices')}
     title={selectedInfo ? getTooltip(selectedInfo) : $t('device.allDevices')}
-  >
-    <option value="">{$t('device.allDevices')}</option>
-    {#each devices as d}
-      <option value={d.deviceInstanceId} title={getTooltip(d)}>{formatLabel(d)}</option>
-    {/each}
-  </select>
+    on:change={handleChange}
+  />
 </div>
 
 <style>
   .device-selector {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    flex-wrap: wrap;
-  }
-  select {
-    padding: 0.38rem 0.6rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    background: var(--surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    appearance: auto;
-    min-height: var(--control-height);
     max-width: 100%;
-  }
-  select:focus {
-    border-color: var(--accent);
-  }
-  select:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 </style>

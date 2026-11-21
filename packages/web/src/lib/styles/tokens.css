@@ -1,0 +1,142 @@
+/* ── Minimalist Engineering Design Tokens (Linear / Vercel / Raycast) ────── */
+
+html {
+  font-size: 100%;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --font-mono: var(--mono);
+  --font-numeric: var(--mono);
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-title: 1.375rem;
+
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --control-height: 2rem;
+
+  --sidebar-width: 220px;
+  --sidebar-collapsed: 58px;
+
+  /* ── Light Theme ── */
+  --bg: oklch(0.985 0.002 250);
+  --surface: oklch(1 0 0);
+  --surface-elevated: oklch(1 0 0);
+  --raised: oklch(0.968 0.003 250);
+  --hover: oklch(0.95 0.004 250);
+  --sidebar-bg: oklch(0.992 0.002 250);
+
+  --border-subtle: oklch(0.918 0.004 250);
+  --border: var(--border-subtle);
+  --border-medium: oklch(0.845 0.006 250);
+  --border-highlight: oklch(0 0 0 / 0.05);
+
+  --text: oklch(0.165 0.01 250);
+  --text-secondary: oklch(0.42 0.01 250);
+  --text-muted: oklch(0.56 0.008 250);
+
+  --accent: oklch(0.54 0.145 162);
+  --accent-strong: oklch(0.46 0.155 162);
+  --accent-dim: oklch(0.54 0.145 162 / 0.10);
+  --accent-hover: oklch(0.49 0.15 162);
+
+  --green: oklch(0.56 0.155 152);
+  --green-dim: oklch(0.56 0.155 152 / 0.10);
+  --blue: oklch(0.55 0.15 250);
+  --blue-dim: oklch(0.55 0.15 250 / 0.10);
+  --purple: oklch(0.56 0.15 300);
+  --purple-dim: oklch(0.56 0.15 300 / 0.10);
+  --rose: oklch(0.57 0.19 25);
+  --rose-dim: oklch(0.57 0.19 25 / 0.10);
+  --amber: oklch(0.66 0.16 70);
+  --amber-dim: oklch(0.66 0.16 70 / 0.11);
+
+  --badge-override-bg: oklch(0.54 0.145 162 / 0.10);
+  --badge-override-fg: oklch(0.46 0.155 162);
+  --badge-matched-bg: oklch(0.56 0.155 152 / 0.10);
+  --badge-matched-fg: oklch(0.48 0.15 152);
+  --badge-noprice-bg: oklch(0.57 0.19 25 / 0.10);
+  --badge-noprice-fg: oklch(0.54 0.19 25);
+
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.03);
+  --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.07), 0 0 0 1px var(--border-subtle);
+  --shadow-lg: 0 16px 32px -6px oklch(0 0 0 / 0.12), 0 0 0 1px var(--border-subtle);
+  --glow-card: 0 0 0 1px var(--border-subtle);
+
+  --overlay: oklch(0 0 0 / 0.35);
+
+  --chart-input: oklch(0.56 0.145 162);
+  --chart-output: oklch(0.56 0.15 250);
+  --chart-cache-read: oklch(0.68 0.13 70);
+  --chart-cache-write: oklch(0.58 0.145 305);
+  --chart-thinking: oklch(0.59 0.18 25);
+  --chart-total: oklch(0.54 0.145 162);
+}
+
+:root[data-theme="dark"] {
+  --bg: oklch(0.132 0.004 255);
+  --surface: oklch(0.162 0.005 255);
+  --surface-elevated: oklch(0.192 0.006 255);
+  --raised: oklch(0.195 0.006 255);
+  --hover: oklch(0.228 0.007 255);
+  --sidebar-bg: oklch(0.142 0.005 255);
+
+  --border-subtle: oklch(1 0 0 / 0.08);
+  --border: var(--border-subtle);
+  --border-medium: oklch(1 0 0 / 0.15);
+  --border-highlight: oklch(1 0 0 / 0.10);
+
+  --text: oklch(0.955 0.004 255);
+  --text-secondary: oklch(0.74 0.008 255);
+  --text-muted: oklch(0.54 0.008 255);
+
+  --accent: oklch(0.73 0.15 162);
+  --accent-strong: oklch(0.81 0.14 162);
+  --accent-dim: oklch(0.73 0.15 162 / 0.14);
+  --accent-hover: oklch(0.78 0.145 162);
+
+  --green: oklch(0.74 0.15 152);
+  --green-dim: oklch(0.74 0.15 152 / 0.15);
+  --blue: oklch(0.73 0.14 250);
+  --blue-dim: oklch(0.73 0.14 250 / 0.15);
+  --purple: oklch(0.74 0.14 300);
+  --purple-dim: oklch(0.74 0.14 300 / 0.15);
+  --rose: oklch(0.72 0.18 25);
+  --rose-dim: oklch(0.72 0.18 25 / 0.15);
+  --amber: oklch(0.77 0.15 72);
+  --amber-dim: oklch(0.77 0.15 72 / 0.15);
+
+  --badge-override-bg: oklch(0.73 0.15 162 / 0.16);
+  --badge-override-fg: oklch(0.76 0.145 162);
+  --badge-matched-bg: oklch(0.74 0.15 152 / 0.16);
+  --badge-matched-fg: oklch(0.76 0.145 152);
+  --badge-noprice-bg: oklch(0.72 0.18 25 / 0.15);
+  --badge-noprice-fg: oklch(0.75 0.17 25);
+
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.4);
+  --shadow-md: 0 6px 18px oklch(0 0 0 / 0.55), 0 0 0 1px var(--border-subtle);
+  --shadow-lg: 0 18px 40px oklch(0 0 0 / 0.72), 0 0 0 1px var(--border-medium);
+  --glow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
+
+  --overlay: oklch(0 0 0 / 0.65);
+
+  --chart-input: oklch(0.73 0.145 162);
+  --chart-output: oklch(0.72 0.14 250);
+  --chart-cache-read: oklch(0.78 0.12 72);
+  --chart-cache-write: oklch(0.74 0.13 305);
+  --chart-thinking: oklch(0.73 0.17 25);
+  --chart-total: oklch(0.73 0.15 162);
+}

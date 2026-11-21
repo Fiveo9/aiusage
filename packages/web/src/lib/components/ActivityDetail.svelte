@@ -7,6 +7,7 @@
   import { activityDetailUrl, fetchActivityDetail, sessionDetailUrl } from '$lib/api.js'
   import { createRequestTracker } from '$lib/sessions-paging.js'
   import { sessionLabel } from '$lib/session-title.js'
+  import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-svelte'
 
   export let kind
   const beginRequest = createRequestTracker()
@@ -30,7 +31,10 @@
 
 <svelte:head><title>{params.name || ''} — {$t(project ? 'projects.sessions' : 'toolCalls.title')}</title></svelte:head>
 <div class="page-header activity-detail-header">
-  <a class="activity-back-link" href={project ? '/projects' : '/tool-calls'}>← {$t(project ? 'projects.title' : 'toolCalls.title')}</a>
+  <a class="activity-back-link" href={project ? '/projects' : '/tool-calls'}>
+    <ArrowLeft size={14} strokeWidth={1.9} />
+    <span>{$t(project ? 'projects.title' : 'toolCalls.title')}</span>
+  </a>
   <h1>{params.name}</h1>
   <p>{$t(project ? 'activity.projectDetail' : 'activity.toolDetail')}</p>
 </div>
@@ -87,31 +91,28 @@
       <span class="activity-page-info mono">{$t('common.page')} {data.page} / {Math.max(1, Math.ceil(data.total / data.pageSize))}</span>
       <div class="activity-page-actions">
         {#if data.page > 1}
-          <a class="activity-page-button" href={activityDetailUrl($page.url.pathname, { ...params, page: data.page - 1 })}>← {$t('common.previous')}</a>
+          <a class="activity-page-button" href={activityDetailUrl($page.url.pathname, { ...params, page: data.page - 1 })}>
+            <ChevronLeft size={14} strokeWidth={1.9} />
+            <span>{$t('common.previous')}</span>
+          </a>
         {:else}
-          <button class="activity-page-button" disabled>← {$t('common.previous')}</button>
+          <button class="activity-page-button" disabled>
+            <ChevronLeft size={14} strokeWidth={1.9} />
+            <span>{$t('common.previous')}</span>
+          </button>
         {/if}
         {#if data.page * data.pageSize < data.total}
-          <a class="activity-page-button" href={activityDetailUrl($page.url.pathname, { ...params, page: data.page + 1 })}>{$t('common.next')} →</a>
+          <a class="activity-page-button" href={activityDetailUrl($page.url.pathname, { ...params, page: data.page + 1 })}>
+            <span>{$t('common.next')}</span>
+            <ChevronRight size={14} strokeWidth={1.9} />
+          </a>
         {:else}
-          <button class="activity-page-button" disabled>{$t('common.next')} →</button>
+          <button class="activity-page-button" disabled>
+            <span>{$t('common.next')}</span>
+            <ChevronRight size={14} strokeWidth={1.9} />
+          </button>
         {/if}
       </div>
     </nav>
   </div>
 {/if}
-
-<style>
-  .loading-spin {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--border-medium);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-right: 0.5rem;
-    vertical-align: middle;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-</style>

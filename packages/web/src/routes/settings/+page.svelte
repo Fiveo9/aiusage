@@ -5,7 +5,9 @@
   import { displayCurrency, exchangeRate } from '$lib/stores.js'
   import { splitSettingsSources } from '$lib/settings-sources.js'
   import { githubConnection } from '$lib/api.js'
+  import { ChevronRight, Sliders, Database, Cloud } from 'lucide-svelte'
 
+  let activeSection = 'general'
   let loading = true
   let loadError = null
 
@@ -551,12 +553,54 @@
 </div>
 
 {#if loading}
-  <div class="state-msg">{$t('common.loading')}</div>
+  <div class="card">
+    <div class="skeleton skeleton-line" style="width: 140px; margin-bottom: 1rem;"></div>
+    <div class="skeleton" style="height: 160px;"></div>
+  </div>
 {:else if loadError}
   <div class="state-msg error">{loadError}</div>
 {:else}
+  <div class="settings-tabs-wrap">
+    <div class="segmented settings-tabs" role="tablist" aria-label={$t('settings.title')}>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeSection === 'general'}
+        class="segmented-btn"
+        class:active={activeSection === 'general'}
+        on:click={() => { activeSection = 'general' }}
+      >
+        <Sliders size={13} strokeWidth={1.9} />
+        <span>{$t('settings.tabGeneral')}</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeSection === 'sources'}
+        class="segmented-btn"
+        class:active={activeSection === 'sources'}
+        on:click={() => { activeSection = 'sources' }}
+      >
+        <Database size={13} strokeWidth={1.9} />
+        <span>{$t('settings.tabSources')}</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeSection === 'sync'}
+        class="segmented-btn"
+        class:active={activeSection === 'sync'}
+        on:click={() => { activeSection = 'sync' }}
+      >
+        <Cloud size={13} strokeWidth={1.9} />
+        <span>{$t('settings.tabSync')}</span>
+      </button>
+    </div>
+  </div>
+
   <div class="sections">
 
+    {#if activeSection === 'general'}
     <!-- General (merged: general + data + currency) -->
     <div class="card">
       <div class="group-title">{$t('settings.general')}</div>
@@ -619,6 +663,7 @@
         </button>
       </div>
     </div>
+    {:else if activeSection === 'sources'}
 
     <!-- Data Sources -->
     <div class="card">
@@ -706,7 +751,9 @@
           {/each}
           {#if notFoundTools.length}
             <button class="not-found-toggle" on:click={() => showNotFound = !showNotFound}>
-              <span class="not-found-chevron" class:open={showNotFound}>&#9654;</span>
+              <span class="not-found-chevron" class:open={showNotFound}>
+                <ChevronRight size={13} strokeWidth={2} />
+              </span>
               {$t('settings.toolNotFound')} ({notFoundTools.length})
             </button>
             {#if showNotFound}
@@ -726,6 +773,7 @@
         </div>
       </div>
     </div>
+    {:else}
 
     <!-- Sync -->
     <div class="card sync-card">
@@ -1007,26 +1055,34 @@
         </div>
       {/if}
     </div>
+    {/if}
 
   </div>
 {/if}
 
 <style>
+  .settings-tabs-wrap {
+    margin-bottom: 1rem;
+  }
+
+  .settings-tabs {
+    flex-wrap: wrap;
+  }
+
   .sections {
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
-    max-width: none;
+    gap: 1rem;
+    max-width: 960px;
   }
 
   .card {
     background: var(--surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 1.5rem;
+    padding: 1.25rem;
     box-shadow: var(--shadow-sm);
   }
-  .sync-card { order: -1; }
 
   .group-title-row {
     display: flex;
@@ -1144,29 +1200,27 @@
 
   .btn-save {
     font-family: var(--font-sans);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
-    padding: 0.45rem 1.25rem;
+    height: var(--control-height);
+    padding: 0 1rem;
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     background: var(--accent);
     color: #ffffff;
     cursor: pointer;
-    box-shadow: 0 2px 8px -1px var(--accent-dim);
-    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: background-color 0.14s ease, border-color 0.14s ease;
     min-width: 72px;
   }
   .btn-save:hover:not(:disabled) {
     background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px 0 var(--accent-dim);
+    border-color: var(--accent-hover);
   }
-  .btn-save:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
+  .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-save.saved {
     border-color: var(--green);
     background: var(--green-dim);
     color: var(--green);
-    box-shadow: none;
   }
 
   .sync-status-section {
@@ -1232,22 +1286,22 @@
   }
   .btn-sync {
     font-family: var(--font-sans);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
-    padding: 0.45rem 1.125rem;
+    height: var(--control-height);
+    padding: 0 1rem;
     border: 1px solid var(--border-medium);
     border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--text);
     cursor: pointer;
     box-shadow: var(--shadow-sm);
-    transition: all 0.16s ease;
+    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
   }
   .btn-sync:hover:not(:disabled) {
     border-color: var(--accent);
     color: var(--accent);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+    background: var(--raised);
   }
   .btn-sync:disabled { opacity: 0.55; cursor: not-allowed; }
 
@@ -1304,7 +1358,6 @@
   .toggle-row input:checked + .switch {
     border-color: var(--accent);
     background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-dim);
   }
 
   .toggle-row input:checked + .switch::after {
@@ -1538,9 +1591,9 @@
   }
 
   .not-found-chevron {
-    font-size: 0.5rem;
-    transition: transform 0.15s;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    transition: transform 0.15s ease;
   }
   .not-found-chevron.open {
     transform: rotate(90deg);

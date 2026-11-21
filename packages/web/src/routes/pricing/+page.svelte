@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n.js'
   import { fetchPricing, updatePricing, deletePricing, syncPricing, bindPricingAlias, unbindPricingAlias, recalcPricing, fetchPricingRecalcStatus } from '$lib/api.js'
   import { recalcStatus, displayCurrency, exchangeRate } from '$lib/stores.js'
+  import { Search, X } from 'lucide-svelte'
 
   let models = []
   let loading = true
@@ -576,7 +577,9 @@
           </button>
         {/if}
         {#if !recalcActive}
-          <button class="recalc-close" type="button" on:click={dismissRecalcPanel} aria-label="Close">×</button>
+          <button class="recalc-close" type="button" on:click={dismissRecalcPanel} aria-label="Close">
+            <X size={14} strokeWidth={2} />
+          </button>
         {/if}
       </div>
     </div>
@@ -723,13 +726,16 @@
   <div class="pricing-toolbar">
     <label class="model-filter">
       <span>{$t('pricing.modelSearch')}</span>
-      <input
-        class="model-filter-input"
-        type="search"
-        bind:value={modelSearch}
-        placeholder={$t('pricing.modelSearchPlaceholder')}
-        aria-label={$t('pricing.modelSearch')}
-      />
+      <div class="model-search-wrap">
+        <span class="model-search-icon" aria-hidden="true"><Search size={13} strokeWidth={1.9} /></span>
+        <input
+          class="model-filter-input"
+          type="search"
+          bind:value={modelSearch}
+          placeholder={$t('pricing.modelSearchPlaceholder')}
+          aria-label={$t('pricing.modelSearch')}
+        />
+      </div>
     </label>
     <span class="pricing-count">{$t('pricing.modelSearchCount').replace('{shown}', visibleModels.length).replace('{total}', models.length)}</span>
   </div>
@@ -964,32 +970,35 @@
     transition: width 0.2s ease-out;
   }
 
-  /* ── Currency Toggle (Segmented Pill) ───────────────────── */
+  /* ── Currency Toggle (Segmented Switcher) ─────────────────── */
   .currency-toggle {
     display: inline-flex;
     align-items: center;
     background: var(--raised);
     border: 1px solid var(--border-subtle);
-    border-radius: 9999px;
+    border-radius: var(--radius-sm);
     padding: 2px;
     gap: 2px;
+    height: var(--control-height);
   }
   .toggle-btn {
     font-family: var(--font-sans);
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 0.25rem 0.65rem;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    height: calc(var(--control-height) - 6px);
+    padding: 0 0.6rem;
     border: none;
-    border-radius: 9999px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: background-color 0.14s ease, color 0.14s ease;
   }
   .toggle-btn.active {
     background: var(--surface);
-    color: var(--accent);
-    box-shadow: 0 1px 3px oklch(0 0 0 / 0.12);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
   }
   .toggle-btn:not(.active):hover {
     color: var(--text);
@@ -998,8 +1007,8 @@
   /* ── Grid & Cards ───────────────────────────────────────── */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    gap: 0.75rem;
   }
 
   .pricing-toolbar {
@@ -1016,26 +1025,38 @@
     width: min(420px, 100%);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.01em;
   }
+  .model-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .model-search-icon {
+    position: absolute;
+    left: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
   .model-filter-input {
-    height: 34px;
+    height: var(--control-height);
     width: 100%;
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--raised);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
     color: var(--text);
     font-family: var(--font-sans);
-    font-size: 0.78rem;
-    padding: 0 0.75rem;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    font-size: var(--text-xs);
+    padding: 0 0.7rem 0 1.85rem;
+    transition: border-color 0.14s ease;
   }
   .model-filter-input:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-dim);
   }
   .pricing-count {
     color: var(--text-muted);
@@ -1305,22 +1326,19 @@
   .card {
     background: var(--surface);
     border: 1px solid var(--border-subtle);
-    border-radius: 12px;
-    padding: 1.15rem 1.25rem;
+    border-radius: var(--radius-md);
+    padding: 1rem 1.125rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.65rem;
     box-shadow: var(--shadow-sm);
-    transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.15s ease, box-shadow 0.15s ease;
-    animation: fadeIn 0.2s ease both;
+    transition: border-color 0.14s ease;
   }
   .card:hover:not(.no-price) {
-    border-color: var(--border);
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+    border-color: var(--border-medium);
   }
   .card.no-price {
-    opacity: 0.55;
+    opacity: 0.58;
     border-style: dashed;
   }
 

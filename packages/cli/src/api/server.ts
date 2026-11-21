@@ -2022,7 +2022,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           // fold a copy into it, so the backup is read in the write queue.
           const result = await runDbWrite(() => runParseKelivo({
             filePath: tempPath,
-            device: getDeviceName(),
+            device: cfg?.device || hostname() || `${platform()}-${process.arch}`,
             deviceInstanceId,
             recordId: recordIdsForReread(db, deviceInstanceId).recordId,
             platform: cfg?.platform ?? platform(),

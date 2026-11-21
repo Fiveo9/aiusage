@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('test', 'build', 'install')][string]$Task,
     [Parameter(Mandatory)][ValidateSet('linux', 'android14')][string]$Target,
-    [ValidateSet('review', 'full', 'linux-resources')][string]$Scope = 'review',
+    [ValidateSet('review', 'full', 'postgres', 'linux-resources')][string]$Scope = 'review',
     [string]$Machine,
     [string]$CliPath,
     [string]$ResumeRunId,
@@ -100,7 +100,7 @@ try {
         Assert-Transport $resumed 'resume'
         if ($resumed.code -ne 0) { throw "Instance resume failed (exit $($resumed.code))." }
     }
-    $probeCommand = 'set -eu; printf "os="; uname -s; printf "arch="; uname -m; printf "workdir="; pwd; for tool in node npm pnpm python3 tar gcc make psql initdb pg_ctl; do printf "%s=" "$tool"; command -v "$tool" || true; printf "\n"; done; head -1 /proc/meminfo; df -Pk . /tmp /data; df -Pi . /tmp /data; for dir in /data/home /data/home/ubuntu /data/home/user; do if test -w "$dir"; then printf "writable=%s\n" "$dir"; fi; done'
+    $probeCommand = 'set -eu; printf "os="; uname -s; printf "arch="; uname -m; printf "workdir="; pwd; for tool in node npm pnpm python3 tar gcc make psql initdb pg_ctl docker podman unshare sudo curl; do printf "%s=" "$tool"; command -v "$tool" || true; printf "\n"; done; head -1 /proc/meminfo; df -Pk . /tmp /data; df -Pi . /tmp /data; for dir in /data/home /data/home/ubuntu /data/home/user; do if test -w "$dir"; then printf "writable=%s\n" "$dir"; fi; done; if command -v docker >/dev/null; then docker version --format "client={{.Client.Version}} server={{if .Server}}{{.Server.Version}}{{end}}" 2>/dev/null || true; fi; for file in /usr/lib/postgresql/*/bin/postgres /usr/lib/postgresql/*/bin/initdb /usr/lib/postgresql/*/bin/pg_ctl; do if test -x "$file"; then printf "postgres_binary=%s\n" "$file"; fi; done'
     $probe = Invoke-Instabox @('exec', $Machine, '--timeout', '30', '--json', '--', 'bash', '-c', $probeCommand)
     Assert-Transport $probe 'probe'
     if ($probe.code -ne 0 -or $probe.data.exitCode -ne 0) { throw 'Linux resource probe failed; the instance may be offline. No fallback was attempted.' }
@@ -210,6 +210,14 @@ exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$root/home" TMPDIR="$root/tm
     $remoteSummary = Get-Content -LiteralPath (Join-Path $runDir 'remote-summary.json') -Raw | ConvertFrom-Json -AsHashtable
     $summary.tests = $remoteSummary.tests
     $summary.category = $remoteSummary.category
+    if ($remoteSummary.ContainsKey('evidenceFiles')) {
+        foreach ($file in $remoteSummary.evidenceFiles) {
+            if ($file -notmatch '^[a-z0-9-]+\.json$') { throw 'Invalid additional evidence name.' }
+            $download = Invoke-Instabox @('pull', $Machine, "$remoteResults/$file", (Join-Path $runDir $file), '--json') 90
+            Assert-Transport $download 'evidence-download'
+            if ($download.code -ne 0) { throw 'Additional evidence download failed.' }
+        }
+    }
     foreach ($entry in $remoteSummary.steps) {
         if ($entry.name -notmatch '^[a-z0-9-]+$') { throw 'Invalid remote evidence name.' }
         $download = Invoke-Instabox @('pull', $Machine, "$remoteResults/$($entry.name).log", (Join-Path $runDir "$($entry.name).log"), '--json') 90

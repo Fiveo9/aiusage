@@ -10,7 +10,7 @@ const attempt = process.env.AIUSAGE_CHECK_ATTEMPT
 if (attempt && !/^\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(attempt)) throw Error('Invalid attempt ID')
 const results = attempt ? join(root, 'attempts', attempt) : join(root, 'results')
 const [task, scope] = process.argv.slice(2)
-if (!['test', 'build'].includes(task) || !['review', 'full'].includes(scope)) throw Error('Invalid task/scope')
+if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres'].includes(scope)) throw Error('Invalid task/scope')
 mkdirSync(results, { recursive: true })
 const summary = { task, scope, status: 'running', category: 'source-integrity', exitCode: null, steps: [], tests: { passed: 0, failed: 0, skipped: 0, total: 0 }, node: process.version }
 const save = () => writeFileSync(join(results, 'summary.json'), JSON.stringify(summary, null, 2))
@@ -109,20 +109,38 @@ try {
   writeFileSync(readyFile, JSON.stringify({ lockHash, node: process.version }))
   }
   await pnpmStep('core-build', ['--dir', 'packages/core', 'run', 'build'], 'remote-build')
-  if (task === 'test') {
+  if (scope === 'postgres') {
+    summary.evidenceFiles = ['postgres-result.json']; save()
+    await step('postgres-concurrency', process.execPath, ['scripts/remote-check-postgres.mjs'], 'postgres-integration')
+    const pgResult = JSON.parse(readFileSync(join(results, 'postgres-result.json'), 'utf8'))
+    if (pgResult.status !== 'passed' || !pgResult.stopped) throw Error('PostgreSQL acceptance incomplete')
+    summary.integrationAssertions = pgResult.assertions
+  } else if (task === 'test') {
+    if (scope === 'full') {
+      const failedPackages = []
+      for (const pkg of ['core', 'cli', 'widget', 'site', 'web']) {
+        try {
+          if (pkg === 'site') await pnpmStep('site-sync', ['--dir', 'packages/site', 'exec', 'svelte-kit', 'sync'], 'remote-build')
+          await tests(pkg, [])
+        } catch (error) { failedPackages.push(pkg); console.error(error.message) }
+      }
+      summary.category = 'unit-test'
+      if (failedPackages.length) throw Error(`Failed packages: ${failedPackages.join(', ')}`)
+    } else {
     await tests('core', scope === 'full' ? [] : ['tests/codex.test.ts', 'tests/codex-reasoning.test.ts', 'tests/codex-file-boundary.test.ts'])
     await tests('cli', [])
     await tests('widget', scope === 'full' ? [] : ['tests/data.test.ts', 'tests/dst-boundary.test.ts'])
     await pnpmStep('site-sync', ['--dir', 'packages/site', 'exec', 'svelte-kit', 'sync'], 'remote-build')
     await tests('site', scope === 'full' ? [] : ['tests/initialization.test.ts', 'tests/db/migration-lock.test.ts', 'tests/db/schema-migrations.test.ts', 'tests/db/entry-hidden-migration.pg.test.ts', 'tests/db/migration-atomicity.pg.test.ts'])
-    if (scope === 'full') await tests('web', [])
+    }
   } else {
     for (const pkg of ['web', 'cli', 'site']) await pnpmStep(`${pkg}-build`, ['--dir', `packages/${pkg}`, 'run', 'build'], 'remote-build')
     await pnpmStep('widget-renderer', ['--dir', 'packages/widget', 'exec', 'vite', 'build'], 'remote-build')
     await pnpmStep('widget-types', ['--dir', 'packages/widget', 'exec', 'tsc', '--noEmit'], 'remote-build')
     summary.widgetNative = 'not_run'; summary.widgetGui = 'not_run'
   }
-  summary.status = 'passed'; summary.exitCode = 0; summary.category = task === 'test' ? 'unit-test' : 'remote-build'
+  summary.status = 'passed'; summary.exitCode = 0
+  if (!['postgres', 'docker'].includes(scope)) summary.category = task === 'test' ? 'unit-test' : 'remote-build'
 } catch (error) {
   summary.status = 'failed'; summary.exitCode = 1; summary.message = error.message
   console.error(error.message)

@@ -20,6 +20,7 @@ CLI 自行读取 `INSTABOX_API_KEY` 或已有登录会话。脚本不读取配�
 
 - `-Task test -Scope review`（默认）：core 的 Codex 回归、CLI 专用修复回归及认证、widget 日期/统计、site 初始化/迁移与 PGlite 回滚验证。
 - `-Task test -Scope full`：各包完整测试套件；CLI 采用其原配置，但 Node 文件系统清理由隔离回收拦截器处理。测试仍可能有既有失败，不预先宣称通过。
+- `-Task test -Scope postgres -ReuseRunId <runId>`：使用专属 PostgreSQL 容器和两个独立 Node 迁移进程，观察真实锁等待、提交/回滚释放及重试；容器只绑定回环地址，完成后停止保留。
 - `-Task build`：core、Web、CLI、site 生产构建，以及 widget renderer 和类型检查。Linux 构建不等同于 Electron GUI 或 Electron 原生 ABI 验证。
 - `-Scope linux-resources`：仅确认 Linux、工具链、内存、磁盘及 inode 情况，不上传源码。
 
@@ -66,3 +67,5 @@ pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope
 调试过程中保留了真实失败证据：最初 `/data` 根目录无写入权限，已改为当前用户拥有的持久目录；一次 `/tmp` 安装因 4 GiB tmpfs 耗尽返回 `ERR_PNPM_ENOSPC`（`20261119T124920Z-7651a0e6/install.log`）；widget 首次因 Vitest 2 的 worker 默认配置未收集测试，显式设置 `--minWorkers=1 --maxWorkers=2` 后通过。失败任务未被标为通过；没有物理删除失败目录。该 `/tmp/aiusage-check/20261119T124920Z-7651a0e6` 仍保留，后续任务使用独立持久 tmp，不使用已满的系统 tmpfs。
 
 只读 review 已覆盖打包、实例选择、运行目录、依赖引导、续跑/复用、结果判定和回收边界，并补齐排他锁、归档检查、未知任务状态保护与磁盘前置检查。本次未运行 `-Scope full`，未执行 GitHub Actions、容器发布、Linux Electron GUI 或独立 PostgreSQL 多实例锁竞争；site 的数据库回归为 PGlite SQL 引擎及初始化并发 mock，不能替代多实例 PostgreSQL 服务测试。
+
+后续完整验收：`20261119T134309Z-b1b2dec5` 的 full 范围覆盖五个包，1,877 项中 1,876 通过、0 失败、1 项 Windows 专属用例按平台跳过。`20261119T134852Z-d2bfebde` 的 postgres 范围在 PostgreSQL 16.16 容器执行 12 项断言，确认两个独立迁移进程、真实 advisory lock 等待、提交释放、异常回滚释放及再次迁移成功；容器已停止。对应本地/远程退出码均为 0，详细 JSON 分别位于各 runId 目录。

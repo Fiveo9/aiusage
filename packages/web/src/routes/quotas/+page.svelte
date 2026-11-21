@@ -66,7 +66,7 @@
 
   function utilizationBarColor(pct) {
     if (pct >= 90) return 'var(--rose)'
-    if (pct >= 70) return 'oklch(0.7 0.15 60)'
+    if (pct >= 70) return 'var(--amber)'
     return 'var(--green)'
   }
 
@@ -118,11 +118,14 @@
 </div>
 
 {#if loading && !data}
-  <div class="state-msg"><p>{$t('common.loading')}</p></div>
+  <div class="card state-msg">
+    <span class="loading-spin"></span>
+    <span>{$t('common.loading')}</span>
+  </div>
 {:else if error}
-  <div class="state-msg error"><p>{error}</p></div>
+  <div class="card state-msg error"><p>{error}</p></div>
 {:else if visibleQuotas.length === 0}
-  <div class="state-msg"><p>{$t('common.noData')}</p></div>
+  <div class="card state-msg"><p>{$t('common.noData')}</p></div>
 {:else}
   <!-- Active tools with credentials -->
   {#if activeQuotas.length > 0}
@@ -131,7 +134,7 @@
         <div class="quota-card card">
           <div class="card-header">
             <span class="tool-name">{toolLabel(quota.tool)}</span>
-            <span class="query-time">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt)}</span>
+            <span class="query-time mono">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt)}</span>
           </div>
 
           {#if quota.credentialStatus === 'expired' && !quota.success}
@@ -176,7 +179,7 @@
                   <div class="tier-label">
                     <span class="tier-name">{tierLabel(tier.name)}</span>
                     {#if countdown}
-                      <span class="tier-reset">↻ {countdown}</span>
+                      <span class="tier-reset mono">↻ {countdown}</span>
                     {/if}
                   </div>
                   <div class="tier-bar-wrap">
@@ -186,7 +189,7 @@
                         style="width: {pct}%; background: {utilizationBarColor(tier.utilization)}"
                       ></div>
                     </div>
-                    <span class="tier-pct" style="color: {utilizationBarColor(tier.utilization)}">{pct}%</span>
+                    <span class="tier-pct mono" style="color: {utilizationBarColor(tier.utilization)}">{pct}%</span>
                   </div>
                 </div>
               {/each}
@@ -227,22 +230,26 @@
   .refresh-btn {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.875rem;
-    background: var(--accent-dim);
-    color: var(--accent);
-    border: 1px solid transparent;
-    border-radius: 6px;
+    gap: 0.5rem;
+    padding: 0.45rem 1.1rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
     font-size: 0.8125rem;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.16s ease;
     white-space: nowrap;
     flex-shrink: 0;
   }
   .refresh-btn:hover:not(:disabled) {
-    background: var(--accent-dim);
-    border-color: var(--accent);
+    background: var(--hover);
+    border-color: var(--border-medium);
+    color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
   }
   .refresh-btn:disabled {
     opacity: 0.5;
@@ -263,13 +270,14 @@
   .quota-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 1rem;
+    gap: 1.25rem;
   }
 
   .quota-card {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.25rem;
+    padding: 1.5rem;
   }
 
   .card-header {
@@ -280,13 +288,13 @@
   }
 
   .tool-name {
-    font-size: 0.9375rem;
-    font-weight: 600;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.015em;
     color: var(--text);
   }
 
   .query-time {
-    font-family: var(--mono);
     font-size: 0.75rem;
     color: var(--text-muted);
     white-space: nowrap;
@@ -296,13 +304,13 @@
   .tiers {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 1rem;
   }
 
   .tier-row {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.375rem;
   }
 
   .tier-label {
@@ -313,42 +321,49 @@
   }
 
   .tier-name {
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: 0.8125rem;
+    font-weight: 600;
     color: var(--text-secondary);
   }
 
   .tier-reset {
-    font-family: var(--mono);
     font-size: 0.75rem;
+    font-weight: 500;
     color: var(--text-muted);
+    padding: 0.1rem 0.45rem;
+    background: var(--raised);
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
   }
 
   .tier-bar-wrap {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
   .tier-bar {
     flex: 1;
-    height: 6px;
+    height: 7px;
     background: var(--raised);
-    border-radius: 99px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
     overflow: hidden;
   }
 
   .tier-fill {
     height: 100%;
-    border-radius: 99px;
-    transition: width 0.4s ease;
+    border-radius: inherit;
+    box-shadow: 0 0 6px currentColor;
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .tier-pct {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 600;
-    width: 3rem;
+    font-family: var(--font-numeric);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    width: 3.25rem;
     text-align: right;
     flex-shrink: 0;
   }
@@ -357,29 +372,28 @@
   .status-msg {
     display: flex;
     align-items: flex-start;
-    gap: 0.625rem;
-    padding: 0.75rem;
-    border-radius: 6px;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-sm);
     font-size: 0.8125rem;
   }
 
   .status-warn {
-    background: oklch(0.96 0.02 80);
-    color: oklch(0.5 0.14 60);
-  }
-  :global(:root[data-theme="dark"]) .status-warn {
-    background: oklch(0.22 0.04 60);
-    color: oklch(0.75 0.14 60);
+    background: var(--amber-dim);
+    color: var(--amber);
+    border: 1px solid var(--amber);
   }
 
   .status-error {
     background: var(--rose-dim);
     color: var(--rose);
+    border: 1px solid var(--rose);
   }
 
   .status-neutral {
     background: var(--raised);
     color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
   }
 
   .status-icon {
@@ -390,12 +404,12 @@
 
   .status-title {
     font-weight: 600;
-    margin-bottom: 0.125rem;
+    margin-bottom: 0.15rem;
   }
 
   .status-hint {
     font-size: 0.75rem;
-    opacity: 0.8;
+    opacity: 0.85;
     line-height: 1.4;
   }
 
@@ -403,7 +417,7 @@
   .inactive-list {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.625rem;
   }
 
   .inactive-card {
@@ -411,20 +425,32 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.875rem 1.25rem;
-    opacity: 0.6;
+    padding: 1rem 1.35rem;
+    opacity: 0.65;
   }
 
   .inactive-hint {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.5rem;
     font-size: 0.75rem;
     color: var(--text-muted);
   }
 
   .hint-icon {
     font-size: 0.75rem;
+  }
+
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+    vertical-align: middle;
   }
 
   @media (max-width: 800px) {

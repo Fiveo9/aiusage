@@ -2,12 +2,27 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { AIUSAGE_DIR } from '../../src/config.js'
+import { hasCredentials, loadCredentials, saveCredentials } from '../../src/device-auth/credentials.js'
 
 // We need to mock AIUSAGE_DIR before importing credentials
 // Use dynamic import after setting env
 let testDir: string
 
 describe('credentials', () => {
+  it('continues using existing cloud-sync authorization after the module move', () => {
+    const legacyFile = join(AIUSAGE_DIR, 'leaderboard-credentials.json')
+    const legacy = { device_id: 'legacy-test-device', device_secret: 'fixture-only', obtained_at: '2026-01-01T00:00:00Z' }
+    mkdirSync(AIUSAGE_DIR, { recursive: true })
+    writeFileSync(legacyFile, JSON.stringify(legacy))
+    expect(hasCredentials()).toBe(true)
+    expect(loadCredentials()).toEqual(legacy)
+    const renewed = { ...legacy, device_id: 'renewed-test-device' }
+    saveCredentials(renewed)
+    expect(loadCredentials()).toEqual(renewed)
+  })
+
   beforeEach(() => {
     testDir = mkdtempSync(join(tmpdir(), 'aiusage-creds-test-'))
   })

@@ -16,8 +16,6 @@ import { createApiServer } from '../../src/api/server.js'
 import { loadConfig, saveConfig } from '../../src/config.js'
 
 const MAX_TIMER_DELAY = 2 ** 31 - 1
-const HOUR = 60 * 60 * 1000
-const YEAR = 365 * 24 * HOUR
 
 describe('PUT /api/config interval bounds', () => {
   let db: Database.Database
@@ -58,6 +56,31 @@ describe('PUT /api/config interval bounds', () => {
     })
   }
 
+  it('does not expose or accept retired leaderboard settings', async () => {
+    const legacy = { leaderboardAutoUpload: true, leaderboardUploadInterval: 3600000 }
+    vi.mocked(loadConfig).mockReturnValue(legacy as any)
+    const config = await (await fetch(`${baseUrl}/api/config`)).json()
+    expect(config).not.toHaveProperty('leaderboardAutoUpload')
+    expect(config).not.toHaveProperty('leaderboardUploadInterval')
+
+    vi.mocked(loadConfig).mockReturnValue(null)
+    expect((await put({ ...legacy, refreshInterval: 30000 })).status).toBe(200)
+    expect(vi.mocked(saveConfig)).toHaveBeenLastCalledWith({ refreshInterval: 30000 })
+  })
+
+  it.each([
+    ['GET', '/api/leaderboard'],
+    ['POST', '/api/leaderboard/upload'],
+    ['GET', '/api/leaderboard/auth/status'],
+    ['POST', '/api/leaderboard/auth/start'],
+    ['POST', '/api/leaderboard/auth/complete'],
+    ['POST', '/api/leaderboard/auth/logout'],
+  ])('returns 404 for retired %s %s', async (method, endpoint) => {
+    const response = await fetch(`${baseUrl}${endpoint}`, { method })
+    expect(response.status).toBe(404)
+    expect((await response.json()).error.code).toBe('NOT_FOUND')
+  })
+
   const rejected: Array<[string, Record<string, unknown>]> = [
     ['refreshInterval in seconds', { refreshInterval: 30 }],
     ['refreshInterval just below the minimum', { refreshInterval: 999 }],
@@ -69,11 +92,6 @@ describe('PUT /api/config interval bounds', () => {
     ['syncInterval above the timer limit', { syncInterval: 2592000000 }],
     ['negative syncInterval', { syncInterval: -1 }],
     ['non-numeric syncInterval', { syncInterval: 'often' }],
-    ['leaderboardUploadInterval below one hour', { leaderboardUploadInterval: HOUR - 1 }],
-    ['leaderboardUploadInterval above one year', { leaderboardUploadInterval: YEAR + 1 }],
-    ['negative leaderboardUploadInterval', { leaderboardUploadInterval: -1 }],
-    ['non-numeric leaderboardUploadInterval', { leaderboardUploadInterval: 'weekly' }],
-    ['array leaderboardUploadInterval', { leaderboardUploadInterval: [86400000] }],
   ]
 
   for (const [name, body] of rejected) {
@@ -126,8 +144,8 @@ describe('PUT /api/config interval bounds', () => {
 
   it('accepts the bounds themselves', async () => {
     for (const body of [
-      { refreshInterval: 1000, syncInterval: 60000, leaderboardUploadInterval: HOUR },
-      { refreshInterval: MAX_TIMER_DELAY, syncInterval: MAX_TIMER_DELAY, leaderboardUploadInterval: YEAR },
+      { refreshInterval: 1000, syncInterval: 60000 },
+      { refreshInterval: MAX_TIMER_DELAY, syncInterval: MAX_TIMER_DELAY },
     ]) {
       vi.mocked(saveConfig).mockReset()
       const res = await put(body)
@@ -137,14 +155,8 @@ describe('PUT /api/config interval bounds', () => {
   })
 
   it('accepts every interval the dashboard offers', async () => {
-    const leaderboard = [86400000, 604800000, 2592000000]
     const syncMinutes = [5, 15, 30, 60, 120, 360, 720, 1440]
 
-    for (const leaderboardUploadInterval of leaderboard) {
-      const res = await put({ leaderboardAutoUpload: true, leaderboardUploadInterval })
-      expect(res.status).toBe(200)
-      expect(vi.mocked(saveConfig)).toHaveBeenLastCalledWith({ leaderboardAutoUpload: true, leaderboardUploadInterval })
-    }
     for (const minutes of syncMinutes) {
       const res = await put({ syncInterval: minutes * 60000 })
       expect(res.status).toBe(200)
@@ -165,11 +177,10 @@ describe('PUT /api/config interval bounds', () => {
       vi.mocked(loadConfig).mockReturnValue({
         refreshInterval: 30000,
         syncInterval: 300000,
-        leaderboardUploadInterval: 604800000,
         parseInterval: 5000,
       } as any)
 
-      const res = await put({ refreshInterval: blank, syncInterval: blank, leaderboardUploadInterval: blank })
+      const res = await put({ refreshInterval: blank, syncInterval: blank })
 
       expect(res.status).toBe(200)
       expect(vi.mocked(saveConfig)).toHaveBeenCalledWith({})
@@ -177,7 +188,7 @@ describe('PUT /api/config interval bounds', () => {
   })
 
   it('leaves a stored interval alone when the save does not mention it', async () => {
-    vi.mocked(loadConfig).mockReturnValue({ refreshInterval: 30, syncInterval: 5, leaderboardUploadInterval: 2 } as any)
+    vi.mocked(loadConfig).mockReturnValue({ refreshInterval: 30, syncInterval: 5 } as any)
 
     const res = await put({ device: 'laptop' })
 
@@ -186,7 +197,6 @@ describe('PUT /api/config interval bounds', () => {
       device: 'laptop',
       refreshInterval: 30,
       syncInterval: 5,
-      leaderboardUploadInterval: 2,
     })
   })
 })

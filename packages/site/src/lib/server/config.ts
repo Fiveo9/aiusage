@@ -116,30 +116,8 @@ export const CFG = {
   CLOUD_SYNC_GLOBALLY_ENABLED: 'cloud.sync_globally_enabled',
   CLOUD_STAR_CACHE_TTL_HOURS: 'cloud.star_cache_ttl_hours',
 
-  // ── Upload ──
-  UPLOAD_MAX_PAYLOAD_SIZE:    'upload.max_payload_size',
-  UPLOAD_MAX_SNAPSHOTS:       'upload.max_snapshots',
-  UPLOAD_MAX_BREAKDOWNS:      'upload.max_breakdowns',
+  // The stored key is retained for existing signed cloud-sync requests.
   UPLOAD_TIMESTAMP_WINDOW_MS: 'upload.timestamp_window_ms',
-  UPLOAD_RATE_LIMIT:          'upload.rate_limit',
-  UPLOAD_RATE_LIMIT_WINDOW_HOURS: 'upload.rate_limit_window_hours',
-
-  // ── Risk Thresholds ──
-  RISK_INCONSISTENCY_PCT:     'risk.inconsistency_pct',
-  RISK_UNKNOWN_MODEL_PCT:     'risk.unknown_model_pct',
-  RISK_REPEAT_COUNT:          'risk.repeat_count',
-  RISK_REPEAT_WINDOW_HOURS:   'risk.repeat_window_hours',
-  RISK_TOKEN_SPIKE_MULTIPLIER:'risk.token_spike_multiplier',
-  RISK_TOKEN_SPIKE_MIN_AVG:   'risk.token_spike_min_avg',
-  RISK_TOKEN_SPIKE_LOOKBACK_DAYS:'risk.token_spike_lookback_days',
-  RISK_RULE_INCONSISTENCY:    'risk.rule_inconsistency',
-  RISK_RULE_UNKNOWN_MODEL:    'risk.rule_unknown_model',
-  RISK_RULE_REPEAT:           'risk.rule_repeat',
-  RISK_RULE_TOKEN_SPIKE:      'risk.rule_token_spike',
-
-  // ── Leaderboard ──
-  LEADERBOARD_PAGE_SIZE:   'leaderboard.page_size',
-  LEADERBOARD_CACHE_TTL_MS:'leaderboard.cache_ttl_ms',
 
   // ── Device Auth ──
   DEVICE_AUTH_EXPIRY_MINUTES:'device.auth_expiry_minutes',
@@ -156,7 +134,6 @@ export const CFG = {
 
   // ── Data Retention ──
   RETENTION_NONCE_HOURS:        'retention.nonce_hours',
-  RETENTION_UPLOAD_REQUEST_DAYS:'retention.upload_request_days',
   RETENTION_SYNC_BATCH_DAYS:    'retention.sync_batch_days',
   RETENTION_TOMBSTONE_DAYS:     'retention.tombstone_days',
   RETENTION_DEVICE_AUTH_HOURS:  'retention.device_auth_hours',
@@ -193,27 +170,9 @@ const DEFAULTS: Record<string, number> = {
   [CFG.CLOUD_STAR_CACHE_TTL_HOURS]:     24,
   [CFG.CLOUD_SYNC_GLOBALLY_ENABLED]: 1,
 
-  [CFG.UPLOAD_MAX_PAYLOAD_SIZE]:        1_000_000,
-  [CFG.UPLOAD_MAX_SNAPSHOTS]:           5,
-  [CFG.UPLOAD_MAX_BREAKDOWNS]:          1000,
   [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]:     5 * 60 * 1000,
-  [CFG.UPLOAD_RATE_LIMIT]:              30,
-  [CFG.UPLOAD_RATE_LIMIT_WINDOW_HOURS]: 1,
 
-  [CFG.RISK_INCONSISTENCY_PCT]:        0.01,
-  [CFG.RISK_UNKNOWN_MODEL_PCT]:        0.8,
-  [CFG.RISK_REPEAT_COUNT]:             5,
-  [CFG.RISK_REPEAT_WINDOW_HOURS]:      24,
-  [CFG.RISK_TOKEN_SPIKE_MULTIPLIER]:   10,
-  [CFG.RISK_TOKEN_SPIKE_MIN_AVG]:      1000,
-  [CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS]:30,
-  [CFG.RISK_RULE_INCONSISTENCY]:  1,
-  [CFG.RISK_RULE_UNKNOWN_MODEL]:  1,
-  [CFG.RISK_RULE_REPEAT]:         1,
-  [CFG.RISK_RULE_TOKEN_SPIKE]:    1,
 
-  [CFG.LEADERBOARD_PAGE_SIZE]:   50,
-  [CFG.LEADERBOARD_CACHE_TTL_MS]:60_000,
 
   [CFG.DEVICE_AUTH_EXPIRY_MINUTES]: 10,
   [CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS]: 5,
@@ -223,7 +182,6 @@ const DEFAULTS: Record<string, number> = {
   [CFG.NONCE_RETENTION_MINUTES]: 10,
 
   [CFG.RETENTION_NONCE_HOURS]:         24,
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: 180,
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     30,
   [CFG.RETENTION_TOMBSTONE_DAYS]:      90,
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   1,
@@ -263,35 +221,11 @@ export const CONFIG_CATEGORIES: Record<string, { label: string; label_zh: string
       CFG.CLOUD_STAR_CACHE_TTL_HOURS,
     ],
   },
-  upload: {
-    label: 'Upload',
-    label_zh: '数据上传',
-    keys: [
-      CFG.UPLOAD_MAX_PAYLOAD_SIZE, CFG.UPLOAD_MAX_SNAPSHOTS, CFG.UPLOAD_MAX_BREAKDOWNS,
-      CFG.UPLOAD_TIMESTAMP_WINDOW_MS, CFG.UPLOAD_RATE_LIMIT, CFG.UPLOAD_RATE_LIMIT_WINDOW_HOURS,
-    ],
-  },
-  risk: {
-    label: 'Risk Detection',
-    label_zh: '风控检测',
-    keys: [
-      CFG.RISK_INCONSISTENCY_PCT, CFG.RISK_UNKNOWN_MODEL_PCT, CFG.RISK_REPEAT_COUNT,
-      CFG.RISK_REPEAT_WINDOW_HOURS, CFG.RISK_TOKEN_SPIKE_MULTIPLIER,
-      CFG.RISK_TOKEN_SPIKE_MIN_AVG, CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS,
-      CFG.RISK_RULE_INCONSISTENCY, CFG.RISK_RULE_UNKNOWN_MODEL,
-      CFG.RISK_RULE_REPEAT, CFG.RISK_RULE_TOKEN_SPIKE,
-    ],
-  },
-  leaderboard: {
-    label: 'Leaderboard',
-    label_zh: '排行榜',
-    keys: [CFG.LEADERBOARD_PAGE_SIZE, CFG.LEADERBOARD_CACHE_TTL_MS],
-  },
   session: {
     label: 'Login & Security',
     label_zh: '登录与安全',
     keys: [
-      CFG.SESSION_DURATION_DAYS, CFG.OAUTH_STATE_MAX_AGE_SECONDS,
+      CFG.UPLOAD_TIMESTAMP_WINDOW_MS, CFG.SESSION_DURATION_DAYS, CFG.OAUTH_STATE_MAX_AGE_SECONDS,
       CFG.DEVICE_AUTH_EXPIRY_MINUTES, CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS,
     ],
   },
@@ -300,7 +234,7 @@ export const CONFIG_CATEGORIES: Record<string, { label: string; label_zh: string
     label_zh: '数据保留',
     keys: [
       CFG.NONCE_RETENTION_MINUTES, CFG.RETENTION_NONCE_HOURS,
-      CFG.RETENTION_UPLOAD_REQUEST_DAYS, CFG.RETENTION_SYNC_BATCH_DAYS,
+      CFG.RETENTION_SYNC_BATCH_DAYS,
       CFG.RETENTION_TOMBSTONE_DAYS, CFG.RETENTION_DEVICE_AUTH_HOURS,
     ],
   },
@@ -336,27 +270,9 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   [CFG.CLOUD_STAR_CACHE_TTL_HOURS]: 'How long to cache GitHub star check results (hours)',
   [CFG.CLOUD_SYNC_GLOBALLY_ENABLED]: 'Enable or disable AIUsage Cloud globally (1=on, 0=off)',
 
-  [CFG.UPLOAD_MAX_PAYLOAD_SIZE]:        'Max data size per upload (MB)',
-  [CFG.UPLOAD_MAX_SNAPSHOTS]:           'Max usage snapshots per upload',
-  [CFG.UPLOAD_MAX_BREAKDOWNS]:          'Max model breakdowns per snapshot',
   [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]:     'Allowed time drift for upload signatures (sec)',
-  [CFG.UPLOAD_RATE_LIMIT]:              'Max uploads per device in time window',
-  [CFG.UPLOAD_RATE_LIMIT_WINDOW_HOURS]: 'Upload rate limit time window (hours)',
 
-  [CFG.RISK_INCONSISTENCY_PCT]:        'Flag upload if data inconsistency exceeds this ratio',
-  [CFG.RISK_UNKNOWN_MODEL_PCT]:        'Flag if unknown model usage exceeds this ratio',
-  [CFG.RISK_REPEAT_COUNT]:             'Flag if a device uploads this many times in window',
-  [CFG.RISK_REPEAT_WINDOW_HOURS]:      'Time window for repeated upload detection (hours)',
-  [CFG.RISK_TOKEN_SPIKE_MULTIPLIER]:   'Flag if usage exceeds historical average by this factor',
-  [CFG.RISK_TOKEN_SPIKE_MIN_AVG]:      'Minimum average tokens before spike detection applies',
-  [CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS]:'Days of history used for spike comparison',
-  [CFG.RISK_RULE_INCONSISTENCY]:  'Enable breakdown inconsistency check (1=on, 0=off)',
-  [CFG.RISK_RULE_UNKNOWN_MODEL]:  'Enable unknown model ratio check (1=on, 0=off)',
-  [CFG.RISK_RULE_REPEAT]:         'Enable repeat upload detection (1=on, 0=off)',
-  [CFG.RISK_RULE_TOKEN_SPIKE]:    'Enable token spike detection (1=on, 0=off)',
 
-  [CFG.LEADERBOARD_PAGE_SIZE]:   'Entries shown per leaderboard page',
-  [CFG.LEADERBOARD_CACHE_TTL_MS]:'How long leaderboard data is cached (sec)',
 
   [CFG.DEVICE_AUTH_EXPIRY_MINUTES]: 'How long a CLI login code stays valid (minutes)',
   [CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS]: 'How often the CLI checks if login is approved (seconds)',
@@ -366,7 +282,6 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   [CFG.NONCE_RETENTION_MINUTES]: 'How often expired upload tokens are cleaned up (minutes)',
 
   [CFG.RETENTION_NONCE_HOURS]:         'Keep upload tokens for this many hours',
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: 'Keep upload history for this many days (uploads with a hidden or rejected snapshot are kept)',
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     'Keep sync history for this many days',
   [CFG.RETENTION_TOMBSTONE_DAYS]:      'Permanently delete removed records after this many days',
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   'Clean up expired CLI login codes after this many hours',
@@ -401,27 +316,9 @@ export const CONFIG_DESCRIPTIONS_ZH: Record<string, string> = {
   [CFG.CLOUD_STAR_CACHE_TTL_HOURS]: 'GitHub Star 检查结果缓存多少小时',
   [CFG.CLOUD_SYNC_GLOBALLY_ENABLED]: '全局启用或禁用 AIUsage Cloud（1=开启，0=关闭）',
 
-  [CFG.UPLOAD_MAX_PAYLOAD_SIZE]:        '单次上传数据最大多少 MB',
-  [CFG.UPLOAD_MAX_SNAPSHOTS]:           '单次上传最多包含几个快照',
-  [CFG.UPLOAD_MAX_BREAKDOWNS]:          '每个快照最多包含几条模型明细',
   [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]:     '上传签名允许的时间偏差（秒）',
-  [CFG.UPLOAD_RATE_LIMIT]:              '每台设备在限制窗口内最多上传几次',
-  [CFG.UPLOAD_RATE_LIMIT_WINDOW_HOURS]: '上传频率限制的时间窗口（小时）',
 
-  [CFG.RISK_INCONSISTENCY_PCT]:        '数据不一致比例超过多少时标记为可疑',
-  [CFG.RISK_UNKNOWN_MODEL_PCT]:        '未知模型用量占比超过多少时标记为可疑',
-  [CFG.RISK_REPEAT_COUNT]:             '设备在窗口内上传超过几次时标记为可疑',
-  [CFG.RISK_REPEAT_WINDOW_HOURS]:      '重复上传检测的时间窗口（小时）',
-  [CFG.RISK_TOKEN_SPIKE_MULTIPLIER]:   '用量超过历史平均值几倍时标记为可疑',
-  [CFG.RISK_TOKEN_SPIKE_MIN_AVG]:      '启用异常检测所需的最低平均 Token 数',
-  [CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS]:'计算历史平均值时回溯几天的数据',
-  [CFG.RISK_RULE_INCONSISTENCY]:  '启用数据不一致检测（1=开启，0=关闭）',
-  [CFG.RISK_RULE_UNKNOWN_MODEL]:  '启用未知模型占比检测（1=开启，0=关闭）',
-  [CFG.RISK_RULE_REPEAT]:         '启用重复上传检测（1=开启，0=关闭）',
-  [CFG.RISK_RULE_TOKEN_SPIKE]:    '启用 Token 异常飙升检测（1=开启，0=关闭）',
 
-  [CFG.LEADERBOARD_PAGE_SIZE]:   '排行榜每页显示几条',
-  [CFG.LEADERBOARD_CACHE_TTL_MS]:'排行榜数据缓存多久（秒）',
 
   [CFG.DEVICE_AUTH_EXPIRY_MINUTES]: 'CLI 登录码在几分钟内有效',
   [CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS]: 'CLI 每隔几秒检查一次登录是否通过',
@@ -431,7 +328,6 @@ export const CONFIG_DESCRIPTIONS_ZH: Record<string, string> = {
   [CFG.NONCE_RETENTION_MINUTES]: '每隔几分钟清理过期的上传令牌',
 
   [CFG.RETENTION_NONCE_HOURS]:         '上传令牌保留几小时后自动清理',
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: '上传历史记录保留几天（含已隐藏或已拒绝快照的上传不会被清理）',
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     '同步历史记录保留几天',
   [CFG.RETENTION_TOMBSTONE_DAYS]:      '已删除的记录在几天后彻底清除',
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   '过期的 CLI 登录码在几小时后清理',
@@ -453,14 +349,9 @@ export const CONFIG_UNITS: Record<string, { en: string; zh: string }> = {
   [CFG.SYNC_BODY_MAX_SIZE]:      { en: 'MB', zh: 'MB' },
   [CFG.CLOUD_STAR_CACHE_TTL_HOURS]: { en: 'hours', zh: '小时' },
 
-  [CFG.UPLOAD_MAX_PAYLOAD_SIZE]:        { en: 'MB', zh: 'MB' },
   [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]:     { en: 'sec', zh: '秒' },
-  [CFG.UPLOAD_RATE_LIMIT_WINDOW_HOURS]: { en: 'hours', zh: '小时' },
 
-  [CFG.RISK_REPEAT_WINDOW_HOURS]:      { en: 'hours', zh: '小时' },
-  [CFG.RISK_TOKEN_SPIKE_LOOKBACK_DAYS]:{ en: 'days', zh: '天' },
 
-  [CFG.LEADERBOARD_CACHE_TTL_MS]:{ en: 'sec', zh: '秒' },
 
   [CFG.DEVICE_AUTH_EXPIRY_MINUTES]: { en: 'min', zh: '分钟' },
   [CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS]: { en: 'sec', zh: '秒' },
@@ -470,7 +361,6 @@ export const CONFIG_UNITS: Record<string, { en: string; zh: string }> = {
   [CFG.NONCE_RETENTION_MINUTES]: { en: 'min', zh: '分钟' },
 
   [CFG.RETENTION_NONCE_HOURS]:         { en: 'hours', zh: '小时' },
-  [CFG.RETENTION_UPLOAD_REQUEST_DAYS]: { en: 'days', zh: '天' },
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     { en: 'days', zh: '天' },
   [CFG.RETENTION_TOMBSTONE_DAYS]:      { en: 'days', zh: '天' },
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   { en: 'hours', zh: '小时' },
@@ -482,9 +372,7 @@ export const CONFIG_UNITS: Record<string, { en: string; zh: string }> = {
 export const CONFIG_DISPLAY_MULTIPLIER: Record<string, number> = {
   [CFG.AVATAR_MAX_FILE_SIZE]:      1024 * 1024,  // bytes → MB
   [CFG.SYNC_BODY_MAX_SIZE]:        1024 * 1024,  // bytes → MB
-  [CFG.UPLOAD_MAX_PAYLOAD_SIZE]:   1024 * 1024,  // bytes → MB
   [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]: 1000,         // ms → sec
-  [CFG.LEADERBOARD_CACHE_TTL_MS]:  1000,         // ms → sec
 }
 
 export function getDefaultValue(key: string): number {

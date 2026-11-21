@@ -31,11 +31,7 @@ export function validateCsrfToken(request: Request): boolean {
     return true
   }
 
-  // Skip CSRF for API endpoints that use HMAC auth (CLI uploads)
   const url = new URL(request.url)
-  if (url.pathname.startsWith('/api/leaderboard/uploads')) {
-    return true
-  }
 
   // Skip CSRF for OAuth callbacks (they use state parameter)
   if (url.pathname.startsWith('/api/oauth/') && url.pathname.endsWith('/callback')) {

@@ -37,7 +37,6 @@
     return `— ${s}s ${$t('sessions.detail.gap')} —`
   }
 
-
   function tokenPercent(part, total) {
     if (!total || !part) return 0
     return Math.round((part / total) * 1000) / 10
@@ -63,9 +62,11 @@
 </svelte:head>
 
 <div class="page-header activity-detail-header">
-  <a class="activity-back-link" href={$page.url.searchParams.get('back')?.startsWith('/sessions?') ? $page.url.searchParams.get('back') : '/sessions'}>{$t('sessions.detail.back')}</a>
+  <a class="activity-back-link" href={$page.url.searchParams.get('back')?.startsWith('/sessions?') ? $page.url.searchParams.get('back') : '/sessions'}>
+    ← {$t('sessions.detail.back')}
+  </a>
   <h1>{data?.session ? sessionLabel(data.session, $t('sessions.unnamed')) : $t('sessions.detail.title')}</h1>
-  {#if data?.session}<p>{formatDateTime(data.session.firstTs)}</p>{/if}
+  {#if data?.session}<p class="numeric">{formatDateTime(data.session.firstTs)}</p>{/if}
 </div>
 
 {#if loading}
@@ -74,7 +75,7 @@
       <div class="ph-line ph-w40"></div>
       <div class="ph-line ph-w60"></div>
       <div class="ph-line ph-w80"></div>
-      <div class="id-footer" style="margin-top:auto; padding-top:0.5rem; border-top:1px solid var(--border-subtle);">
+      <div class="id-footer" style="margin-top:auto; padding-top:0.75rem; border-top:1px solid var(--border-subtle);">
         <div class="ph-line ph-w50"></div>
         <div class="ph-line ph-w20"></div>
       </div>
@@ -83,12 +84,12 @@
       <div class="metrics-grid">
         {#each [1,2,3,4] as _}
           <div class="metric-cell">
-            <div class="ph-line ph-w60" style="height:0.5rem;margin-bottom:0.25rem"></div>
-            <div class="ph-line ph-w40" style="height:0.85rem"></div>
+            <div class="ph-line ph-w60" style="height:0.5rem;margin-bottom:0.35rem"></div>
+            <div class="ph-line ph-w40" style="height:1rem"></div>
           </div>
         {/each}
       </div>
-      <div style="padding-top:0.5rem;border-top:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:0.3rem">
+      <div style="padding-top:0.75rem;border-top:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:0.4rem">
         {#each [1,2] as _}
           <div style="display:grid;grid-template-columns:5.5rem 1fr 4.5rem;gap:0.5rem;align-items:center">
             <div class="ph-line ph-w60" style="height:0.5rem"></div>
@@ -102,11 +103,11 @@
   <div class="timeline">
     {#each [1,2,3] as _}
       <div class="record-card card">
-        <div style="display:flex;justify-content:space-between;margin-bottom:0.375rem">
+        <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">
           <div class="ph-line ph-w40"></div>
           <div class="ph-line ph-w20"></div>
         </div>
-        <div style="display:flex;gap:0.75rem;margin-bottom:0.375rem">
+        <div style="display:flex;gap:0.75rem">
           <div class="ph-line ph-w20"></div>
           <div class="ph-line ph-w20"></div>
         </div>
@@ -264,7 +265,7 @@
         {/if}
       </div>
     {:else}
-      <div class="state-msg">
+      <div class="card state-msg">
         <h2>{$t('sessions.noData')}</h2>
         <p>{$t('sessions.noDataHint')}</p>
       </div>
@@ -276,9 +277,9 @@
   /* ── Header: two-column grid ──────────────────────────────── */
   .detail-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 1rem;
-    margin-bottom: 1.5rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
   }
 
   /* Identity card */
@@ -286,20 +287,21 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 1rem 1.25rem;
+    gap: 0.75rem;
+    padding: 1.35rem 1.5rem;
   }
   .id-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.625rem;
     flex-wrap: wrap;
   }
   .id-model {
     overflow-wrap: anywhere;
     min-width: 0;
-    font-size: 0.8125rem;
-    font-weight: 600;
+    font-size: 0.875rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
     color: var(--text);
   }
   .id-time {
@@ -312,6 +314,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    background: var(--raised);
+    padding: 0.35rem 0.6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
   }
   .id-footer {
     display: flex;
@@ -320,7 +326,7 @@
     gap: 0.75rem;
     flex-wrap: wrap;
     margin-top: auto;
-    padding-top: 0.5rem;
+    padding-top: 0.875rem;
     border-top: 1px solid var(--border-subtle);
   }
   .id-session {
@@ -331,7 +337,7 @@
   }
   .id-duration {
     font-size: 0.8125rem;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text);
   }
 
@@ -340,32 +346,33 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 1rem 1.25rem;
+    gap: 1rem;
+    padding: 1.35rem 1.5rem;
   }
   .metrics-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
   .metric-cell {
     min-width: 0;
     overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
+    gap: 0.25rem;
   }
   .metric-label {
-    font-size: 0.75rem;
-    font-weight: 550;
+    font-size: 0.6875rem;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     color: var(--text-muted);
-    font-family: var(--mono);
+    font-family: var(--font-sans);
   }
   .metric-value {
-    font-size: 0.9rem;
-    font-weight: 600;
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--text);
   }
 
@@ -373,35 +380,34 @@
   .token-breakdown {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    padding-top: 0.5rem;
+    gap: 0.4rem;
+    padding-top: 0.875rem;
     border-top: 1px solid var(--border-subtle);
   }
   .tb-row {
     display: grid;
     grid-template-columns: 5.5rem minmax(0, 1fr) 4.5rem;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.625rem;
   }
   .tb-label {
     font-size: 0.6875rem;
-    font-weight: 550;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
-    font-family: var(--mono);
     text-align: right;
   }
   .tb-bar {
     height: 6px;
     background: var(--raised);
-    border-radius: 3px;
+    border-radius: 999px;
     overflow: hidden;
   }
   .tb-fill {
     display: block;
     height: 100%;
-    border-radius: 3px;
+    border-radius: inherit;
     min-width: 2px;
   }
   .tb-input { background: var(--chart-input); }
@@ -411,7 +417,8 @@
   .tb-thinking { background: var(--chart-thinking); }
   .tb-value {
     font-size: 0.75rem;
-    color: var(--text-secondary);
+    font-weight: 600;
+    color: var(--text);
     text-align: right;
   }
 
@@ -419,73 +426,85 @@
   .timeline {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
   .gap-divider {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0.125rem 0;
+    padding: 0.25rem 0;
   }
   .gap-text {
     font-family: var(--mono);
     font-size: 0.6875rem;
+    font-weight: 600;
     color: var(--text-muted);
     background: var(--raised);
-    padding: 0.125rem 0.6rem;
-    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
+    padding: 0.2rem 0.75rem;
+    border-radius: 999px;
   }
 
   /* Record card */
   .record-card {
-    padding: 1rem 1.25rem;
+    padding: 1.125rem 1.35rem;
+    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
   }
+  .record-card:hover {
+    border-color: var(--border-medium);
+  }
+
   .record-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    margin-bottom: 0.375rem;
+    margin-bottom: 0.5rem;
   }
   .record-meta-left {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.625rem;
     flex-wrap: wrap;
     min-width: 0;
   }
   .record-index {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 700;
-    color: var(--text-muted);
-    min-width: 1.25rem;
+    color: var(--accent);
+    min-width: 1.5rem;
   }
   .record-relts {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
   }
   .record-model {
     font-size: 0.75rem;
+    font-weight: 600;
     overflow-wrap: anywhere;
-    color: var(--text-secondary);
+    color: var(--text);
   }
   .record-cost {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.8125rem;
+    font-weight: 700;
   }
 
   /* Record token dots */
   .record-tokens {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.875rem;
     flex-wrap: wrap;
-    margin-bottom: 0.375rem;
+    margin-bottom: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    background: var(--raised);
+    border-radius: var(--radius-sm);
   }
   .rt-item {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.35rem;
   }
   .rt-dot {
     width: 6px;
@@ -499,33 +518,41 @@
   .rt-cache-write { background: var(--chart-cache-write); }
   .rt-thinking { background: var(--chart-thinking); }
   .rt-val {
-    font-size: 0.6875rem;
-    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
   }
   .rt-total {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     margin-left: auto;
+    font-weight: 600;
   }
 
   /* Tool calls */
   .tool-calls {
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
+    gap: 0.25rem;
     border-top: 1px solid var(--border-subtle);
-    padding-top: 0.375rem;
+    padding-top: 0.625rem;
+    margin-top: 0.375rem;
   }
   .tool-call {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.5rem;
-    border-radius: 3px;
+    gap: 0.5rem;
+    padding: 0.4rem 0.625rem;
+    border-radius: var(--radius-sm);
     background: var(--raised);
+    border: 1px solid transparent;
+  }
+  .tool-call:hover {
+    border-color: var(--border-subtle);
+    background: var(--hover);
   }
   .tc-index {
     font-size: 0.6875rem;
-    min-width: 1.25rem;
+    min-width: 1.5rem;
     color: var(--text-muted);
   }
   .tc-name {
@@ -533,6 +560,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
     font-size: 0.75rem;
+    font-weight: 600;
     color: var(--text);
   }
   .tc-offset {

@@ -11,7 +11,7 @@ vi.mock('$lib/server/db/pool.js', () => ({
     return []
   },
 }))
-vi.mock('$lib/server/uploads/verify.js', () => ({ verifyUploadRequest: async () => ({ valid: true, userId: 'user', deviceId: 'device' }) }))
+vi.mock('$lib/server/auth/device-request.js', () => ({ verifyDeviceRequest: async () => ({ valid: true, userId: 'user', deviceId: 'device' }) }))
 vi.mock('$lib/server/config.js', () => ({ CFG: {}, getConfigValue: async () => 100 }))
 vi.mock('$lib/server/cloud/star-check.js', () => ({ checkCloudSyncAccess: async () => ({ allowed: true }) }))
 

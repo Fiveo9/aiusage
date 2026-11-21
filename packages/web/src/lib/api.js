@@ -271,63 +271,6 @@ export async function login(password) {
   return response.json()
 }
 
-export async function fetchLeaderboard(baseUrl, params = {}) {
-  const data = await apiFetch(buildUrl('/api/leaderboard', {
-    period_type: params.period_type,
-    period_start: params.period_start,
-    cursor: params.cursor,
-  }))
-  if (!data || !Array.isArray(data.entries)) {
-    throw new Error('Invalid leaderboard response')
-  }
-  return data
-}
-
-export async function fetchLeaderboardAuthStatus() {
-  return apiFetch('/api/leaderboard/auth/status')
-}
-
-export async function startLeaderboardAuth() {
-  const response = await fetch('/api/leaderboard/auth/start', { method: 'POST' })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'API error' } }))
-    throw new Error(error.error?.message || `HTTP ${response.status}`)
-  }
-  return response.json()
-}
-
-export async function completeLeaderboardAuth(deviceRequestId) {
-  const response = await fetch('/api/leaderboard/auth/complete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ device_request_id: deviceRequestId }),
-  })
-  const data = await response.json().catch(() => null)
-  if (response.status === 202 || data?.pending) return data || { pending: true }
-  if (!response.ok) {
-    throw new Error(data?.error?.message || `HTTP ${response.status}`)
-  }
-  return data
-}
-
-export async function logoutLeaderboardAuth() {
-  const response = await fetch('/api/leaderboard/auth/logout', { method: 'POST' })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'API error' } }))
-    throw new Error(error.error?.message || `HTTP ${response.status}`)
-  }
-  return response.json()
-}
-
-export async function uploadLeaderboardData() {
-  const response = await fetch('/api/leaderboard/upload', { method: 'POST' })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'API error' } }))
-    throw new Error(error.error?.message || `HTTP ${response.status}`)
-  }
-  return response.json()
-}
-
 export async function refreshExchangeRate() {
   const response = await fetch('/api/exchange-rate/refresh', { method: 'POST' })
   if (!response.ok) {

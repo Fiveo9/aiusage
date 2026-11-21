@@ -1,6 +1,6 @@
 import type { SyncRecord } from '@aiusage/core'
-import { computeHmac, sha256, generateNonce, generateIdempotencyKey, buildCanonicalString } from '../leaderboard/crypto.js'
-import { loadCredentials } from '../leaderboard/credentials.js'
+import { computeHmac, sha256, generateNonce, generateIdempotencyKey, buildCanonicalString } from '../device-auth/crypto.js'
+import { loadCredentials } from '../device-auth/credentials.js'
 import { getSiteUrl } from '../site-url.js'
 import { fromCloudRecord, parseSyncGeneration, toCloudRecord } from './cloud-dto.js'
 

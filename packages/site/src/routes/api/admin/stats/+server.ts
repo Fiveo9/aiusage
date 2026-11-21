@@ -6,16 +6,14 @@ import { sql } from '$lib/server/db/pool.js'
 export const GET: RequestHandler = async (event) => {
   await requireAdmin(event)
 
-  const [users, flagged, priceTables, logs] = await Promise.all([
+  const [users, priceTables, logs] = await Promise.all([
     sql`SELECT COUNT(*)::INTEGER AS count FROM users`,
-    sql`SELECT COUNT(*)::INTEGER AS count FROM upload_snapshots WHERE status = 'flagged' AND review_status IS NULL`,
     sql`SELECT COUNT(*)::INTEGER AS count FROM model_prices WHERE status = 'active'`,
     sql`SELECT COUNT(*)::INTEGER AS count FROM admin_audit_logs`,
   ])
 
   return json({
     users: (users[0] as { count: number }).count,
-    flaggedUploads: (flagged[0] as { count: number }).count,
     priceModels: (priceTables[0] as { count: number }).count,
     auditLogs: (logs[0] as { count: number }).count,
   })

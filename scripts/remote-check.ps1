@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('test', 'build', 'install')][string]$Task,
     [Parameter(Mandatory)][ValidateSet('linux', 'android14')][string]$Target,
-    [ValidateSet('review', 'full', 'postgres', 'docker', 'linux-resources')][string]$Scope = 'review',
+    [ValidateSet('review', 'full', 'postgres', 'docker', 'package', 'linux-resources')][string]$Scope = 'review',
     [string]$Machine,
     [string]$CliPath,
     [string]$ResumeRunId,
@@ -65,6 +65,7 @@ function Assert-Transport($result, [string]$operation) {
 
 try {
     if ($Target -ne 'linux' -or $Task -eq 'install') { throw 'This repository has no Android APK target. Only -Target linux with -Task test/build is supported.' }
+    if ($Scope -eq 'package' -and $Task -ne 'build') { throw 'Package scope requires -Task build -Target linux.' }
     $cli = if ($CliPath) { [IO.Path]::GetFullPath($CliPath) } else {
         $command = Get-Command instabox.exe -ErrorAction SilentlyContinue
         if ($command) { $command.Source } else { Join-Path $workspace '.artifacts/tools/instabox/0.8.309/package/cli/instabox-windows-amd64.exe' }
@@ -227,6 +228,18 @@ exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$root/home" TMPDIR="$root/tm
             $download = Invoke-Instabox @('pull', $Machine, "$remoteResults/$($entry.name).json", (Join-Path $runDir "$($entry.name).json"), '--json') 90
             Assert-Transport $download 'test-report-download'
             if ($download.code -ne 0) { throw 'Test report download failed.' }
+        }
+    }
+    if ($remoteSummary.ContainsKey('artifacts')) {
+        $summary.artifacts = @()
+        foreach ($artifact in $remoteSummary.artifacts) {
+            if ($artifact.name -notmatch '^aiusage-[a-zA-Z0-9._-]+\.tar\.gz$' -or $artifact.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Invalid package artifact metadata.' }
+            $localArtifact = Join-Path $runDir $artifact.name
+            $download = Invoke-Instabox @('pull', $Machine, "$remoteResults/$($artifact.name)", $localArtifact, '--json') 300
+            Assert-Transport $download 'package-download'
+            if ($download.code -ne 0) { throw 'Package download failed; resume this run to retrieve the existing artifact.' }
+            if ((Get-FileHash -LiteralPath $localArtifact -Algorithm SHA256).Hash.ToLowerInvariant() -ne $artifact.sha256 -or (Get-Item -LiteralPath $localArtifact).Length -ne $artifact.bytes) { throw 'Downloaded package hash/size mismatch.' }
+            $summary.artifacts += @{ path = $localArtifact; sha256 = $artifact.sha256; bytes = $artifact.bytes }
         }
     }
     $passed = $summary.remoteExitCode -eq 0 -and $remoteSummary.exitCode -eq 0 -and $remoteSummary.status -eq 'passed'

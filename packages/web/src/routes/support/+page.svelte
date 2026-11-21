@@ -85,70 +85,76 @@
 <style>
   .support-layout {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 1.25rem;
   }
 
   .support-section {
     background: var(--surface);
-    border-radius: 8px;
-    padding: 1.25rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.35rem 1.5rem;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
   }
 
   .support-section h2 {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 0.75rem;
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    margin: 0 0 0.25rem;
   }
 
   .wechat-block {
     display: flex;
-    gap: 1rem;
+    gap: 1.25rem;
     align-items: center;
-    padding: 0.75rem;
-    margin-bottom: 0.25rem;
+    padding: 1rem;
     background: var(--raised);
-    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
   }
 
   .qr-trigger {
     flex-shrink: 0;
     padding: 0;
-    border: none;
-    background: none;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface);
     cursor: pointer;
-    border-radius: 4px;
-    transition: opacity 0.15s;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
   }
 
   .qr-trigger:hover {
-    opacity: 0.8;
+    transform: scale(1.02);
+    box-shadow: var(--shadow-md);
   }
 
   .qr-trigger img {
     display: block;
-    width: 180px;
-    height: 180px;
+    width: 140px;
+    height: 140px;
     object-fit: contain;
     background: var(--surface);
-    border-radius: 4px;
   }
 
   .wechat-block h3 {
-    font-size: 0.9375rem;
-    font-weight: 600;
+    font-size: 0.9rem;
+    font-weight: 650;
     color: var(--text);
-    margin-bottom: 0.25rem;
+    margin: 0 0 0.35rem;
   }
 
   .wechat-block p {
     color: var(--text-secondary);
-    font-size: 0.8125rem;
+    font-size: 0.8rem;
     line-height: 1.55;
+    margin: 0;
   }
 
   .support-row {
@@ -156,41 +162,45 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.625rem 0.75rem;
-    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--surface);
     text-decoration: none;
     color: var(--text);
-    transition: background 0.12s;
+    transition: all 0.15s ease;
   }
 
   .support-row:hover {
     background: var(--hover);
+    border-color: var(--border);
+    transform: translateX(2px);
   }
 
   .support-row strong {
     display: block;
-    font-size: 0.875rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text);
-    margin-bottom: 0.125rem;
+    margin-bottom: 0.2rem;
   }
 
   .support-row small {
     display: block;
     color: var(--text-muted);
     font-size: 0.75rem;
-    line-height: 1.35;
+    line-height: 1.4;
   }
 
   .open-label {
     flex-shrink: 0;
     color: var(--accent);
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
+    font-weight: 600;
   }
 
-  /* ── QR Lightbox ──────────────────────────────────────────────────────── */
+  /* ── QR Lightbox Modal ──────────────────────────────────── */
   .qr-overlay {
     position: fixed;
     inset: 0;
@@ -198,51 +208,74 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: oklch(0 0 0 / 0.35);
+    background: oklch(0 0 0 / 0.5);
+    backdrop-filter: blur(12px);
+    animation: fadeIn 0.15s ease;
   }
 
   .qr-card {
     position: relative;
     background: var(--surface);
-    border-radius: 12px;
-    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.75rem;
-    box-shadow: 0 4px 8px oklch(0 0 0 / 0.06), 0 12px 32px oklch(0 0 0 / 0.04);
+    gap: 1rem;
+    box-shadow: var(--shadow-lg);
+    animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
   }
 
   .qr-card img {
     display: block;
-    width: 280px;
-    height: 280px;
+    width: 260px;
+    height: 260px;
     object-fit: contain;
-    border-radius: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
   }
 
   .qr-card-hint {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
     text-align: center;
+    margin: 0;
   }
 
   .qr-close {
     position: absolute;
-    top: 0.5rem;
+    top: 0.75rem;
     right: 0.75rem;
-    background: none;
-    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
     font-size: 1.25rem;
     color: var(--text-muted);
     cursor: pointer;
-    padding: 0.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
-    transition: color 0.12s;
+    transition: all 0.15s ease;
   }
 
   .qr-close:hover {
     color: var(--text);
+    background: var(--hover);
+    border-color: var(--border);
   }
 
   @media (max-width: 640px) {

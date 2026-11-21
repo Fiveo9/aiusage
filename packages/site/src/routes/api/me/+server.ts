@@ -6,8 +6,8 @@ import { requireUser } from '$lib/server/auth/session.js'
 export const GET: RequestHandler = async (event) => {
   const user = await requireUser(event)
 
-  const rows = await sql`SELECT password_hash, username_changed_at, leaderboard_visibility, leaderboard_anonymous FROM users WHERE id = ${user.id}`
-  const row = rows[0] as { password_hash: string | null; username_changed_at: string | null; leaderboard_visibility: string; leaderboard_anonymous: boolean } | undefined
+  const rows = await sql`SELECT password_hash, username_changed_at FROM users WHERE id = ${user.id}`
+  const row = rows[0] as { password_hash: string | null; username_changed_at: string | null } | undefined
   const hasPassword = row ? row.password_hash != null : false
 
   return json({
@@ -19,7 +19,5 @@ export const GET: RequestHandler = async (event) => {
     role: user.role,
     has_password: hasPassword,
     username_changed_at: row?.username_changed_at || null,
-    leaderboard_visibility: row?.leaderboard_visibility || 'public',
-    leaderboard_anonymous: row?.leaderboard_anonymous || false,
   })
 }

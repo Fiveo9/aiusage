@@ -180,14 +180,14 @@ describe('cloud sync kill switch across server instances', () => {
   it('leaves the other settings cached', async () => {
     const a = await instance()
     const b = await instance()
-    expect(await b.getConfigValue(b.CFG.UPLOAD_RATE_LIMIT)).toBe(30)
+    expect(await b.getConfigValue(b.CFG.USERNAME_COOLDOWN_DAYS)).toBe(30)
 
-    await a.setConfig(b.CFG.UPLOAD_RATE_LIMIT, 5, 'limit', 'admin_1')
+    await a.setConfig(b.CFG.USERNAME_COOLDOWN_DAYS, 5, 'cooldown', 'admin_1')
 
     // Another instance picks a cached setting up after the TTL, as before.
-    expect(await b.getConfigValue(b.CFG.UPLOAD_RATE_LIMIT)).toBe(30)
+    expect(await b.getConfigValue(b.CFG.USERNAME_COOLDOWN_DAYS)).toBe(30)
     vi.advanceTimersByTime(60_000)
-    expect(await b.getConfigValue(b.CFG.UPLOAD_RATE_LIMIT)).toBe(5)
-    expect(db.state.selects.filter(k => k === b.CFG.UPLOAD_RATE_LIMIT)).toHaveLength(2)
+    expect(await b.getConfigValue(b.CFG.USERNAME_COOLDOWN_DAYS)).toBe(5)
+    expect(db.state.selects.filter(k => k === b.CFG.USERNAME_COOLDOWN_DAYS)).toHaveLength(2)
   })
 })

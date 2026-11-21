@@ -74,8 +74,8 @@
       <h1>{zh ? '授权 CLI 设备' : 'Authorize CLI Device'}</h1>
       <p class="authorize-desc">
         {zh
-          ? '本机 AIUsage 正在请求上传聚合 Token 用量到公开排行榜的权限。'
-          : 'Your local AIUsage instance is requesting permission to upload token usage data to the AIUsage leaderboard.'}
+          ? '本机 AIUsage 正在请求设备授权，以使用你账号下的云同步。'
+          : 'Your local AIUsage instance is requesting device authorization for cloud sync under your account.'}
       </p>
 
       {#if userCode}
@@ -88,14 +88,13 @@
       <div class="authorize-info">
         <h3>{zh ? '授权后将允许本机执行：' : 'This will allow the CLI to:'}</h3>
         <ul>
-          <li>{zh ? '上传聚合后的 Token 用量统计' : 'Upload aggregated token usage statistics'}</li>
-          <li>{zh ? '参与公开社区排行榜展示' : 'Appear on the community leaderboard'}</li>
+          <li>{zh ? '配置并启用云同步后，上传和拉取用量记录' : 'Upload and pull usage records after cloud sync is configured and enabled'}</li>
+          <li>{zh ? '同步记录可能包含工具、模型、Token、费用、会话标题以及项目和路径元数据' : 'Synced records may include tools, models, tokens, costs, session titles, and project or path metadata'}</li>
         </ul>
         <h3>{zh ? '以下数据不会上传：' : 'Data that will NOT be uploaded:'}</h3>
         <ul>
           <li>{zh ? 'Prompt 或 completion 内容' : 'Prompt or completion content'}</li>
-          <li>{zh ? '文件路径或项目名称' : 'File paths or project names'}</li>
-          <li>{zh ? '费用或价格信息' : 'Cost or pricing information'}</li>
+          <li>{zh ? '源代码文件内容' : 'Source code file contents'}</li>
         </ul>
       </div>
 

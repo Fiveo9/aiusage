@@ -31,11 +31,6 @@
   let pwError = ''
   let pwSaving = false
 
-  let lbVisibility = initialProfile?.leaderboard_visibility || 'public'
-  let lbAnonymous = initialProfile?.leaderboard_anonymous || false
-  let lbMsg = ''
-  let lbError = ''
-  let lbSaving = false
   $: avatarMaxSize = $page.data.avatarMaxSize || 5 * 1024 * 1024
   $: identities = $page.data.identities || []
   $: hasGithub = identities.some(i => i.provider === 'github')
@@ -51,7 +46,8 @@
     return entry ? (zh ? entry.zh : entry.en) : code
   }
 
-  let activeSection = typeof window !== 'undefined' && window.location.hash.slice(1) || 'profile'
+  const initialSection = typeof window !== 'undefined' ? window.location.hash.slice(1) : ''
+  let activeSection = ['profile', 'password', 'accounts'].includes(initialSection) ? initialSection : 'profile'
 
   $: COOLDOWN_DAYS = $page.data.usernameCooldownDays ?? 30
 
@@ -71,11 +67,7 @@
       title: zh ? '关联账号' : 'Linked Accounts',
       desc: zh ? '管理已关联的第三方账号。' : 'Manage linked third-party accounts.'
     },
-    {
-      id: 'leaderboard',
-      title: zh ? '排行榜设置' : 'Leaderboard',
-      desc: zh ? '公开可见性和匿名展示。' : 'Public visibility and anonymous display.'
-    }
+
   ]
 
   function getCsrfToken() {
@@ -280,36 +272,6 @@
     }
   }
 
-  async function handleLeaderboardSave() {
-    lbMsg = ''
-    lbError = ''
-    lbSaving = true
-    try {
-      const res = await fetch('/api/me/profile', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
-        body: JSON.stringify({
-          leaderboard_visibility: lbVisibility,
-          leaderboard_anonymous: lbAnonymous
-        })
-      })
-      const data = await res.json()
-      if (res.ok) {
-        lbMsg = zh ? '榜单设置已更新' : 'Leaderboard settings updated'
-        me = { ...me, leaderboard_visibility: data.leaderboard_visibility, leaderboard_anonymous: data.leaderboard_anonymous }
-      } else {
-        lbError = data.error || (zh ? '更新失败' : 'Failed to update')
-      }
-    } catch {
-      lbError = getError('network_error')
-    } finally {
-      lbSaving = false
-    }
-  }
-
   function formatDate(iso) {
     return new Date(iso).toLocaleDateString(zh ? 'zh-CN' : undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
@@ -323,7 +285,7 @@
   <div class="settings-container">
     <div class="settings-header">
       <h1>{zh ? '设置' : 'Settings'}</h1>
-      <p>{zh ? '管理账号资料、安全和排行榜展示方式。' : 'Manage account profile, security, and leaderboard display.'}</p>
+      <p>{zh ? '管理账号资料和安全。' : 'Manage account profile and security.'}</p>
     </div>
 
     {#if showBound}
@@ -495,39 +457,6 @@
               </div>
             {/if}
           </section>
-        {:else}
-          <section class="settings-section">
-            <h2>{zh ? '排行榜设置' : 'Leaderboard Settings'}</h2>
-            <p class="section-desc">{zh ? '控制你在公开排行榜上的显示方式。' : 'Control how you appear on the public leaderboard.'}</p>
-
-            {#if lbMsg}
-              <div class="success-msg">{lbMsg}</div>
-            {/if}
-            {#if lbError}
-              <div class="error-msg">{lbError}</div>
-            {/if}
-
-            <form class="settings-form" on:submit|preventDefault={handleLeaderboardSave}>
-              <div class="field">
-                <label for="lb-visibility">{zh ? '排行榜可见性' : 'Leaderboard Visibility'}</label>
-                <select id="lb-visibility" bind:value={lbVisibility}>
-                  <option value="public">{zh ? '公开' : 'Public'}</option>
-                  <option value="private">{zh ? '不参与排行' : 'Private (hidden from leaderboard)'}</option>
-                </select>
-                <span class="field-hint">{zh ? '设为私有后，你的数据将不会出现在公开排行榜上。' : 'When set to private, your data will not appear on the public leaderboard.'}</span>
-              </div>
-              <div class="field">
-                <label class="checkbox-label">
-                  <input type="checkbox" bind:checked={lbAnonymous} />
-                  <span>{zh ? '匿名参与排行榜' : 'Participate anonymously'}</span>
-                </label>
-                <span class="field-hint">{zh ? '开启后，排行榜将隐藏你的用户名和头像。' : 'When enabled, your username and avatar will be hidden on the leaderboard.'}</span>
-              </div>
-              <button type="submit" class="btn-primary" disabled={lbSaving}>
-                {lbSaving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存设置' : 'Save Settings')}
-              </button>
-            </form>
-          </section>
         {/if}
       </div>
     </div>
@@ -617,12 +546,10 @@
   .field-hint { display: block; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
   .field-hint-warn { color: var(--amber); }
   .field input:disabled { opacity: 0.5; cursor: not-allowed; }
-  .checkbox-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-  .checkbox-label input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   .field { margin-bottom: 1rem; }
   .field label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.375rem; color: var(--text-secondary); }
-  .field input, .field select { width: 100%; padding: 0.5rem 0.75rem; font-size: 0.875rem; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg); color: var(--text); outline: none; transition: border-color 0.15s; }
-  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field input { width: 100%; padding: 0.5rem 0.75rem; font-size: 0.875rem; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg); color: var(--text); outline: none; transition: border-color 0.15s; }
+  .field input:focus { border-color: var(--accent); }
   .btn-primary { padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 600; color: oklch(0.99 0.002 85); background: var(--accent); border: none; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
   .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }

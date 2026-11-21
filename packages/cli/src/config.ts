@@ -38,8 +38,6 @@ export interface Config {
   parseInterval?: number
   /** @deprecated Use refreshInterval. Kept for migration only. */
   dashboardPollInterval?: number
-  leaderboardAutoUpload?: boolean
-  leaderboardUploadInterval?: number
   credentials?: Record<string, string>
   priceOverrides?: Record<string, PriceEntry>
   /** @deprecated Legacy source paths — use AIUSAGE_*_PATH env vars instead. Kept for migration only. */

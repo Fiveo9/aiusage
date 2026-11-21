@@ -52,24 +52,24 @@
   .tool-toggles {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.375rem;
     flex-wrap: wrap;
   }
   .tool-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.25rem 0.5rem;
+    padding: 0.3rem 0.625rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
     font-weight: 500;
     cursor: pointer;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
-    height: 32px;
+    min-height: var(--control-height);
     white-space: nowrap;
   }
   .tool-btn:hover {
@@ -84,7 +84,7 @@
   }
   .tool-count {
     font-size: 0.6875rem;
-    font-weight: 550;
+    font-weight: 500;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
   }

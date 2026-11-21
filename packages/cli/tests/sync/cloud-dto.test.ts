@@ -6,7 +6,7 @@ import { initializeDatabase } from '../../src/db/index.js'
 import { insertRecord } from '../../src/db/records.js'
 import { CloudSyncOrchestrator } from '../../src/sync/cloud-orchestrator.js'
 
-vi.mock('../../src/leaderboard/credentials.js', () => ({
+vi.mock('../../src/device-auth/credentials.js', () => ({
   loadCredentials: () => ({ device_id: 'dev-1', device_secret: 'secret' }),
 }))
 vi.mock('../../src/site-url.js', () => ({ getSiteUrl: () => 'https://sync.test' }))

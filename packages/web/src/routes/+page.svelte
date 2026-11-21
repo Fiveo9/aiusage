@@ -6,6 +6,7 @@
   import { t } from '$lib/i18n.js'
   import { formatCost, displayCurrency, exchangeRate } from '$lib/stores.js'
   import { tokenComposition } from '$lib/token-composition.js'
+  import { Settings } from 'lucide-svelte'
 
   const DISPLAY_KEY = 'aiusage-home-display'
 
@@ -242,10 +243,10 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="overlay-backdrop" on:click={() => showConfig = false}></div>
-  <div class="config-panel" role="dialog">
+  <div class="config-panel" role="dialog" aria-modal="true" aria-labelledby="cfg-title-id">
     <div class="cfg-header">
-      <span class="cfg-title">{$t('home.cfgTitle')}</span>
-      <button class="cfg-close" on:click={() => showConfig = false}>✕</button>
+      <span class="cfg-title" id="cfg-title-id">{$t('home.cfgTitle')}</span>
+      <button class="cfg-close" on:click={() => showConfig = false} aria-label="Close">✕</button>
     </div>
 
     <div class="cfg-section">
@@ -283,6 +284,7 @@
 
 <div class="top-bar">
   <div class="live-indicator">
+    <span class="live-dot-glow"></span>
     <span class="live-dot"></span>
     <span class="live-label">LIVE</span>
   </div>
@@ -294,8 +296,8 @@
     <span class="clock-date">{dateStr}</span>
   </div>
 
-  <button class="cfg-btn" on:click={() => showConfig = !showConfig} title={$t('home.cfgTitle')}>
-    ⚙
+  <button class="cfg-btn" on:click={() => showConfig = !showConfig} title={$t('home.cfgTitle')} aria-label={$t('home.cfgTitle')}>
+    <Settings size={16} strokeWidth={1.8} />
   </button>
 </div>
 
@@ -318,6 +320,7 @@
 
 {#if loading}
   <div class="splash-loading">
+    <span class="splash-spinner"></span>
     <span class="splash-text">{$t('common.loading')}</span>
   </div>
 {:else if error}
@@ -333,26 +336,37 @@
 {:else}
 
   <section class="counter-section">
-    <div class="counter-label">{$t('home.counterLabel')}</div>
+    <div class="counter-header">
+      <span class="counter-label">{$t('home.counterLabel')}</span>
+    </div>
 
     <div class="counter-number" class:refreshing>
       {fmtMain($tTokens)}
     </div>
 
     <div class="counter-sub">
-      <div class="sub-item">
-        <span class="sub-label">{$t('home.input')}</span>
-        <span class="sub-value">{fmtShort(data.inputTokens)}</span>
+      <div class="sub-item sub-input">
+        <span class="sub-indicator"></span>
+        <div class="sub-content">
+          <span class="sub-label">{$t('home.input')}</span>
+          <span class="sub-value">{fmtShort(data.inputTokens)}</span>
+        </div>
       </div>
       <div class="sub-divider"></div>
-      <div class="sub-item">
-        <span class="sub-label">{$t('home.output')}</span>
-        <span class="sub-value">{fmtShort(data.outputTokens)}</span>
+      <div class="sub-item sub-output">
+        <span class="sub-indicator"></span>
+        <div class="sub-content">
+          <span class="sub-label">{$t('home.output')}</span>
+          <span class="sub-value">{fmtShort(data.outputTokens)}</span>
+        </div>
       </div>
       <div class="sub-divider"></div>
-      <div class="sub-item">
-        <span class="sub-label">{$t('home.cache')}</span>
-        <span class="sub-value">{fmtShort((data.cacheReadTokens||0)+(data.cacheWriteTokens||0))}</span>
+      <div class="sub-item sub-cache">
+        <span class="sub-indicator"></span>
+        <div class="sub-content">
+          <span class="sub-label">{$t('home.cache')}</span>
+          <span class="sub-value">{fmtShort((data.cacheReadTokens||0)+(data.cacheWriteTokens||0))}</span>
+        </div>
       </div>
     </div>
 
@@ -362,15 +376,19 @@
       {/if}
     </div>
     <div class="refresh-meta">
-      {#if refreshSecs > 0}
-        {#if countdown > 0}
-          <span>{$t('home.nextRefresh')} {countdown}{$t('home.seconds')}</span>
+      <div class="refresh-status">
+        {#if refreshSecs > 0}
+          {#if countdown > 0}
+            <span class="refresh-clock-dot"></span>
+            <span>{$t('home.nextRefresh')} {countdown}{$t('home.seconds')}</span>
+          {:else}
+            <span class="refresh-clock-dot active"></span>
+            <span class="refreshing-label">{$t('home.refreshing')}</span>
+          {/if}
         {:else}
-          <span class="refreshing-label">{$t('home.refreshing')}</span>
+          <span>{$t('home.manualMode')}</span>
         {/if}
-      {:else}
-        <span>{$t('home.manualMode')}</span>
-      {/if}
+      </div>
       <button class="now-btn" on:click={manualRefresh}>
         {refreshSecs > 0 ? $t('home.refreshNow') : $t('home.refreshBtn')}
       </button>
@@ -378,21 +396,31 @@
   </section>
 
   <div class="stats-strip">
-    <div class="stat-block">
-      <span class="stat-label">{$t('overview.totalCost')}</span>
+    <div class="stat-block stat-block-cost">
+      <div class="stat-header">
+        <span class="stat-dot"></span>
+        <span class="stat-label">{$t('overview.totalCost')}</span>
+      </div>
       <span class="stat-value stat-cost">{formattedCost}</span>
     </div>
     <div class="stat-block">
-      <span class="stat-label">{$t('overview.totalSessions')}</span>
+      <div class="stat-header">
+        <span class="stat-label">{$t('overview.totalSessions')}</span>
+      </div>
       <span class="stat-value">{Math.round($tSessions).toLocaleString()}</span>
     </div>
     <div class="stat-block">
-      <span class="stat-label">{$t('overview.activeDays')}</span>
+      <div class="stat-header">
+        <span class="stat-label">{$t('overview.activeDays')}</span>
+      </div>
       <span class="stat-value">{Math.round($tDays).toLocaleString()}</span>
     </div>
   </div>
 
-  <div class="comp-wrap">
+  <div class="comp-wrap card">
+    <div class="comp-header">
+      <span class="section-title">Token Composition</span>
+    </div>
     <div class="comp-bar">
       <div class="seg seg-input"  style="width:{barsReady ? inputPct     : 0}%" title="{$t('home.input')} {inputPct.toFixed(1)}%">
         {#if inputPct > 9}<span class="seg-lbl">{$t('home.input')} {inputPct.toFixed(0)}%</span>{/if}
@@ -408,59 +436,78 @@
       </div>
     </div>
     <div class="comp-legend">
-      <span class="leg leg-i">{$t('home.input')}</span>
-      <span class="leg leg-o">{$t('home.output')}</span>
-      <span class="leg leg-cr">Cache Read</span>
-      <span class="leg leg-cw">Cache Write</span>
+      <span class="leg leg-i"><span class="leg-pill"></span>{$t('home.input')}</span>
+      <span class="leg leg-o"><span class="leg-pill"></span>{$t('home.output')}</span>
+      <span class="leg leg-cr"><span class="leg-pill"></span>Cache Read</span>
+      <span class="leg leg-cw"><span class="leg-pill"></span>Cache Write</span>
     </div>
   </div>
 
 {/if}
 
 <style>
+  /* ── Modern Top Bar ─────────────────────────────────────────────────────── */
   .top-bar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.25rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--raised);
-    border-radius: 8px;
+    gap: 0.875rem;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1.125rem;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(12px);
   }
 
   .live-indicator {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 0.375rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
+    gap: 0.5rem;
+    padding: 0.2rem 0.625rem;
+    border-radius: 999px;
     background: var(--green-dim);
     flex-shrink: 0;
   }
   .live-dot {
-    width: 5px;
-    height: 5px;
+    position: relative;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--green);
   }
+  .live-dot-glow {
+    position: absolute;
+    left: 0.625rem;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: livePulse 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+  @keyframes livePulse {
+    0%   { transform: scale(1); opacity: 0.8; }
+    50%  { transform: scale(2.6); opacity: 0; }
+    100% { transform: scale(1); opacity: 0; }
+  }
   .live-label {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.1em;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     color: var(--green);
   }
 
   .range-badge {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 600;
     color: var(--accent);
     background: var(--accent-dim);
-    border-radius: 4px;
-    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--accent-dim);
+    border-radius: 999px;
+    padding: 0.175rem 0.625rem;
   }
 
   .clock-block {
@@ -471,17 +518,16 @@
     gap: 0;
   }
   .clock-time {
-    font-family: var(--mono);
-    font-size: 0.8125rem;
+    font-family: var(--font-numeric);
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--text);
-    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
   }
   .clock-date {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.04em;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 500;
     color: var(--text-muted);
   }
 
@@ -489,173 +535,252 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: var(--control-height);
+    height: var(--control-height);
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: transparent;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
     color: var(--text-muted);
     cursor: pointer;
-    transition: color 0.12s;
+    transition: all 0.16s ease;
     flex-shrink: 0;
-    font-size: 0.8rem;
   }
-  .cfg-btn:hover { color: var(--text); }
+  .cfg-btn:hover {
+    color: var(--text);
+    border-color: var(--border-medium);
+    transform: translateY(-1px);
+  }
 
-  /* ── Counter ─────────────────────────────────────────────────────────── */
+  /* ── Linear Hero Counter ────────────────────────────────────────────────── */
   .counter-section {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 2.5rem 2rem 1.5rem;
-    margin-bottom: 1rem;
-    background: var(--surface);
-    border-radius: 12px;
+    padding: 3.5rem 2rem 2rem;
+    margin-bottom: 1.5rem;
+    background: radial-gradient(circle at 50% -20%, var(--accent-dim) 0%, transparent 65%), var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+  }
+
+  .counter-header {
+    margin-bottom: 0.875rem;
   }
 
   .counter-label {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.1em;
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin-bottom: 0.75rem;
   }
 
   .counter-number {
-    font-family: var(--mono);
-    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-family: var(--font-numeric);
+    font-size: clamp(2.25rem, 6.5vw, 5.25rem);
     font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     transition: opacity 0.2s;
   }
-  .counter-number.refreshing { opacity: 0.5; }
+  .counter-number.refreshing { opacity: 0.55; }
 
+  /* Sub Breakdown Pills */
   .counter-sub {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
-    margin-top: 1.25rem;
+    gap: 1.25rem;
+    margin-top: 1.75rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
   }
   .sub-item {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 0.125rem;
+    gap: 0.5rem;
+  }
+  .sub-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .sub-input .sub-indicator { background: var(--chart-input); }
+  .sub-output .sub-indicator { background: var(--chart-output); }
+  .sub-cache .sub-indicator { background: var(--chart-cache-read); }
+
+  .sub-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
   }
   .sub-label {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 500;
     color: var(--text-muted);
   }
   .sub-value {
-    font-family: var(--mono);
-    font-size: 0.8125rem;
+    font-family: var(--font-numeric);
+    font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text);
     font-variant-numeric: tabular-nums;
   }
   .sub-divider {
     width: 1px;
-    height: 24px;
+    height: 20px;
     background: var(--border-subtle);
   }
 
+  /* Refresh Glow Progress Bar */
   .refresh-bar-track {
     width: 100%;
-    height: 2px;
+    height: 3px;
     background: var(--border-subtle);
-    border-radius: 1px;
-    margin-top: 1.5rem;
+    border-radius: 999px;
+    margin-top: 2rem;
     overflow: hidden;
   }
   .refresh-bar-fill {
     height: 100%;
-    background: var(--accent);
-    border-radius: 1px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
+    box-shadow: 0 0 8px var(--accent-dim);
+    border-radius: 999px;
     transition: width 1s linear;
   }
+
   .refresh-meta {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.375rem;
-    font-family: var(--mono);
+    justify-content: space-between;
+    margin-top: 0.625rem;
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
     color: var(--text-muted);
     width: 100%;
   }
-  .refreshing-label { color: var(--accent); }
-  .now-btn {
-    margin-left: auto;
-    padding: 0.125rem 0.5rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: transparent;
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color 0.12s, border-color 0.12s;
-  }
-  .now-btn:hover { color: var(--text); border-color: var(--border-medium); }
-
-  /* ── Stats strip ─────────────────────────────────────────────────────── */
-  .stats-strip {
+  .refresh-status {
     display: flex;
-    background: var(--surface);
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    overflow: hidden;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .refresh-clock-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--border-medium);
+  }
+  .refresh-clock-dot.active {
+    background: var(--accent);
+  }
+  .refreshing-label {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .now-btn {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.16s ease;
+  }
+  .now-btn:hover {
+    color: var(--text);
+    border-color: var(--border-medium);
+    background: var(--hover);
+  }
+
+  /* ── Stats Metric Cards (Grid 3) ─────────────────────────────────────────── */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
   }
   .stat-block {
-    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    padding: 1rem 1.25rem;
-    transition: background 0.1s;
+    gap: 0.625rem;
+    padding: 1.35rem 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .stat-block:not(:last-child) {
-    border-right: 1px solid var(--border-subtle);
+  .stat-block:hover {
+    border-color: var(--border-medium);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
   }
-  .stat-block:hover { background: var(--raised); }
+  .stat-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .stat-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
   .stat-label {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     color: var(--text-muted);
+    text-transform: uppercase;
   }
   .stat-value {
-    font-family: var(--mono);
-    font-size: 1.5rem;
+    font-family: var(--font-numeric);
+    font-size: 1.875rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
     color: var(--text);
   }
-  .stat-cost { color: var(--accent); }
+  .stat-cost {
+    color: var(--accent);
+  }
 
-  /* ── Composition bar ─────────────────────────────────────────────────── */
-  .comp-wrap { margin-bottom: 0.5rem; }
+  /* ── Composition Bar Card ───────────────────────────────────────────────── */
+  .comp-wrap {
+    margin-bottom: 1.5rem;
+  }
+  .comp-header {
+    margin-bottom: 0.875rem;
+  }
+  .comp-header .section-title {
+    margin-bottom: 0;
+  }
+
   .comp-bar {
     display: flex;
-    height: 24px;
-    border-radius: 6px;
+    height: 28px;
+    border-radius: 8px;
     overflow: hidden;
     background: var(--raised);
+    padding: 2px;
+    gap: 2px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
   }
   .seg {
     display: flex;
@@ -663,17 +788,17 @@
     justify-content: center;
     overflow: hidden;
     min-width: 0;
-    transition: width 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border-radius: 6px;
+    transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .seg-lbl {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 700;
     white-space: nowrap;
     padding: 0 4px;
-    color: var(--surface);
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
   .seg-input  { background: var(--chart-input); }
   .seg-output { background: var(--chart-output); }
@@ -682,37 +807,36 @@
 
   .comp-legend {
     display: flex;
-    gap: 1rem;
-    margin-top: 0.375rem;
+    gap: 1.25rem;
+    margin-top: 1rem;
     flex-wrap: wrap;
   }
   .leg {
-    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--text-secondary);
   }
-  .leg::before {
-    content: '■';
-    margin-right: 0.25rem;
-    font-size: 0.5rem;
+  .leg-pill {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
   }
-  .leg-i  { color: var(--chart-input); }
-  .leg-o  { color: var(--chart-output); }
-  .leg-cr { color: var(--chart-cache-read); }
-  .leg-cw { color: var(--chart-cache-write); }
-  .leg-i::before  { color: var(--chart-input); }
-  .leg-o::before  { color: var(--chart-output); }
-  .leg-cr::before { color: var(--chart-cache-read); }
-  .leg-cw::before { color: var(--chart-cache-write); }
+  .leg-i .leg-pill  { background: var(--chart-input); }
+  .leg-o .leg-pill  { background: var(--chart-output); }
+  .leg-cr .leg-pill { background: var(--chart-cache-read); }
+  .leg-cw .leg-pill { background: var(--chart-cache-write); }
 
-  /* ── Config panel ────────────────────────────────────────────────────── */
+  /* ── Config Panel ───────────────────────────────────────────────────────── */
   .overlay-backdrop {
     position: fixed;
     inset: 0;
     z-index: 200;
     background: var(--overlay);
+    backdrop-filter: blur(12px);
     animation: fadeIn 0.15s ease;
   }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -723,121 +847,133 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(400px, 90vw);
+    width: min(420px, 92vw);
     background: var(--surface);
-    border-radius: 12px;
-    padding: 1.25rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
     box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(16px);
   }
 
   .cfg-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
   }
   .cfg-title {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
   }
   .cfg-close {
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: transparent;
+    border-radius: 999px;
+    background: var(--raised);
     color: var(--text-muted);
     font-size: 0.75rem;
     cursor: pointer;
-    transition: color 0.12s;
+    transition: all 0.15s ease;
   }
-  .cfg-close:hover { color: var(--rose); }
+  .cfg-close:hover {
+    color: var(--rose);
+    border-color: var(--rose);
+  }
 
-  .cfg-section { margin-bottom: 1rem; }
+  .cfg-section { margin-bottom: 1.25rem; }
   .cfg-label {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.06em;
+    font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: var(--text-muted);
-    margin-bottom: 0.375rem;
+    margin-bottom: 0.5rem;
   }
-  .cfg-pills { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+  .cfg-pills { display: flex; gap: 0.375rem; flex-wrap: wrap; }
   .pill {
-    padding: 0.25rem 0.625rem;
+    min-height: var(--control-height);
+    padding: 0.375rem 0.75rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 5px;
-    background: transparent;
-    font-family: var(--mono);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
+    font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: color 0.12s, border-color 0.12s, background 0.12s;
+    transition: all 0.16s ease;
     white-space: nowrap;
   }
-  .pill:hover { border-color: var(--accent); color: var(--accent); }
-  .pill.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-  .pill-eg { opacity: 0.5; font-size: 0.75rem; margin-left: 0.25rem; }
+  .pill:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .pill.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+    font-weight: 600;
+  }
+  .pill-eg { opacity: 0.55; font-size: 0.75rem; margin-left: 0.25rem; }
 
   .cfg-refresh-info {
-    margin-top: 0.5rem;
-    padding: 0.5rem 0.625rem;
-    border-radius: 6px;
+    margin-top: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: var(--radius-sm);
     background: var(--raised);
+    border: 1px solid var(--border-subtle);
   }
   .refresh-info-text {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
+    font-weight: 500;
     color: var(--text-muted);
+    line-height: 1.5;
   }
   .settings-link {
     color: var(--accent);
     text-decoration: none;
+    font-weight: 600;
   }
   .settings-link:hover { text-decoration: underline; }
 
-  /* ── Quota warning banner ────────────────────────────────────────────── */
+  /* ── Quota Warning Banner ───────────────────────────────────────────────── */
   .quota-warning-list {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
-    margin-bottom: 0.875rem;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
   }
 
   .quota-warning {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    border-radius: 7px;
-    font-size: 0.8rem;
+    gap: 0.625rem;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: 0.8125rem;
     border: 1px solid transparent;
+    box-shadow: var(--shadow-sm);
   }
 
   .quota-orange {
-    background: oklch(0.97 0.03 60);
-    border-color: oklch(0.87 0.08 60);
-    color: oklch(0.45 0.14 55);
-  }
-  :global(:root[data-theme="dark"]) .quota-orange {
-    background: oklch(0.2 0.04 55);
-    border-color: oklch(0.35 0.1 55);
-    color: oklch(0.78 0.14 60);
+    background: var(--amber-dim);
+    border-color: var(--amber);
+    color: var(--amber);
   }
 
   .quota-red {
     background: var(--rose-dim);
-    border-color: oklch(0.7 0.12 25);
+    border-color: var(--rose);
     color: var(--rose);
   }
 
@@ -856,59 +992,76 @@
     font-weight: 600;
     text-decoration: none;
     color: inherit;
-    opacity: 0.8;
+    opacity: 0.85;
     white-space: nowrap;
     flex-shrink: 0;
   }
   .warn-link:hover { opacity: 1; text-decoration: underline; }
 
-  /* ── Splash states ───────────────────────────────────────────────────── */
+  /* ── Splash States ──────────────────────────────────────────────────────── */
   .splash-loading, .splash-error, .splash-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.75rem;
-    min-height: 320px;
+    gap: 0.875rem;
+    min-height: 360px;
     text-align: center;
+    background: var(--surface);
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius-lg);
   }
+  .splash-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .splash-text {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.1em;
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-weight: 500;
     color: var(--text-muted);
   }
 
-  .err-msg { font-size: 0.8125rem; color: var(--text-muted); }
+  .err-msg { font-size: 0.875rem; color: var(--rose); }
   .retry-btn {
-    margin-top: 0.25rem;
-    padding: 0.375rem 1rem;
+    margin-top: 0.5rem;
+    padding: 0.4rem 1.125rem;
     border: 1px solid var(--rose);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: transparent;
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
+    font-weight: 600;
     color: var(--rose);
     cursor: pointer;
-    transition: background 0.12s;
+    transition: background 0.15s;
   }
   .retry-btn:hover { background: var(--rose-dim); }
 
   .empty-title {
-    font-size: 0.875rem;
+    font-size: 1rem;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text);
   }
   .empty-hint { font-size: 0.8125rem; color: var(--text-muted); }
 
-  /* ── Responsive ──────────────────────────────────────────────────────── */
+  /* ── Responsive ─────────────────────────────────────────────────────────── */
   @media (max-width: 800px) {
-    .counter-section { padding: 2rem 1rem 1.25rem; }
-    .counter-sub { gap: 1rem; }
-    .stats-strip { flex-direction: column; }
-    .stat-block:not(:last-child) { border-right: none; border-bottom: 1px solid var(--border-subtle); }
+    .counter-section { padding: 2.25rem 1.25rem 1.5rem; }
+    .counter-sub {
+      flex-direction: column;
+      border-radius: var(--radius-md);
+      gap: 0.75rem;
+      width: 100%;
+    }
+    .sub-divider { display: none; }
+    .stats-strip { grid-template-columns: 1fr; gap: 0.75rem; }
     .top-bar {
       display: grid;
       grid-template-columns: auto auto 1fr auto;

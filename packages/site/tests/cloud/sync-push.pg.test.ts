@@ -3,8 +3,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('$lib/server/db/pool.js', async () => ({ sql: (await import('../helpers/pglite-sql.js')).sql }))
-vi.mock('$lib/server/uploads/verify.js', () => ({
-  verifyUploadRequest: async () => ({ valid: true, userId: 'user_1', deviceId: 'device_1', idempotencyKey: `idem_${Math.random()}` }),
+vi.mock('$lib/server/auth/device-request.js', () => ({
+  verifyDeviceRequest: async () => ({ valid: true, userId: 'user_1', deviceId: 'device_1', idempotencyKey: `idem_${Math.random()}` }),
 }))
 vi.mock('$lib/server/cloud/star-check.js', () => ({ checkCloudSyncAccess: async () => ({ allowed: true }) }))
 

@@ -47,5 +47,5 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   const sid = await createSession(user.id)
   await setSessionCookie(cookies, sid)
 
-  throw redirect(302, '/leaderboard')
+  throw redirect(302, '/settings')
 }

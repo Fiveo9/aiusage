@@ -57,7 +57,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     const sid = await createSession(user.id)
     await setSessionCookie(cookies, sid)
 
-    throw redirect(302, '/leaderboard')
+    throw redirect(302, '/settings')
   } catch (e) {
     if (isRedirect(e)) throw e
     console.error('Linux Do OAuth callback error:', e)

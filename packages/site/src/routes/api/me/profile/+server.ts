@@ -2,7 +2,6 @@ import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
 import { requireUser } from '$lib/server/auth/session.js'
-import { invalidateLeaderboardCache } from '$lib/server/leaderboard/query.js'
 import { getConfigValue, CFG } from '$lib/server/config.js'
 
 export const PUT: RequestHandler = async (event) => {
@@ -71,22 +70,7 @@ export const PUT: RequestHandler = async (event) => {
     updates.display_name = displayName
   }
 
-  // leaderboard settings
-  let leaderboardVisibility: string | undefined
-  let leaderboardAnonymous: boolean | undefined
-  if (body.leaderboard_visibility !== undefined) {
-    const vis = String(body.leaderboard_visibility)
-    if (!['public', 'private'].includes(vis)) {
-      return json({ error: 'Invalid leaderboard_visibility', error_key: 'invalid_visibility' }, { status: 400 })
-    }
-    leaderboardVisibility = vis
-  }
-  if (body.leaderboard_anonymous !== undefined) {
-    leaderboardAnonymous = body.leaderboard_anonymous === true
-  }
-
-  const hasLeaderboardUpdates = leaderboardVisibility !== undefined || leaderboardAnonymous !== undefined
-  if (Object.keys(updates).length === 0 && !hasLeaderboardUpdates) {
+  if (Object.keys(updates).length === 0) {
     return json({ message: 'No changes' })
   }
 
@@ -96,16 +80,6 @@ export const PUT: RequestHandler = async (event) => {
   if (updates.display_name !== undefined) {
     await sql`UPDATE users SET display_name = ${updates.display_name}, updated_at = NOW() WHERE id = ${user.id}`
   }
-  if (leaderboardVisibility !== undefined) {
-    await sql`UPDATE users SET leaderboard_visibility = ${leaderboardVisibility}, updated_at = NOW() WHERE id = ${user.id}`
-  }
-  if (leaderboardAnonymous !== undefined) {
-    await sql`UPDATE users SET leaderboard_anonymous = ${leaderboardAnonymous}, updated_at = NOW() WHERE id = ${user.id}`
-  }
-  if (hasLeaderboardUpdates) {
-    invalidateLeaderboardCache()
-  }
-
   // Reserve old username for 30 days
   if (usernameChanged) {
     const reservedUntil = new Date(Date.now() + usernameCooldownDays * 24 * 60 * 60 * 1000)
@@ -117,7 +91,7 @@ export const PUT: RequestHandler = async (event) => {
   }
 
   const updated = await sql`
-    SELECT id, username, display_name, username_changed_at, leaderboard_visibility, leaderboard_anonymous FROM users WHERE id = ${user.id}
+    SELECT id, username, display_name, username_changed_at FROM users WHERE id = ${user.id}
   `
 
   return json(updated[0])

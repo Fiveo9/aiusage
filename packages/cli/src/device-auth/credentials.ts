@@ -4,6 +4,7 @@ import { chmodSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { AIUSAGE_DIR } from '../config.js'
 
+// Preserve the historical filename so existing cloud-sync authorizations keep working.
 const CREDENTIALS_FILE = join(AIUSAGE_DIR, 'leaderboard-credentials.json')
 
 export interface DeviceCredentials {

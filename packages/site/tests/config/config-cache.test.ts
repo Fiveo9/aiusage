@@ -38,7 +38,7 @@ vi.mock('../../src/lib/server/db/pool.js', () => ({ sql: db.sql }))
 
 import { CFG, getConfigSync, getConfigValue, getDefaultValue, invalidateConfigCache, setConfig } from '../../src/lib/server/config.js'
 
-const KEY = CFG.UPLOAD_RATE_LIMIT
+const KEY = CFG.USERNAME_COOLDOWN_DAYS
 const DEFAULT = getDefaultValue(KEY)
 
 beforeEach(() => {
@@ -77,11 +77,11 @@ describe('site config cache', () => {
   })
 
   it('keeps a stored zero apart from a missing row', async () => {
-    db.state.rows.set(CFG.RISK_RULE_REPEAT, 0)
+    db.state.rows.set(KEY, 0)
 
-    expect(await getConfigValue(CFG.RISK_RULE_REPEAT)).toBe(0)
-    expect(await getConfigValue(CFG.RISK_RULE_REPEAT)).toBe(0)
-    expect(getConfigSync(CFG.RISK_RULE_REPEAT, 1)).toBe(0)
+    expect(await getConfigValue(KEY)).toBe(0)
+    expect(await getConfigValue(KEY)).toBe(0)
+    expect(getConfigSync(KEY, 1)).toBe(0)
   })
 
   it('returns a value saved through setConfig at once, also when the missing row was cached', async () => {

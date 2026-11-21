@@ -134,15 +134,19 @@
 </div>
 
 <form class="session-search filter-bar" on:submit|preventDefault={applySearch}>
-  <label for="session-search">{$t('sessions.search')}</label>
-  <input id="session-search" type="search" maxlength="200" bind:value={query} placeholder={$t('sessions.searchHint')} />
-  <button type="submit" class="activity-page-button" disabled={!ready}>{$t('sessions.search')}</button>
-  <label for="session-sort">{$t('sessions.sort')}</label>
-  <select id="session-sort" bind:value={sort} on:change={applySearch} disabled={!ready}>
-    <option value="newest">{$t('sessions.sortNewest')}</option>
-    <option value="cost">{$t('sessions.sortCost')}</option>
-    <option value="tokens">{$t('sessions.sortTokens')}</option>
-  </select>
+  <label for="session-search" class="search-label">{$t('sessions.search')}</label>
+  <div class="search-input-wrap">
+    <input id="session-search" type="search" maxlength="200" bind:value={query} placeholder={$t('sessions.searchHint')} />
+  </div>
+  <button type="submit" class="activity-page-button search-submit-btn" disabled={!ready}>{$t('sessions.search')}</button>
+  <div class="sort-wrap">
+    <label for="session-sort" class="sort-label">{$t('sessions.sort')}</label>
+    <select id="session-sort" bind:value={sort} on:change={applySearch} disabled={!ready}>
+      <option value="newest">{$t('sessions.sortNewest')}</option>
+      <option value="cost">{$t('sessions.sortCost')}</option>
+      <option value="tokens">{$t('sessions.sortTokens')}</option>
+    </select>
+  </div>
 </form>
 
 <div class="filter-bar">
@@ -152,7 +156,10 @@
 </div>
 
 {#if loading}
-  <div class="card state-msg" role="status">{$t('common.loading')}</div>
+  <div class="card state-msg" role="status">
+    <span class="loading-spin"></span>
+    <span>{$t('common.loading')}</span>
+  </div>
 {:else if error}
   <div class="card state-msg error" role="alert">{error}</div>
 {:else if !data?.sessions.length}
@@ -218,10 +225,63 @@
 {/if}
 
 <style>
-  .session-search { flex-wrap: wrap; }
-  .session-search input, .session-search select {
-    background: var(--surface); color: var(--text); border: 1px solid var(--border-subtle);
-    border-radius: 6px; padding: 0.5rem; font: inherit; max-width: 100%;
+  .session-search {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
-  .session-search input { flex: 1; min-width: 12rem; }
+  .search-label, .sort-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .search-input-wrap {
+    flex: 1;
+    min-width: 14rem;
+  }
+  .session-search input, .session-search select {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 0.4rem 0.75rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    max-width: 100%;
+    min-height: var(--control-height);
+    transition: all 0.16s ease;
+  }
+  .session-search input:focus, .session-search select:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-dim);
+  }
+  .session-search input {
+    width: 100%;
+  }
+  .sort-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .search-submit-btn {
+    white-space: nowrap;
+  }
+
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>

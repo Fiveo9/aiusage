@@ -37,7 +37,10 @@
 {#if error}
   <p class="card state-msg error" role="alert">{error}</p>
 {:else if !data}
-  <p class="card state-msg" role="status">{$t('common.loading')}</p>
+  <div class="card state-msg" role="status">
+    <span class="loading-spin"></span>
+    <span>{$t('common.loading')}</span>
+  </div>
 {:else}
   <div class="card activity-card">
     <div class="activity-card-header">
@@ -97,3 +100,18 @@
     </nav>
   </div>
 {/if}
+
+<style>
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>

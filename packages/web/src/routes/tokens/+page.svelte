@@ -38,10 +38,6 @@
     return Math.max(...data.data.map(d => getTotal(d)))
   }
 
-  function getBarHeight(tokens, max) {
-    return max > 0 ? (tokens / max) * 200 : 0
-  }
-
   function niceScale(max) {
     if (max <= 0) return []
     const magnitude = Math.pow(10, Math.floor(Math.log10(max)))
@@ -99,7 +95,10 @@
 </div>
 
 {#if loading}
-  <div class="state-msg">{$t('common.loading')}</div>
+  <div class="state-msg">
+    <span class="loading-spin"></span>
+    <span class="loading-text">{$t('common.loading')}</span>
+  </div>
 {:else if error}
   <div class="state-msg error">{error}</div>
 {:else if !data?.data.length}
@@ -131,8 +130,8 @@
     <div class="chart-area" bind:this={chartEl} on:mouseleave={hideTooltip}>
       <div class="y-axis">
         {#each ticks as tick}
-          <div class="y-tick" style="bottom: {scaleMax > 0 ? (tick / scaleMax) * 200 : 0}px">
-            <span class="y-label mono">{formatTokens(tick)}</span>
+          <div class="y-tick" style="bottom: {scaleMax > 0 ? (tick / scaleMax) * 220 : 0}px">
+            <span class="y-label numeric">{formatTokens(tick)}</span>
             <span class="y-line"></span>
           </div>
         {/each}
@@ -142,7 +141,7 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
             class="bar-group"
-            style="animation-delay: {i * 30}ms"
+            style="animation-delay: {i * 25}ms"
             on:mouseenter={(e) => showTooltip(e, day)}
             on:mousemove={(e) => showTooltip(e, day)}
           >
@@ -150,38 +149,38 @@
               {#if chartMode === 'total'}
                 <div
                   class="bar total-bar"
-                  style="height: {scaleMax > 0 ? (getTotal(day) / scaleMax) * 200 : 0}px"
+                  style="height: {scaleMax > 0 ? (getTotal(day) / scaleMax) * 220 : 0}px"
                 ></div>
               {:else}
                 <div
                   class="bar input"
-                  style="height: {scaleMax > 0 ? (day.inputTokens / scaleMax) * 200 : 0}px"
+                  style="height: {scaleMax > 0 ? (day.inputTokens / scaleMax) * 220 : 0}px"
                 ></div>
                 <div
                   class="bar output"
-                  style="height: {scaleMax > 0 ? (day.outputTokens / scaleMax) * 200 : 0}px"
+                  style="height: {scaleMax > 0 ? (day.outputTokens / scaleMax) * 220 : 0}px"
                 ></div>
                 {#if (day.cacheReadTokens || 0) > 0}
                   <div
                     class="bar cache-read"
-                    style="height: {scaleMax > 0 ? (day.cacheReadTokens / scaleMax) * 200 : 0}px"
+                    style="height: {scaleMax > 0 ? (day.cacheReadTokens / scaleMax) * 220 : 0}px"
                   ></div>
                 {/if}
                 {#if (day.cacheWriteTokens || 0) > 0}
                   <div
                     class="bar cache-write"
-                    style="height: {scaleMax > 0 ? (day.cacheWriteTokens / scaleMax) * 200 : 0}px"
+                    style="height: {scaleMax > 0 ? (day.cacheWriteTokens / scaleMax) * 220 : 0}px"
                   ></div>
                 {/if}
                 {#if day.thinkingTokens > 0}
                   <div
                     class="bar thinking"
-                    style="height: {scaleMax > 0 ? (day.thinkingTokens / scaleMax) * 200 : 0}px"
+                    style="height: {scaleMax > 0 ? (day.thinkingTokens / scaleMax) * 220 : 0}px"
                   ></div>
                 {/if}
               {/if}
             </div>
-            <div class="label">{day.date.slice(5)}</div>
+            <div class="label numeric">{day.date.slice(5)}</div>
           </div>
         {/each}
       </div>
@@ -194,7 +193,7 @@
               {/if}
               <span class="tooltip-label">{line.label}</span>
               {#if line.value}
-                <span class="tooltip-val mono">{line.value}</span>
+                <span class="tooltip-val numeric">{line.value}</span>
               {/if}
             </div>
           {/each}
@@ -216,35 +215,37 @@
     {/if}
   </div>
 
-  <div class="card" style="margin-top: 1rem;">
-    <table>
-      <thead>
-        <tr>
-          <th>{$t('tokens.date')}</th>
-          <th>{$t('tokens.input')}</th>
-          <th>{$t('tokens.output')}</th>
-          <th>{$t('tokens.cacheRead')}</th>
-          <th>{$t('tokens.cacheWrite')}</th>
-          <th>{$t('tokens.thinking')}</th>
-          <th>{$t('tokens.total')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each data.data as day}
+  <div class="card table-card" style="margin-top: 1.25rem;">
+    <div class="table-container">
+      <table>
+        <thead>
           <tr>
-            <td class="mono">{day.date}</td>
-            <td class="mono" style="color:var(--chart-input)">{formatTokens(day.inputTokens)}</td>
-            <td class="mono" style="color:var(--chart-output)">{formatTokens(day.outputTokens)}</td>
-            <td class="mono" style="color:var(--chart-cache-read)">{formatTokens(day.cacheReadTokens || 0)}</td>
-            <td class="mono" style="color:var(--chart-cache-write)">{formatTokens(day.cacheWriteTokens || 0)}</td>
-            <td class="mono" style="color:var(--chart-thinking)">{formatTokens(day.thinkingTokens || 0)}</td>
-            <td class="mono" style="color:var(--text); font-weight:600">
-              {formatTokens(getTotal(day))}
-            </td>
+            <th>{$t('tokens.date')}</th>
+            <th class="numeric-th">{$t('tokens.input')}</th>
+            <th class="numeric-th">{$t('tokens.output')}</th>
+            <th class="numeric-th">{$t('tokens.cacheRead')}</th>
+            <th class="numeric-th">{$t('tokens.cacheWrite')}</th>
+            <th class="numeric-th">{$t('tokens.thinking')}</th>
+            <th class="numeric-th">{$t('tokens.total')}</th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each data.data as day}
+            <tr>
+              <td class="numeric font-medium">{day.date}</td>
+              <td class="numeric color-input">{formatTokens(day.inputTokens)}</td>
+              <td class="numeric color-output">{formatTokens(day.outputTokens)}</td>
+              <td class="numeric color-cr">{formatTokens(day.cacheReadTokens || 0)}</td>
+              <td class="numeric color-cw">{formatTokens(day.cacheWriteTokens || 0)}</td>
+              <td class="numeric color-thinking">{formatTokens(day.thinkingTokens || 0)}</td>
+              <td class="numeric font-bold color-total">
+                {formatTokens(getTotal(day))}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </div>
 {/if}
 
@@ -256,50 +257,54 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 0.5rem;
+    margin-bottom: 1rem;
   }
   .chart-header .section-title {
     margin-bottom: 0;
   }
+
+  /* ── Segmented Mode Switcher ────────────────────────────────────────────── */
   .mode-toggle {
     display: flex;
     gap: 2px;
     background: var(--raised);
-    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
     padding: 2px;
   }
   .mode-btn {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 0.22rem 0.65rem;
+    font-weight: 500;
+    padding: 0.25rem 0.75rem;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: background 0.14s, color 0.14s;
+    transition: all 0.16s ease;
   }
   .mode-btn:hover {
-    color: var(--text-secondary);
+    color: var(--text);
   }
   .mode-btn.active {
     background: var(--surface);
-    color: var(--text);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
   }
 
-  /* ── Chart with Y-axis ────────────────────────────────────── */
+  /* ── Chart Container with Y-Axis ────────────────────────────────────────── */
   .chart-area {
     position: relative;
     display: flex;
-    padding-bottom: 16px;
+    padding-bottom: 18px;
     border-bottom: 1px solid var(--border-subtle);
   }
   .y-axis {
     position: relative;
-    width: 52px;
-    height: 200px;
+    width: 56px;
+    height: 220px;
     flex-shrink: 0;
   }
   .y-tick {
@@ -311,76 +316,95 @@
     transform: translateY(50%);
   }
   .y-label {
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
     color: var(--text-muted);
     white-space: nowrap;
     text-align: right;
     flex-shrink: 0;
-    width: 48px;
-    padding-right: 6px;
+    width: 50px;
+    padding-right: 8px;
   }
   .y-line {
     position: absolute;
-    left: 52px;
+    left: 56px;
     right: -9999px;
     height: 1px;
     background: var(--border-subtle);
+    opacity: 0.7;
     pointer-events: none;
   }
 
   .chart {
     display: flex;
     align-items: flex-end;
-    gap: 3px;
-    height: 200px;
+    gap: 4px;
+    height: 220px;
     overflow-x: auto;
     overflow-y: hidden;
     min-width: 0;
     flex: 1;
+    padding-left: 4px;
+    scrollbar-width: thin;
   }
   .bar-group {
     flex: 0 0 auto;
-    min-width: 18px;
+    min-width: 22px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    animation: fade 0.2s ease both;
-    cursor: default;
+    animation: fade 0.25s ease both;
+    cursor: pointer;
+    padding: 0 2px;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+  }
+  .bar-group:hover {
+    background-color: var(--hover);
   }
   .bars {
     display: flex;
-    gap: 1px;
+    gap: 1.5px;
     align-items: flex-end;
   }
   .bar {
-    width: 10px;
+    width: 9px;
     min-height: 2px;
-    border-radius: 2px 2px 0 0;
-    transition: height 0.4s ease;
+    border-radius: 3px 3px 0 0;
+    transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s;
   }
   .bar.input { background: var(--chart-input); }
   .bar.output { background: var(--chart-output); }
   .bar.cache-read { background: var(--chart-cache-read); }
   .bar.cache-write { background: var(--chart-cache-write); }
   .bar.thinking { background: var(--chart-thinking); }
-  .bar.total-bar { background: var(--chart-total); width: 14px; }
-  .label {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 6px;
+  .bar.total-bar {
+    background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+    width: 14px;
   }
+
+  .label {
+    font-family: var(--font-numeric);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  /* ── Chart Legend ───────────────────────────────────────────────────────── */
   .legend {
     display: flex;
     gap: 1.25rem;
-    margin-top: 1rem;
+    margin-top: 1.125rem;
     justify-content: center;
+    flex-wrap: wrap;
   }
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.375rem;
     font-size: 0.75rem;
+    font-weight: 500;
     color: var(--text-secondary);
   }
   .dot {
@@ -395,38 +419,47 @@
   .dot.thinking { background: var(--chart-thinking); }
   .dot.total-bar { background: var(--chart-total); }
 
-  /* ── Tooltip ──────────────────────────────────────────────── */
+  /* ── Modern Vercel/Linear Tooltip ───────────────────────────────────────── */
   .tooltip {
     position: absolute;
     pointer-events: none;
-    z-index: 10;
+    z-index: 50;
     background: var(--surface);
     border: 1px solid var(--border-medium);
-    border-radius: 6px;
-    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius-sm);
+    padding: 0.625rem 0.875rem;
     box-shadow: var(--shadow-md);
-    transform: translate(-50%, calc(-100% - 10px));
+    transform: translate(-50%, calc(-100% - 12px));
     white-space: nowrap;
-    min-width: 120px;
+    min-width: 150px;
+    backdrop-filter: blur(12px);
+    animation: tooltipIn 0.12s ease-out;
   }
+  @keyframes tooltipIn {
+    from { opacity: 0; transform: translate(-50%, calc(-100% - 8px)); }
+    to { opacity: 1; transform: translate(-50%, calc(-100% - 12px)); }
+  }
+
   .tooltip-row {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    font-size: 0.6875rem;
+    gap: 0.5rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
-    padding: 0.075rem 0;
+    padding: 0.125rem 0;
   }
   .tooltip-row:first-child {
-    font-weight: 600;
+    font-family: var(--font-numeric);
+    font-weight: 700;
     color: var(--text);
-    margin-bottom: 0.125rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.8125rem;
   }
   .tooltip-bold {
     border-top: 1px solid var(--border-subtle);
-    margin-top: 0.125rem;
-    padding-top: 0.2rem;
-    font-weight: 600;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+    font-weight: 700;
     color: var(--text);
   }
   .tooltip-dot {
@@ -439,12 +472,53 @@
     flex: 1;
   }
   .tooltip-val {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-align: right;
   }
 
+  /* ── Table Styling ──────────────────────────────────────────────────────── */
+  .table-card {
+    padding: 0;
+    overflow: hidden;
+  }
+  .table-container {
+    overflow-x: auto;
+  }
+  .numeric-th {
+    text-align: right;
+  }
+  .font-medium {
+    font-weight: 500;
+    color: var(--text);
+  }
+  .font-bold {
+    font-weight: 700;
+  }
+  .color-input { color: var(--chart-input); }
+  .color-output { color: var(--chart-output); }
+  .color-cr { color: var(--chart-cache-read); }
+  .color-cw { color: var(--chart-cache-write); }
+  .color-thinking { color: var(--chart-thinking); }
+  .color-total { color: var(--text); }
+
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 0.5rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text {
+    font-size: 0.8125rem;
+  }
+
   @keyframes fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>

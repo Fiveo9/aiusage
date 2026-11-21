@@ -45,7 +45,7 @@ const CONTINUE = ''
 
 /** Main menu → Data → Clean, answer its prompts, then back out and exit. */
 async function runClean(cleanAnswers: string[]): Promise<string[][]> {
-  answers = ['2', '4', ...cleanAnswers, CONTINUE, '0', '6']
+  answers = ['2', '4', ...cleanAnswers, CONTINUE, '0', '5']
   await runMenu()
   expect(answers).toEqual([])
   expect(questions.some(q => q.includes(CLEAN_PROMPT))).toBe(true)

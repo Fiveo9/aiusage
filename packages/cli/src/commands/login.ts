@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { startDeviceAuth, completeDeviceAuth } from '../leaderboard/api.js'
-import { saveCredentials, hasCredentials } from '../leaderboard/credentials.js'
-import { base64url, sha256Buffer } from '../leaderboard/crypto.js'
+import { startDeviceAuth, completeDeviceAuth } from '../device-auth/api.js'
+import { saveCredentials, hasCredentials } from '../device-auth/credentials.js'
+import { base64url, sha256Buffer } from '../device-auth/crypto.js'
 import { execSync } from 'node:child_process'
 import * as readline from 'node:readline'
 import { getSiteUrl } from '../site-url.js'
@@ -56,7 +56,7 @@ function openBrowser(url: string): boolean {
   return false
 }
 
-export async function runLeaderboardLogin(): Promise<void> {
+export async function runLogin(): Promise<void> {
   if (hasCredentials()) {
     console.log('Already logged in. Run `aiusage logout` first to re-authenticate.')
     return
@@ -121,7 +121,7 @@ export async function runLeaderboardLogin(): Promise<void> {
 
         console.log('\n✓ Authorization successful!')
         console.log(`Device ID: ${completeResponse.device_id}`)
-        console.log('Credentials saved. You can now run `aiusage upload`.')
+        console.log('Credentials saved. Configure cloud sync, then run `aiusage sync`.')
         return
       } catch (error: any) {
         if (error.code === 'authorization_pending') {

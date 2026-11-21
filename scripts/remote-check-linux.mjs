@@ -10,7 +10,8 @@ const attempt = process.env.AIUSAGE_CHECK_ATTEMPT
 if (attempt && !/^\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(attempt)) throw Error('Invalid attempt ID')
 const results = attempt ? join(root, 'attempts', attempt) : join(root, 'results')
 const [task, scope] = process.argv.slice(2)
-if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres', 'docker'].includes(scope)) throw Error('Invalid task/scope')
+if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres', 'docker', 'package'].includes(scope)
+    || (scope === 'package' && task !== 'build')) throw Error('Invalid task/scope')
 mkdirSync(results, { recursive: true })
 const summary = { task, scope, status: 'running', category: 'source-integrity', exitCode: null, steps: [], tests: { passed: 0, failed: 0, skipped: 0, total: 0 }, node: process.version }
 const save = () => writeFileSync(join(results, 'summary.json'), JSON.stringify(summary, null, 2))
@@ -109,7 +110,16 @@ try {
   writeFileSync(readyFile, JSON.stringify({ lockHash, node: process.version }))
   }
   await pnpmStep('core-build', ['--dir', 'packages/core', 'run', 'build'], 'remote-build')
-  if (scope === 'postgres') {
+  if (scope === 'package') {
+    for (const pkg of ['web', 'cli']) await pnpmStep(`${pkg}-build`, ['--dir', `packages/${pkg}`, 'run', 'build'], 'remote-build')
+    await step('package-readme', process.execPath, ['packages/cli/scripts/copy-readme.js'], 'package-build')
+    summary.evidenceFiles = ['package-result.json']; save()
+    await step('package-verify', process.execPath, ['scripts/remote-check-deploy.mjs'], 'package-verification')
+    const packaged = JSON.parse(readFileSync(join(results, 'package-result.json'), 'utf8'))
+    if (packaged.status !== 'passed') throw Error('Deployment package verification failed')
+    summary.artifacts = [packaged.artifact]
+    summary.integrationAssertions = packaged.assertions
+  } else if (scope === 'postgres') {
     summary.evidenceFiles = ['postgres-result.json']; save()
     await step('postgres-concurrency', process.execPath, ['scripts/remote-check-postgres.mjs'], 'postgres-integration')
     const pgResult = JSON.parse(readFileSync(join(results, 'postgres-result.json'), 'utf8'))
@@ -150,7 +160,7 @@ try {
     summary.widgetNative = 'not_run'; summary.widgetGui = 'not_run'
   }
   summary.status = 'passed'; summary.exitCode = 0
-  if (!['postgres', 'docker'].includes(scope)) summary.category = task === 'test' ? 'unit-test' : 'remote-build'
+  if (!['postgres', 'docker', 'package'].includes(scope)) summary.category = task === 'test' ? 'unit-test' : 'remote-build'
 } catch (error) {
   summary.status = 'failed'; summary.exitCode = 1; summary.message = error.message
   console.error(error.message)

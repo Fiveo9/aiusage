@@ -343,71 +343,6 @@ async function syncSubmenu(rl: Interface): Promise<void> {
   }
 }
 
-async function leaderboardSubmenu(rl: Interface): Promise<void> {
-  while (true) {
-    clearScreen()
-    console.log(`
-========================================
-  Leaderboard
-========================================
-
-  [1] View
-  [2] Login
-  [3] Upload
-  [4] Upload Status
-  [5] Logout
-  [0] Back
-`)
-    const choice = await prompt(rl, '  Select [0-5]: ')
-    switch (choice) {
-      case '1': {
-        console.log('  Period: 1=Daily  2=Weekly  3=Monthly  4=Yearly  5=All Time')
-        const pChoice = await prompt(rl, '  Select [1-5]: ')
-        const periodMap: Record<string, string> = {
-          '1': 'daily',
-          '2': 'weekly',
-          '3': 'monthly',
-          '4': 'yearly',
-          '5': 'all_time',
-        }
-        const period = periodMap[pChoice] ?? 'daily'
-        console.log('')
-        runCommand(['leaderboard', '-p', period])
-        await prompt(rl, '\n  Press Enter to continue...')
-        break
-      }
-      case '2': {
-        console.log('')
-        runCommand(['login'])
-        await prompt(rl, '\n  Press Enter to continue...')
-        break
-      }
-      case '3': {
-        console.log('')
-        runCommand(['upload'])
-        await prompt(rl, '\n  Press Enter to continue...')
-        break
-      }
-      case '4': {
-        console.log('')
-        runCommand(['upload-status'])
-        await prompt(rl, '\n  Press Enter to continue...')
-        break
-      }
-      case '5': {
-        console.log('')
-        runCommand(['logout'])
-        await prompt(rl, '\n  Press Enter to continue...')
-        break
-      }
-      case '0':
-        return
-      default:
-        break
-    }
-  }
-}
-
 async function systemSubmenu(rl: Interface): Promise<void> {
   while (true) {
     clearScreen()
@@ -522,12 +457,11 @@ ${dashboardStatusLine()}
   [1] Dashboard      (serve/stop/restart/open)
   [2] Data           (parse/summary/export/clean/recalc)
   [3] Sync           (init/sync)
-  [4] Leaderboard    (view/login/upload/status/logout)
-  [5] System         (status/widget/pm2/update)
-  [6] Exit
+  [4] System         (status/widget/pm2/update)
+  [5] Exit
 
 `)
-      const choice = await prompt(rl, '  Select [1-6]: ')
+      const choice = await prompt(rl, '  Select [1-5]: ')
       switch (choice) {
         case '1':
           await dashboardSubmenu(rl)
@@ -539,12 +473,9 @@ ${dashboardStatusLine()}
           await syncSubmenu(rl)
           break
         case '4':
-          await leaderboardSubmenu(rl)
-          break
-        case '5':
           await systemSubmenu(rl)
           break
-        case '6':
+        case '5':
           return
         default:
           break

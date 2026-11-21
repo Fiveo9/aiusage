@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeHmac, sha256, generateNonce, generateIdempotencyKey, buildCanonicalString, base64url, sha256Buffer } from '../../src/leaderboard/crypto.js'
+import { computeHmac, sha256, generateNonce, generateIdempotencyKey, buildCanonicalString, base64url, sha256Buffer } from '../../src/device-auth/crypto.js'
 
 describe('sha256', () => {
   it('produces consistent hex hash', () => {

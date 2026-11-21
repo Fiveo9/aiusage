@@ -70,18 +70,18 @@
   select {
     padding: 0.38rem 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    font-family: var(--mono);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    background: var(--raised);
+    background: var(--surface);
     color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
     appearance: auto;
-    height: 32px;
+    min-height: var(--control-height);
+    max-width: 100%;
   }
   select:focus {
-    outline: none;
     border-color: var(--accent);
   }
   select:disabled {

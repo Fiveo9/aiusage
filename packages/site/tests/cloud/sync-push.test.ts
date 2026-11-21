@@ -47,8 +47,8 @@ vi.mock('$lib/server/db/pool.js', () => {
   return { sql }
 })
 
-vi.mock('$lib/server/uploads/verify.js', () => ({
-  verifyUploadRequest: async () => ({
+vi.mock('$lib/server/auth/device-request.js', () => ({
+  verifyDeviceRequest: async () => ({
     valid: true,
     userId: 'user_1',
     deviceId: 'device_1',

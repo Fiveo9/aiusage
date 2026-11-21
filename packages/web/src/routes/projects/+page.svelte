@@ -43,7 +43,10 @@
 </div>
 
 {#if loading}
-  <div class="card state-msg" role="status">{$t('common.loading')}</div>
+  <div class="card state-msg" role="status">
+    <span class="loading-spin"></span>
+    <span class="loading-text">{$t('common.loading')}</span>
+  </div>
 {:else if error}
   <div class="card state-msg error" role="alert">{error}</div>
 {:else if !data?.projects.length}
@@ -85,3 +88,20 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 0.5rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-size: 0.8125rem;
+  }
+</style>

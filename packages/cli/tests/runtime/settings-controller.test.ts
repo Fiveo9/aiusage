@@ -11,6 +11,26 @@ describe('RuntimeSettingsController', () => {
     vi.restoreAllMocks()
   })
 
+  it('does not schedule work from legacy leaderboard auto-upload settings', async () => {
+    const runParse = vi.fn(async () => {})
+    const runCleanup = vi.fn()
+    const runSync = vi.fn()
+    const controller = new RuntimeSettingsController({
+      db: {} as any,
+      loadConfig: () => ({ leaderboardAutoUpload: true, leaderboardUploadInterval: 1 } as any),
+      runParse,
+      runCleanup,
+      runSync,
+    })
+    controller.start()
+    await vi.advanceTimersByTimeAsync(7 * 24 * 60 * 60 * 1000)
+    expect(runParse).not.toHaveBeenCalled()
+    expect(runCleanup).not.toHaveBeenCalled()
+    expect(runSync).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    controller.stop()
+  })
+
   it('starts scheduling when refreshInterval is positive', async () => {
     const loadConfig = vi.fn(() => ({ refreshInterval: 1000 }))
     const runParse = vi.fn(async () => {})

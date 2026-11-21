@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import type postgres from 'postgres'
 import { sql } from '$lib/server/db/pool.js'
-import { verifyUploadRequest } from '$lib/server/uploads/verify.js'
+import { verifyDeviceRequest } from '$lib/server/auth/device-request.js'
 import { getConfigValue, CFG } from '$lib/server/config.js'
 import { checkCloudSyncAccess } from '$lib/server/cloud/star-check.js'
 import { nanoid } from 'nanoid'
@@ -81,7 +81,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Verify HMAC signature (reuse existing upload verification)
-  const verification = await verifyUploadRequest(request, bodyText)
+  const verification = await verifyDeviceRequest(request, bodyText)
   if (!verification.valid) {
     const status = verification.error_code === 'rate_limited' ? 429 : 401
     return json({ error: verification.error, error_code: verification.error_code }, { status })

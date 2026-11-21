@@ -137,13 +137,14 @@
     flex-wrap: wrap;
   }
   button {
+    min-height: var(--control-height);
     padding: 0.4rem 0.75rem;
     border: 1px solid var(--border-subtle);
     background: transparent;
     color: var(--text-secondary);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 0.78rem;
+    font-size: var(--text-xs);
     font-weight: 500;
     transition: all 0.2s ease;
     white-space: nowrap;
@@ -170,18 +171,17 @@
   .month-select {
     padding: 0.38rem 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    background: var(--raised);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    background: var(--surface);
     color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
     appearance: auto;
-    height: 32px;
+    min-height: var(--control-height);
   }
   .month-select:focus {
-    outline: none;
     border-color: var(--accent);
   }
   .month-select.active {
@@ -190,12 +190,14 @@
     color: var(--accent);
   }
   .custom-toggle {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.9rem;
     padding: 0.32rem 0.5rem;
   }
   .custom {
     display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
     gap: 0.35rem;
     align-items: center;
     margin-left: 0.15rem;
@@ -208,15 +210,16 @@
   input {
     padding: 0.38rem 0.55rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    font-size: 0.78rem;
-    font-family: var(--mono);
-    background: var(--raised);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    background: var(--surface);
     color: var(--text-secondary);
-    height: 32px;
+    min-height: var(--control-height);
+    min-width: 0;
+    max-width: 100%;
   }
   input:focus {
-    outline: none;
     border-color: var(--accent);
   }
   .apply {

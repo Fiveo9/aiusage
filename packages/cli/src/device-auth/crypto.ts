@@ -28,23 +28,6 @@ export function buildCanonicalString(
   return [method, path, bodyHash, timestamp, nonce, deviceId, idempotencyKey].join('\n')
 }
 
-export function computeTokenSnapshotHash(snapshot: {
-  period_type: string
-  period_start: string
-  period_end: string
-  total_tokens: number
-  schema_version: number
-}): string {
-  const canonical = JSON.stringify({
-    period_type: snapshot.period_type,
-    period_start: snapshot.period_start,
-    period_end: snapshot.period_end,
-    total_tokens: snapshot.total_tokens,
-    schema_version: snapshot.schema_version,
-  })
-  return 'sha256:' + sha256(canonical)
-}
-
 export function base64url(data: Buffer | string): string {
   const buf = typeof data === 'string' ? Buffer.from(data) : data
   return buf.toString('base64url')

@@ -9,18 +9,14 @@
     return match ? match[1] : ''
   }
 
-  let activeTab = 'uploads'
-  let loading = true
+  let activeTab = 'users'
   let error = ''
   let actionFeedback = ''
   let actionError = ''
   let actionLoading = ''
 
   // Stats
-  let stats = { users: 0, flaggedUploads: 0, priceModels: 0, auditLogs: 0 }
-
-  // Uploads
-  let snapshots = []
+  let stats = { users: 0, priceModels: 0, auditLogs: 0 }
 
   // Users
   let users = []
@@ -54,7 +50,6 @@
   let configSearch = ''
 
   $: tabList = [
-    { id: 'uploads', label: zh ? '待审核' : 'Flagged', count: stats.flaggedUploads },
     { id: 'users', label: zh ? '用户' : 'Users', count: stats.users },
     { id: 'pricing', label: zh ? '价格表' : 'Pricing', count: stats.priceModels },
     { id: 'logs', label: zh ? '日志' : 'Logs', count: stats.auditLogs },
@@ -74,25 +69,10 @@
     activeTab = tab
     actionFeedback = ''
     actionError = ''
-    if (tab === 'uploads' && snapshots.length === 0) await loadUploads()
     if (tab === 'users' && users.length === 0) await searchUsers(true)
     if (tab === 'pricing' && priceEntries.length === 0) await loadPricing()
     if (tab === 'logs' && auditLogs.length === 0) await loadAuditLogs()
     if (tab === 'config' && Object.keys(configs).length === 0) await loadConfigs()
-  }
-
-  async function loadUploads() {
-    loading = true
-    const res = await fetch('/api/admin/uploads')
-    if (res.status === 403 || res.status === 401) {
-      error = res.status === 403
-        ? (zh ? '无权访问，需要管理员权限。' : 'Access denied. Admin role required.')
-        : (zh ? '请先登录。' : 'Please log in.')
-      loading = false
-      return
-    }
-    if (res.ok) snapshots = (await res.json()).snapshots || []
-    loading = false
   }
 
   async function searchUsers(resetPage = true) {
@@ -268,8 +248,6 @@
   // Group audit log actions into categories
   const LOG_CATEGORIES = {
     user: ['ban_user', 'unban_user', 'set_role', 'set_cloud_sync'],
-    upload: ['approve_snapshot', 'reject_snapshot', 'hide_snapshot'],
-    leaderboard: ['hide_metric', 'restore_metric'],
     pricing: ['sync_pricing', 'update_price_entries', 'add_price_entry', 'delete_price_entry'],
     system: ['clear_audit_logs'],
   }
@@ -284,8 +262,6 @@
   function getLogCategoryLabel(cat) {
     const labels = {
       user: zh ? '用户管理' : 'User Management',
-      upload: zh ? '上传审核' : 'Upload Review',
-      leaderboard: zh ? '排行榜' : 'Leaderboard',
       pricing: zh ? '价格管理' : 'Pricing',
       system: zh ? '系统' : 'System',
       other: zh ? '其他' : 'Other',
@@ -411,17 +387,6 @@
       })
       if (res.ok) {
         actionFeedback = successMsg
-        // Snapshot actions report how many leaderboard rows they changed.
-        const result = await res.json().catch(() => ({}))
-        if (result.metrics_updated === 0) {
-          actionError = result.metrics_held > 0
-            ? (zh ? '该周期的排行榜数据不在本次通过的范围内，排行榜未变更' : 'The leaderboard rows of this period are not covered by this approval, so the leaderboard was not changed')
-            : (zh ? '没有匹配的排行榜数据，排行榜未变更' : 'No leaderboard rows matched, so the leaderboard was not changed')
-        } else if (result.metrics_held > 0) {
-          actionError = zh
-            ? `该周期有 ${result.metrics_held} 条排行榜数据未公开：它们不在本次通过的范围内`
-            : `${result.metrics_held} leaderboard row(s) of this period were not published: they are not covered by this approval`
-        }
         return true
       }
       const data = await res.json().catch(() => ({}))
@@ -432,28 +397,6 @@
       return false
     } finally {
       actionLoading = ''
-    }
-  }
-
-  // Upload actions
-  async function approveSnap(id) {
-    if (await doAction(`/api/admin/uploads/${id}/approve`, {}, zh ? '快照已通过' : 'Snapshot approved')) {
-      snapshots = snapshots.filter(s => s.id !== id)
-      stats = { ...stats, flaggedUploads: Math.max(0, stats.flaggedUploads - 1) }
-    }
-  }
-  async function rejectSnap(id) {
-    if (!confirm(zh ? '确认拒绝此快照？此操作不可撤回。' : 'Reject this snapshot? This cannot be undone.')) return
-    if (await doAction(`/api/admin/uploads/${id}/reject`, {}, zh ? '快照已拒绝' : 'Snapshot rejected')) {
-      snapshots = snapshots.filter(s => s.id !== id)
-      stats = { ...stats, flaggedUploads: Math.max(0, stats.flaggedUploads - 1) }
-    }
-  }
-  async function hideSnap(id) {
-    if (!confirm(zh ? '确认从排行榜隐藏此快照？' : 'Hide this snapshot from the leaderboard?')) return
-    if (await doAction(`/api/admin/uploads/${id}/hide`, {}, zh ? '快照已隐藏' : 'Snapshot hidden')) {
-      snapshots = snapshots.filter(s => s.id !== id)
-      stats = { ...stats, flaggedUploads: Math.max(0, stats.flaggedUploads - 1) }
     }
   }
 
@@ -509,41 +452,6 @@
       actionLoading = ''
     }
   }
-  async function recomputeLeaderboard() {
-    if (!confirm(zh ? '确认使用当前价格表重算全部排行榜指标？' : 'Recompute all leaderboard metrics using the current price table?')) return
-    if (actionLoading) return
-    actionLoading = '/api/admin/leaderboard/recompute'
-    actionError = ''
-    actionFeedback = ''
-    try {
-      const res = await fetch('/api/admin/leaderboard/recompute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
-        body: JSON.stringify({})
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) {
-        const unresolved = data.unresolved_models?.length ?? 0
-        actionFeedback = zh
-          ? `排行榜已重算：更新 ${data.recomputed ?? 0}，保留 ${data.preserved ?? 0}，未匹配模型 ${unresolved}`
-          : `Leaderboard recomputed: ${data.recomputed ?? 0} updated, ${data.preserved ?? 0} preserved, ${unresolved} unresolved models`
-      } else {
-        actionError = data.error || (zh ? '重算失败' : 'Recompute failed')
-      }
-    } catch {
-      actionError = zh ? '网络错误' : 'Network error'
-    } finally {
-      actionLoading = ''
-    }
-  }
-
-  function formatTokens(n) {
-    const num = Number(n)
-    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M'
-    if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K'
-    return num.toLocaleString()
-  }
-
   function formatDate(iso) {
     if (!iso) return '-'
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -603,43 +511,6 @@
       {/if}
 
       <div class="tab-content">
-        <!-- Uploads -->
-        {#if activeTab === 'uploads'}
-          {#if loading}
-            <div class="empty">{zh ? '加载中...' : 'Loading...'}</div>
-          {:else if snapshots.length === 0}
-            <div class="empty">
-              <p class="empty-title">{zh ? '没有待审核的快照' : 'No flagged uploads'}</p>
-              <p class="empty-desc">{zh ? '所有上传都已审核完毕。新的可疑上传会出现在这里。' : 'All uploads have been reviewed. Suspicious uploads will appear here.'}</p>
-            </div>
-          {:else}
-            <div class="list">
-              {#each snapshots as snap}
-                <div class="list-item">
-                  <div class="list-item-body">
-                    <div class="list-item-top">
-                      <span class="list-item-name">{snap.display_name}</span>
-                      <span class="badge">{snap.period_type}</span>
-                      <span class="mono">{formatTokens(snap.total_tokens)} tokens</span>
-                    </div>
-                    <div class="list-item-sub">
-                      <span>{snap.device_name}</span>
-                      {#if snap.reason_code}<span class="sep">{snap.reason_code}</span>{/if}
-                      {#if snap.reason_message}<span class="sep">{snap.reason_message}</span>{/if}
-                      <span class="sep">{formatDate(snap.created_at)}</span>
-                    </div>
-                  </div>
-                  <div class="list-item-actions">
-                    <button class="btn btn-success" on:click={() => approveSnap(snap.id)} disabled={!!actionLoading}>{zh ? '通过' : 'Approve'}</button>
-                    <button class="btn btn-danger" on:click={() => rejectSnap(snap.id)} disabled={!!actionLoading}>{zh ? '拒绝' : 'Reject'}</button>
-                    <button class="btn btn-ghost" on:click={() => hideSnap(snap.id)} disabled={!!actionLoading}>{zh ? '隐藏' : 'Hide'}</button>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {/if}
-
         <!-- Users -->
         {#if activeTab === 'users'}
           <div class="toolbar">
@@ -756,7 +627,6 @@
                   </button>
                 {/if}
                 <button class="btn btn-ghost" on:click={() => { addingModel = !addingModel; if (addingModel) { newModel = { ...newModel, currency: priceCurrency === 'all' ? 'USD' : priceCurrency } } }}>{addingModel ? (zh ? '取消' : 'Cancel') : (zh ? '添加模型' : 'Add model')}</button>
-                <button class="btn btn-ghost" on:click={recomputeLeaderboard} disabled={!!actionLoading}>{zh ? '重算排行榜' : 'Recompute'}</button>
                 <button class="btn btn-ghost" on:click={syncPricing} disabled={!!actionLoading}>{zh ? '同步 LiteLLM' : 'Sync LiteLLM'}</button>
               </div>
             </div>

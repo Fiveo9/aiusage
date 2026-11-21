@@ -19,7 +19,7 @@
   let resendMsg = ''
   let pollTimer = null
   $: redirectTo = getSafeRedirect($page.url.searchParams.get('redirect'))
-  $: loginHref = redirectTo === '/leaderboard'
+  $: loginHref = redirectTo === '/settings'
     ? '/login'
     : `/login?redirect=${encodeURIComponent(redirectTo)}`
 
@@ -79,7 +79,7 @@
   }
 
   function getSafeRedirect(value) {
-    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/leaderboard'
+    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/settings'
     return value
   }
 

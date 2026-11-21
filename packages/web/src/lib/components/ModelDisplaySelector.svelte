@@ -29,10 +29,10 @@
     font-size: 0.8125rem;
   }
   select {
-    height: 32px;
+    min-height: var(--control-height);
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--text);
     font: inherit;

@@ -90,15 +90,6 @@
         { id: 'account-settings', en: 'Profile Settings', zh: '个人设置' },
       ]
     },
-    { id: 'leaderboard', en: 'Public Leaderboard', zh: '公开排行榜',
-      children: [
-        { id: 'lb-view', en: 'Viewing & Filtering', zh: '查看与筛选' },
-        { id: 'lb-upload', en: 'Upload Flow', zh: '上传流程' },
-        { id: 'lb-dashboard', en: 'Dashboard Leaderboard', zh: '仪表盘排行榜' },
-        { id: 'lb-anonymous', en: 'Anonymous Mode', zh: '匿名模式' },
-      ]
-    },
-    { id: 'uploads-page', en: 'Upload Status', zh: '上传状态', children: [] },
     { id: 'admin-page', en: 'Admin Dashboard', zh: '管理后台', children: [] },
     { id: 'support', en: 'Support & Contact', zh: '服务与支持', children: [] },
     { id: 'cli-reference', en: 'CLI Reference', zh: 'CLI 命令',
@@ -108,7 +99,6 @@
         { id: 'cli-summary', en: 'summary', zh: 'summary' },
         { id: 'cli-export', en: 'export', zh: 'export' },
         { id: 'cli-clean', en: 'clean', zh: 'clean' },
-        { id: 'cli-leaderboard', en: 'leaderboard', zh: 'leaderboard' },
         { id: 'cli-other', en: 'Other Commands', zh: '其他命令' },
       ]
     },
@@ -1175,9 +1165,8 @@
   [1] Dashboard      (serve/stop/restart/open)
   [2] Data           (parse/summary/export/clean/recalc)
   [3] Sync           (init/sync)
-  [4] Leaderboard    (view/login/upload/status/logout)
-  [5] System         (status/widget/pm2/update)
-  [6] Exit`} lang="text" />
+  [4] System         (status/widget/pm2/update)
+  [5] Exit`} lang="text" />
     </section>
 
     <section id="mgr-groups">
@@ -1188,7 +1177,6 @@
           ['Dashboard', 'serve, stop, restart, open', zh ? '仪表盘服务管理与浏览器打开' : 'Dashboard server management and browser launch'],
           ['Data', 'parse, summary, export, clean, recalc', zh ? '数据解析、查看、导出与清理' : 'Parse, view, export, and clean data'],
           ['Sync', 'init, sync', zh ? '配置与执行多设备同步' : 'Configure and run multi-device sync'],
-          ['Leaderboard', 'leaderboard, login, upload, upload-status, logout', zh ? '排行榜查看与数据上传' : 'View leaderboard and upload data'],
           ['System', 'status, widget, pm2-setup, pm2-start, update', zh ? '系统信息、小组件、后台服务与更新' : 'System info, widget, background services, and updates'],
         ]}
       />
@@ -1219,8 +1207,8 @@
         <h2>{zh ? '站点账号' : 'Site Account'}</h2>
       </div>
       <p>{zh
-        ? 'AIUsage 官方站点（aiusage.jtanx.com）提供账号系统，用于排行榜上传、设备授权和个人资料管理。注册和登录支持密码和第三方 OAuth。'
-        : 'The AIUsage official site (aiusage.jtanx.com) provides an account system for leaderboard uploads, device authorization, and profile management. Registration and login support both password and third-party OAuth.'
+        ? 'AIUsage 官方站点（aiusage.jtanx.com）提供账号系统，用于云同步、设备授权和个人资料管理。注册和登录支持密码和第三方 OAuth。'
+        : 'The AIUsage official site (aiusage.jtanx.com) provides an account system for cloud sync, device authorization, and profile management. Registration and login support both password and third-party OAuth.'
       }</p>
     </section>
 
@@ -1236,8 +1224,8 @@
     <section id="account-verify">
       <h3>{zh ? '邮箱验证' : 'Email Verification'}</h3>
       <p>{zh
-        ? '使用邮箱注册后，系统会发送验证邮件到你的注册邮箱。点击邮件中的验证链接完成邮箱验证。邮箱验证是上传排行榜数据的前提条件。'
-        : 'After registering with email, a verification email is sent to your inbox. Click the verification link to complete email verification. Email verification is required before uploading leaderboard data.'
+        ? '使用邮箱注册后，系统会发送验证邮件到你的注册邮箱。点击邮件中的验证链接完成邮箱验证。'
+        : 'After registering with email, a verification email is sent to your inbox. Click the verification link to complete email verification.'
       }</p>
       <Callout type="info">
         {zh
@@ -1258,140 +1246,31 @@
         <li><strong>{zh ? '显示名称' : 'Display Name'}</strong> — {zh ? '设置公开显示名称' : 'Set your public display name'}</li>
         <li><strong>{zh ? '头像' : 'Avatar'}</strong> — {zh ? '上传或移除头像' : 'Upload or remove avatar'}</li>
         <li><strong>{zh ? '密码' : 'Password'}</strong> — {zh ? '设置或修改密码' : 'Set or change password'}</li>
-        <li><strong>{zh ? '排行榜可见性' : 'Leaderboard Visibility'}</strong> — {zh ? '公开或私有' : 'Public or private'}</li>
-        <li><strong>{zh ? '匿名模式' : 'Anonymous Mode'}</strong> — {zh ? '在排行榜上隐藏用户名和头像' : 'Hide username and avatar on the leaderboard'}</li>
-      </ul>
-    </section>
-
-    <!-- ══════ Public Leaderboard ══════ -->
-    <section id="leaderboard">
-      <div class="sec-head">
-        <span class="sec-idx">18</span>
-        <h2>{zh ? '公开排行榜' : 'Public Leaderboard'}</h2>
-      </div>
-      <p>{zh
-        ? '公开排行榜用于展示用户主动提交的聚合数据。支持按 Token 总量或费用排名，可按工具和模型维度细分。查看不需要登录；上传需要登录并授权 CLI 设备。'
-        : 'The public leaderboard displays aggregate data submitted by users who opt in. It supports ranking by total tokens or cost, with breakdowns by tool and model. Viewing does not require sign-in; uploading requires an account and an authorized CLI device.'
-      }</p>
-    </section>
-
-    <section id="lb-view">
-      <h3>{zh ? '查看与筛选' : 'Viewing & Filtering'}</h3>
-      <p>{zh
-        ? '站点排行榜和 CLI 都支持以下筛选维度：'
-        : 'Both the site leaderboard and CLI support these filter dimensions:'
-      }</p>
-      <ul>
-        <li><strong>{zh ? '周期' : 'Period'}</strong> — daily, weekly, monthly, yearly, all_time</li>
-        <li><strong>{zh ? '指标' : 'Metric'}</strong> — {zh ? 'Token 总量或费用' : 'Total tokens or cost'}</li>
-        <li><strong>{zh ? '范围' : 'Scope'}</strong> — all（全部）、tool（按工具）、model（按模型）、tool_model（工具+模型）</li>
-        <li><strong>{zh ? '工具筛选' : 'Tool filter'}</strong> — {zh ? '指定工具名（如 claude-code）' : 'Specific tool name (e.g. claude-code)'}</li>
-        <li><strong>{zh ? '模型筛选' : 'Model filter'}</strong> — {zh ? '指定模型名（如 claude-sonnet-4-6）' : 'Specific model name (e.g. claude-sonnet-4-6)'}</li>
-      </ul>
-    </section>
-
-    <section id="lb-upload">
-      <h3>{zh ? '上传数据' : 'Upload Data'}</h3>
-      <p>{zh
-        ? '推荐在本地仪表盘完成上传。启动仪表盘后访问 /leaderboard，登录 AIUsage 账号并授权当前设备，即可点击“上传数据”提交聚合用量；也可以在同一页面开启自动上传。'
-        : 'The recommended flow is to upload from the local dashboard. Start the dashboard, visit /leaderboard, sign in to AIUsage, authorize this device, then click Upload data to submit aggregate usage. You can also enable auto upload on the same page.'
-      }</p>
-      <ul>
-        <li><strong>{zh ? '界面上传' : 'Web upload'}</strong> — {zh ? '启动本地仪表盘后访问 ' : 'Start the local dashboard and visit '}<code>/leaderboard</code>{zh ? '，完成登录后点击“上传数据”' : ', then sign in and click Upload data'}</li>
-        <li><strong>{zh ? '自动上传' : 'Auto upload'}</strong> — {zh ? '开启自动上传开关后，本地服务会按设定频率定时解析并上传聚合总量' : 'Enable the auto-upload toggle to let the local service periodically parse and upload aggregate totals'}</li>
-        <li><strong>{zh ? '上传状态' : 'Upload status'}</strong> — {zh ? '页面内可查看最近一次上传的周期、状态和 Token 总量' : 'View the latest upload period, status, and token total on the page'}</li>
-        <li><strong>{zh ? '站点管理' : 'Site management'}</strong> — <a href="/uploads">/uploads</a> {zh ? '用于查看上传历史和管理授权设备' : 'shows upload history and authorized devices'}</li>
-      </ul>
-      <p>{zh
-        ? '如需在自动化脚本、远程主机或纯终端环境中上传，可以使用 CLI 完成同等流程：先授权设备，再提交聚合快照，最后查看上传与审核状态。'
-        : 'For automation scripts, remote hosts, or terminal-only environments, use the CLI equivalent: authorize the device, submit aggregate snapshots, then inspect upload and review status.'
-      }</p>
-      <CodeBlock lang="Terminal" copyText={'aiusage login\naiusage upload\naiusage upload-status'}>
-aiusage login
-aiusage upload
-aiusage upload-status
-      </CodeBlock>
-      <p>{zh
-        ? '上传内容仅包含排名周期内的聚合 Token 总量和必要元数据，不包含 prompt、completion、源码、文件路径或本地费用估算。'
-        : 'Uploads contain only aggregate token totals for ranking periods plus required metadata. They do not include prompts, completions, source code, file paths, or local cost estimates.'
-      }</p>
-      <p>{zh
-        ? '上传后系统会自动进行风控评估。以下情况会被自动标记为 flagged 并进入管理员审核队列：breakdown 一致性偏差超过 1%、未知模型占比超过 80%、同设备同周期 24 小时内重复上传超过 5 次、token 总量超过用户 30 天平均值 10 倍。'
-        : 'After upload, the system automatically runs risk assessment. Snapshots are auto-flagged for admin review if: breakdown consistency deviates >1%, unknown models account for >80% of tokens, same device/period uploaded >5 times in 24h, or token total exceeds the user\'s 30-day average by 10x.'
-      }</p>
-    </section>
-
-    <section id="lb-dashboard">
-      <h3>{zh ? '本地上传面板' : 'Local Upload Panel'}</h3>
-      <p>{zh
-        ? '本地仪表盘的 /leaderboard 页面主要用于登录授权、上传聚合用量和配置自动上传。公开排行榜的浏览入口仍在官网。'
-        : 'The local dashboard /leaderboard page is mainly for sign-in, device authorization, aggregate uploads, and auto-upload configuration. Public leaderboard browsing remains on the official site.'
-      }</p>
-      <ul>
-        <li><strong>{zh ? '账号与设备' : 'Account and device'}</strong> — {zh ? '显示当前登录账号、授权设备和授权时间' : 'Shows the signed-in account, authorized device, and authorization time'}</li>
-        <li><strong>{zh ? '手动上传' : 'Manual upload'}</strong> — {zh ? '点击“上传数据”立即提交当前本地可见的聚合用量' : 'Click Upload data to submit aggregate usage visible to this local device'}</li>
-        <li><strong>{zh ? '自动上传' : 'Auto upload'}</strong> — {zh ? '开启后按每天、每周或每月频率自动上传，每个频率周期最多执行一次' : 'Run automatic uploads daily, weekly, or monthly, at most once per selected interval'}</li>
-        <li><strong>{zh ? '最近上传' : 'Latest upload'}</strong> — {zh ? '显示最近一次上传的周期、审核状态、Token 总量和上传时间' : 'Shows the latest upload period, review status, token total, and upload time'}</li>
-      </ul>
-      <figure class="doc-shot">
-        <img src="/screenshots/leaderboard-upload-light.png" alt={zh ? 'AIUsage 本地仪表盘排行榜上传界面截图' : 'AIUsage local dashboard leaderboard upload screenshot'} loading="lazy" />
-        <figcaption>{zh ? '本地上传面板支持一键上传、自动上传频率设置和最近上传状态查看。' : 'The local upload panel supports one-click upload, auto-upload frequency settings, and recent upload status.'}</figcaption>
-      </figure>
-    </section>
-
-    <section id="lb-anonymous">
-      <h3>{zh ? '匿名模式' : 'Anonymous Mode'}</h3>
-      <p>{zh
-        ? '在 /settings 中开启匿名模式后，排行榜上你的用户名和头像将被隐藏，但仍会计入排名。适合希望参与排行但不想公开身份的用户。'
-        : 'Enable anonymous mode in /settings to hide your username and avatar on the leaderboard while still being counted in rankings. Ideal for users who want to participate without revealing their identity.'
-      }</p>
-    </section>
-
-    <!-- ══════ Upload Status Page ══════ -->
-    <section id="uploads-page">
-      <div class="sec-head">
-        <span class="sec-idx">19</span>
-        <h2>{zh ? '上传状态' : 'Upload Status'}</h2>
-      </div>
-      <p>{zh
-        ? '登录后访问 /uploads 页面，可以管理授权设备和查看上传历史。'
-        : 'After login, visit /uploads to manage authorized devices and view upload history.'
-      }</p>
-      <ul>
-        <li><strong>{zh ? '授权设备' : 'Authorized Devices'}</strong> — {zh ? '查看设备名称、创建时间、最后上传时间、状态，可撤销设备授权' : 'View device name, creation date, last upload, status, and revoke device authorization'}</li>
-        <li><strong>{zh ? '上传历史' : 'Upload History'}</strong> — {zh ? '最近 100 条上传快照，包含周期类型、Token 总量、设备名、时间和审核状态（accepted/rejected/flagged）' : 'Latest 100 upload snapshots with period type, total tokens, device name, date, and review status (accepted/rejected/flagged)'}</li>
       </ul>
     </section>
 
     <!-- ══════ Admin Dashboard ══════ -->
     <section id="admin-page">
       <div class="sec-head">
-        <span class="sec-idx">20</span>
+        <span class="sec-idx">18</span>
         <h2>{zh ? '管理后台' : 'Admin Dashboard'}</h2>
       </div>
       <p>{zh
-        ? '管理员登录后访问 /admin 页面，可管理上传审核、用户、定价表和审计日志。需要 admin 角色。'
-        : 'Admins can access /admin to manage upload moderation, users, pricing tables, and audit logs. Requires the admin role.'
+        ? '管理员登录后访问 /admin 页面，可管理用户、定价表和审计日志。需要 admin 角色。'
+        : 'Admins can access /admin to manage users, pricing tables, and audit logs. Requires the admin role.'
       }</p>
       <ul>
-        <li><strong>{zh ? '上传审核' : 'Uploads'}</strong> — {zh ? '查看 flagged 上传，执行 approve / reject / hide 操作' : 'Review flagged uploads with approve / reject / hide actions'}</li>
         <li><strong>{zh ? '用户管理' : 'Users'}</strong> — {zh ? '搜索用户、封禁 / 解封、设置角色（admin / user）' : 'Search users, ban / unban, set role (admin / user)'}</li>
-        <li><strong>{zh ? '定价表' : 'Pricing'}</strong> — {zh ? '从 LiteLLM 同步价格、管理内置 / 自定义条目、触发榜单重算' : 'Sync pricing from LiteLLM, manage builtin / custom entries, trigger leaderboard recompute'}</li>
+        <li><strong>{zh ? '定价表' : 'Pricing'}</strong> — {zh ? '从 LiteLLM 同步价格、管理内置 / 自定义条目' : 'Sync pricing from LiteLLM, manage builtin / custom entries'}</li>
         <li><strong>{zh ? '审计日志' : 'Audit Logs'}</strong> — {zh ? '查看所有管理员操作记录' : 'View all admin action history'}</li>
         <li><strong>{zh ? '数据维护' : 'Maintenance'}</strong> — {zh ? '清理过期 nonces、旧批次、tombstone 记录、过期授权请求等' : 'Clean expired nonces, old batches, tombstoned records, expired auth requests, etc.'}</li>
       </ul>
-      <Callout type="info">
-        {zh
-          ? '上传快照会被自动风控规则评估：breakdown 一致性偏差、未知模型比例过高、重复上传、token 峰值异常等情况会自动标记为 flagged，进入管理员审核队列。'
-          : 'Upload snapshots are automatically evaluated by risk control rules: breakdown consistency deviation, high unknown model ratio, repeat uploads, and token spike anomalies are auto-flagged for admin review.'
-        }
-      </Callout>
     </section>
 
     <!-- ══════ Support & Contact ══════ -->
     <section id="support">
       <div class="sec-head">
-        <span class="sec-idx">21</span>
+        <span class="sec-idx">19</span>
         <h2>{zh ? '服务与支持' : 'Support & Contact'}</h2>
       </div>
       <p>{zh
@@ -1409,12 +1288,12 @@ aiusage upload-status
     <!-- ══════ CLI Reference ══════ -->
     <section id="cli-reference">
       <div class="sec-head">
-        <span class="sec-idx">22</span>
+        <span class="sec-idx">20</span>
         <h2>{zh ? 'CLI 命令参考' : 'CLI Reference'}</h2>
       </div>
       <p>{zh
-        ? '所有 CLI 命令均通过 aiusage <command> 调用；不带子命令时会输出 summary。当前内置的主要命令包括 summary、status、parse、serve、export、clean、recalc、init、github、sync、widget、leaderboard、login、upload、upload-status、logout、menu、pm2-setup 和 pm2-start。'
-        : 'All CLI commands are invoked as aiusage <command>; running aiusage without a subcommand prints the summary. Main built-ins currently include summary, status, parse, serve, export, clean, recalc, init, github, sync, widget, leaderboard, login, upload, upload-status, logout, menu, pm2-setup, and pm2-start.'
+        ? '所有 CLI 命令均通过 aiusage <command> 调用；不带子命令时会输出 summary。当前内置的主要命令包括 summary、status、parse、serve、export、clean、recalc、init、github、sync、widget、login、logout、menu、pm2-setup 和 pm2-start。'
+        : 'All CLI commands are invoked as aiusage <command>; running aiusage without a subcommand prints the summary. Main built-ins currently include summary, status, parse, serve, export, clean, recalc, init, github, sync, widget, login, logout, menu, pm2-setup, and pm2-start.'
       }</p>
     </section>
 
@@ -1495,43 +1374,14 @@ aiusage upload-status
       </Callout>
     </section>
 
-    <section id="cli-leaderboard">
-      <h3><code>leaderboard</code> — {zh ? '公开榜单与上传' : 'Public Leaderboard and Uploads'}</h3>
-      <p>{zh
-        ? '不带子命令时会查看公开排行榜。查看不需要登录；上传和上传状态查询需要先完成设备授权。'
-        : 'Without a subcommand, this views the public leaderboard. Viewing does not require sign-in; uploads and upload status require device authorization first.'
-      }</p>
-      <DocsTable
-        headers={zh ? ['命令', '说明'] : ['Command', 'Description']}
-        rows={[
-          ['<code>leaderboard</code>', zh ? '查看公开排行榜，默认 daily 周期，按 Token 排名，默认 20 行' : 'View the public leaderboard. Defaults to daily, tokens metric, 20 rows'],
-          ['<code>login</code>', zh ? '授权当前 CLI 设备用于上传聚合总量' : 'Authorize this CLI device for aggregate uploads'],
-          ['<code>upload</code>', zh ? '上传当前设备可见的聚合 Token 快照' : 'Upload aggregate token snapshots visible to this device'],
-          ['<code>upload-status</code>', zh ? '查看自己的近期上传状态和审核结果' : 'Show your recent upload status and review results'],
-          ['<code>logout</code>', zh ? '删除本地排行榜设备凭证' : 'Remove local leaderboard credentials'],
-        ]}
-      />
-      <DocsTable
-        headers={zh ? ['选项', '说明'] : ['Option', 'Description']}
-        rows={[
-          ['<code>-p, --period &lt;period&gt;</code>', zh ? '查看周期：daily、weekly、monthly、yearly、all_time' : 'View period: daily, weekly, monthly, yearly, all_time'],
-          ['<code>-m, --metric &lt;metric&gt;</code>', zh ? '排名指标：tokens（Token 总量）或 cost（费用）' : 'Ranking metric: tokens (total tokens) or cost'],
-          ['<code>-s, --scope &lt;scope&gt;</code>', zh ? '排名范围：all（全部）、tool（按工具）、model（按模型）、tool_model（工具+模型）' : 'Ranking scope: all, tool, model, tool_model'],
-          ['<code>--tool &lt;tool&gt;</code>', zh ? '按工具名筛选（如 claude-code）' : 'Filter by tool name (e.g. claude-code)'],
-          ['<code>--model &lt;model&gt;</code>', zh ? '按模型名筛选（如 claude-sonnet-4-6）' : 'Filter by model name (e.g. claude-sonnet-4-6)'],
-          ['<code>-l, --limit &lt;n&gt;</code>', zh ? '显示行数，最大 50' : 'Number of rows to show, max 50'],
-        ]}
-      />
-    </section>
-
     <section id="cli-other">
       <h3>{zh ? '其他命令' : 'Other Commands'}</h3>
       <DocsTable
         headers={zh ? ['命令', '说明'] : ['Command', 'Description']}
         rows={[
           ['<code>status</code>', zh ? '显示版本号、设备名称、数据库路径、schema 版本、对象数量、记录数、数据库大小、同步后端和同步状态' : 'Show version, device name, DB path, schema version, object counts, record count, DB size, sync backend, and sync status'],
-          ['<code>menu</code>', zh ? '打开交互式管理菜单，覆盖仪表盘、数据、同步、排行榜和系统命令' : 'Open the interactive management menu for dashboard, data, sync, leaderboard, and system commands'],
-          ['<code>login</code>', zh ? '授权当前设备（用于排行榜上传）' : 'Authorize this device (for leaderboard uploads)'],
+          ['<code>menu</code>', zh ? '打开交互式管理菜单，覆盖仪表盘、数据、同步和系统命令' : 'Open the interactive management menu for dashboard, data, sync, and system commands'],
+          ['<code>login</code>', zh ? '授权当前设备（用于云同步）' : 'Authorize this device (for cloud sync)'],
           ['<code>logout</code>', zh ? '删除本地设备凭证' : 'Remove local device credentials'],
           ['<code>github login --repo &lt;owner/repo&gt;</code>', zh ? '通过 GitHub App 设备授权连接同步仓库' : 'Connect a sync repository using GitHub App device authorization'],
           ['<code>sync</code>', zh ? '与远程后端执行推送 / 拉取 / 合并同步（支持 AIUsage Cloud / GitHub / S3）' : 'Push, pull, and merge data with the remote backend (AIUsage Cloud / GitHub / S3)'],

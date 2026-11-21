@@ -14,7 +14,7 @@
   let loading = false
 
   $: redirectTo = getSafeRedirect($page.url.searchParams.get('redirect'))
-  $: registerHref = redirectTo === '/leaderboard'
+  $: registerHref = redirectTo === '/settings'
     ? '/register'
     : `/register?redirect=${encodeURIComponent(redirectTo)}`
   $: verifiedState = $page.url.searchParams.get('verified')
@@ -79,7 +79,7 @@
   }
 
   function getSafeRedirect(value) {
-    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/leaderboard'
+    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/settings'
     return value
   }
 </script>
@@ -91,7 +91,7 @@
 <div class="auth-page">
   <div class="auth-card">
     <h1>{zh ? '登录' : 'Sign In'}</h1>
-    <p class="auth-subtitle">{zh ? '登录后可上传数据并管理个人资料。' : 'Sign in to upload data and manage your profile.'}</p>
+    <p class="auth-subtitle">{zh ? '登录后可授权云同步设备并管理个人资料。' : 'Sign in to authorize cloud sync devices and manage your profile.'}</p>
 
     {#if error}
       <div class="error-msg">

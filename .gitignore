@@ -30,3 +30,6 @@ blog/
 backups/
 .artifacts/
 .runtime/
+
+# 本机操作说明（不纳入版本控制）
+/docs/local-build-and-test.md

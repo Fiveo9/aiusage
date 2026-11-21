@@ -84,16 +84,19 @@
 </div>
 
 {#if loading}
-  <div class="state-msg">{$t('common.loading')}</div>
+  <div class="card state-msg">
+    <span class="loading-spin"></span>
+    <span>{$t('common.loading')}</span>
+  </div>
 {:else if error}
-  <div class="state-msg error">{error}</div>
+  <div class="card state-msg error">{error}</div>
 {:else if !data?.models.length}
-  <div class="state-msg">
+  <div class="card state-msg">
     <h2>{$t('models.noData')}</h2>
     <p>{$t('models.noDataHint')}</p>
   </div>
 {:else}
-  <div class="card">
+  <div class="card chart-card">
     <div class="chart-header">
       <div class="section-title">{$t('models.chartTitle')}</div>
       <div class="mode-toggle" role="group" aria-label={$t('models.chartTitle')}>
@@ -114,17 +117,17 @@
 
     {#if chartMode === 'tokens'}
       <div class="comp-legend">
-        <span class="leg leg-i">{$t('models.input')}</span>
-        <span class="leg leg-o">{$t('models.output')}</span>
-        <span class="leg leg-cr">{$t('models.cacheRead')}</span>
-        <span class="leg leg-cw">{$t('models.cacheWrite')}</span>
-        <span class="leg leg-thinking">{$t('models.thinking')}</span>
+        <span class="leg leg-i"><span class="leg-dot"></span>{$t('models.input')}</span>
+        <span class="leg leg-o"><span class="leg-dot"></span>{$t('models.output')}</span>
+        <span class="leg leg-cr"><span class="leg-dot"></span>{$t('models.cacheRead')}</span>
+        <span class="leg leg-cw"><span class="leg-dot"></span>{$t('models.cacheWrite')}</span>
+        <span class="leg leg-thinking"><span class="leg-dot"></span>{$t('models.thinking')}</span>
       </div>
     {/if}
 
     <div class="model-list">
       {#each sortedModels as model, i (JSON.stringify([model.model, model.provider]))}
-        <div class="model-row animate-row" style="animation-delay: {i * 30}ms">
+        <div class="model-row animate-row" style="animation-delay: {i * 25}ms">
           <div class="model-meta">
             <span class="mono model-name" title={model.originalModels.join('\n')}>{model.model}</span>
             <span class="model-provider">{model.provider}</span>
@@ -140,19 +143,19 @@
                 <div class="ranking-bar-fill" style="width: {getChartWidth(model)}%"></div>
               {/if}
             </div>
-            <span class="mono bar-value">{formatChartValue(model)}</span>
+            <span class="numeric bar-value">{formatChartValue(model)}</span>
             {#if chartMode === 'tokens'}
               <div class="token-breakdown">
-                <span class="mono leg-i">{formatTokens(model.inputTokens)}</span>
-                <span class="mono leg-o">{formatTokens(model.outputTokens)}</span>
+                <span class="numeric leg-i-val">{formatTokens(model.inputTokens)}</span>
+                <span class="numeric leg-o-val">{formatTokens(model.outputTokens)}</span>
                 {#if model.cacheReadTokens}
-                  <span class="mono leg-cr">{formatTokens(model.cacheReadTokens)}</span>
+                  <span class="numeric leg-cr-val">{formatTokens(model.cacheReadTokens)}</span>
                 {/if}
                 {#if model.cacheWriteTokens}
-                  <span class="mono leg-cw">{formatTokens(model.cacheWriteTokens)}</span>
+                  <span class="numeric leg-cw-val">{formatTokens(model.cacheWriteTokens)}</span>
                 {/if}
                 {#if model.thinkingTokens}
-                  <span class="mono leg-thinking">{formatTokens(model.thinkingTokens)}</span>
+                  <span class="numeric leg-thinking-val">{formatTokens(model.thinkingTokens)}</span>
                 {/if}
               </div>
             {/if}
@@ -161,15 +164,15 @@
           <div class="model-stats">
             <span class="stat-item">
               <span class="stat-label">{$t('models.cost')}</span>
-              <span class="mono stat-value">{formatCost(model.totalCost)}</span>
+              <span class="numeric stat-value accent font-bold">{formatCost(model.totalCost)}</span>
             </span>
             <span class="stat-item">
               <span class="stat-label">{$t('models.calls')}</span>
-              <span class="mono stat-value">{formatNumber(model.callCount)}</span>
+              <span class="numeric stat-value">{formatNumber(model.callCount)}</span>
             </span>
             <span class="stat-item">
               <span class="stat-label">{$t('models.share')}</span>
-              <span class="mono stat-value">{formatPercentage(model.percentage)}</span>
+              <span class="numeric stat-value font-medium">{formatPercentage(model.percentage)}</span>
             </span>
           </div>
         </div>
@@ -179,90 +182,118 @@
 {/if}
 
 <style>
+  .chart-card {
+    padding: 1.5rem;
+  }
   /* ── Header ── */
   .chart-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 0.75rem;
+    margin-bottom: 1rem;
   }
   .chart-header .section-title { margin-bottom: 0; }
   .mode-toggle {
     display: flex;
     gap: 2px;
     background: var(--raised);
-    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
     padding: 2px;
   }
   .mode-btn {
-    font-family: var(--mono);
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 0.22rem 0.65rem;
+    font-weight: 500;
+    padding: 0.25rem 0.75rem;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: background 0.14s, color 0.14s;
+    transition: all 0.16s ease;
   }
-  .mode-btn:hover { color: var(--text-secondary); }
-  .mode-btn.active { background: var(--surface); color: var(--text); }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active {
+    background: var(--surface);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
 
   /* ── Legend ── */
   .comp-legend {
     display: flex;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    gap: 1.25rem;
+    margin-bottom: 1.25rem;
     flex-wrap: wrap;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
   }
   .leg {
-    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--font-sans);
     font-size: 0.75rem;
-    font-weight: 550;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--text-secondary);
   }
-  .leg::before { content: '■'; margin-right: 0.25rem; font-size: 0.5rem; }
-  .leg-i        { color: var(--chart-input); }
-  .leg-o        { color: var(--chart-output); }
-  .leg-cr       { color: var(--chart-cache-read); }
-  .leg-cw       { color: var(--chart-cache-write); }
-  .leg-thinking { color: var(--chart-thinking, #dc2626); }
+  .leg-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .leg-i .leg-dot        { background: var(--chart-input); }
+  .leg-o .leg-dot        { background: var(--chart-output); }
+  .leg-cr .leg-dot       { background: var(--chart-cache-read); }
+  .leg-cw .leg-dot       { background: var(--chart-cache-write); }
+  .leg-thinking .leg-dot { background: var(--chart-thinking); }
 
   /* ── Model rows ── */
   .model-list {
     display: flex;
     flex-direction: column;
+    gap: 0.5rem;
   }
   .model-row {
     display: grid;
-    grid-template-columns: minmax(0, 180px) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 190px) minmax(0, 1fr) auto;
     gap: 1rem 1.5rem;
     align-items: center;
-    padding: 0.65rem 0;
-    border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    border: 1px solid transparent;
+    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .model-row:last-child { border-bottom: none; }
+  .model-row:hover {
+    background: var(--hover);
+    border-color: var(--border-subtle);
+    transform: translateX(2px);
+  }
 
   .model-meta {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: 0.2rem;
     min-width: 0;
   }
   .model-name {
     font-size: 0.8125rem;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    letter-spacing: -0.01em;
   }
   .model-provider {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     color: var(--text-muted);
   }
 
@@ -271,20 +302,23 @@
     display: grid;
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
-    gap: 0.2rem 0.75rem;
+    gap: 0.35rem 0.875rem;
     align-items: center;
     min-width: 0;
   }
   .bar-track {
     display: flex;
-    height: 8px;
-    background: var(--raised);
+    height: 7px;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 999px;
     overflow: hidden;
     min-width: 0;
   }
   .bar-value {
-    font-size: 0.8125rem;
+    font-family: var(--font-numeric);
+    font-size: 0.875rem;
+    font-weight: 700;
     color: var(--text);
     white-space: nowrap;
     text-align: right;
@@ -292,26 +326,35 @@
   .token-breakdown {
     grid-column: 1 / -1;
     display: flex;
-    gap: 0.4rem;
+    gap: 0.625rem;
     flex-wrap: wrap;
   }
-  .token-breakdown span { font-size: 0.75rem; }
+  .token-breakdown span {
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .leg-i-val { color: var(--chart-input); }
+  .leg-o-val { color: var(--chart-output); }
+  .leg-cr-val { color: var(--chart-cache-read); }
+  .leg-cw-val { color: var(--chart-cache-write); }
+  .leg-thinking-val { color: var(--chart-thinking); }
 
   .ranking-bar-fill {
     height: 100%;
-    background: var(--accent);
-    transition: width 0.4s ease;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-hover) 100%);
+    box-shadow: 0 0 6px var(--accent-dim);
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .stack-seg {
     height: 100%;
     flex-shrink: 0;
-    transition: width 0.4s ease;
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .seg-input    { background: var(--chart-input); }
   .seg-output   { background: var(--chart-output); }
   .seg-cr       { background: var(--chart-cache-read); }
   .seg-cw       { background: var(--chart-cache-write); }
-  .seg-thinking { background: var(--chart-thinking, #dc2626); }
+  .seg-thinking { background: var(--chart-thinking); }
 
   /* ── Stats ── */
   .model-stats {
@@ -322,27 +365,44 @@
   }
   .stat-item {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.5rem;
     align-items: baseline;
   }
   .stat-label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    font-size: 0.6875rem;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    color: var(--text-muted);
   }
   .stat-value {
+    font-family: var(--font-numeric);
     font-size: 0.8125rem;
-    color: var(--text-secondary);
+    color: var(--text);
   }
+  .font-bold { font-weight: 700; }
+  .font-medium { font-weight: 500; }
 
   .animate-row {
-    animation: fadeIn 0.2s ease both;
+    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
+
+  .loading-spin {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-medium);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   @media (max-width: 800px) {
     .chart-header { flex-direction: column; align-items: stretch; }

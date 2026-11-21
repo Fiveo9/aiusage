@@ -23,6 +23,7 @@ CLI 自行读取 `INSTABOX_API_KEY` 或已有登录会话。脚本不读取配�
 - `-Task test -Scope postgres -ReuseRunId <runId>`：使用专属 PostgreSQL 容器和两个独立 Node 迁移进程，观察真实锁等待、提交/回滚释放及重试；容器只绑定回环地址，完成后停止保留。
 - `-Task test -Scope docker -ReuseRunId <runId>`：实际构建根 CLI Dockerfile 和 site Dockerfile，在无外网/内部网络中启动 CLI、site 与专属 PostgreSQL，验证静态页面、登录边界、数据库健康与迁移版本；不发布端口或镜像，结束后停止容器并保留。
 - `-Task build`：core、Web、CLI、site 生产构建，以及 widget renderer 和类型检查。Linux 构建不等同于 Electron GUI 或 Electron 原生 ABI 验证。
+- `-Task build -Scope package`：构建 core、Web 和 CLI，从锁定安装中复制生产依赖图，附带 Linux x86_64 / Node.js 22 的 SQLite 原生绑定；审查全部相对依赖链接只指向包内后生成 `.tar.gz`，在新目录解压验证 SQL、CLI、静态页面、会话搜索和费用来源接口，正常停止测试服务后下载产物并核对 SHA256/大小。包内有 `start.sh`、`DEPLOY.md`、`BUILD-INFO.json`，不含 Node.js、Electron 或独立账号站点。要求目标机为 Linux x86_64、Node.js 22（ABI 127）和 glibc，实际验证的 glibc 版本写入构建信息。
 - `-Scope linux-resources`：仅确认 Linux、工具链、内存、磁盘及 inode 情况，不上传源码。
 
 源码来源是 Git 跟踪文件及未忽略的新文件，经额外 allowlist/denylist 筛选。环境文件（包括 `.env.example`）、认证配置、私钥、数据库、备份、依赖、编译产物和 Vite 临时文件不上传。链接和硬链接未经审查不打包。每个源码文件记录 SHA256，源归档也计算 SHA256；远程先验证归档再逐文件验证 manifest。
@@ -48,6 +49,7 @@ pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope
 - `resources.json`：资源探测结果。
 - `remote-summary.json`、`remote.log`：远程步骤和整体结果。
 - `<step>.log`、`<package>-tests.json`：分项日志与测试报告。
+- package 范围额外回收 `package-result.json` 与 `aiusage-<version>-linux-x64-node22-<runId>.tar.gz`；`summary.json.artifacts` 记录本地路径、SHA256 和字节数。下载中断可用相同参数及 `-ResumeRunId` 继续回收，不重新构建。
 
 成功要求远程进程退出 0、远程 summary 明确 passed，测试报告完整且存在测试。仅成功提交后台任务不算通过。源码打包、传输/网络、依赖准备、远程构建、单测失败和等待超时分别记录。报告逐文件下载，不使用 CLI 的大目录临时打包/删除流程。
 
@@ -90,3 +92,21 @@ pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task test -Target linux -Scope
 上述证据分别位于 `.artifacts/remote-check/<runId>/`，含完整 summary、逐包报告和日志。使用原 `linux-01` 与 Node 22.23.3，逐文件校验 610 个输入并复用锁定依赖。修复后五包均通过：core 137、CLI 1,513、widget 34、site 160、Web 82。首轮失败归类为单元测试失败，不是网络或远程编译失败；失败日志仍保留。
 
 本轮不含 Docker、独立 PostgreSQL 服务或 Linux Electron GUI/native 验收；不得将 2026-11-19 的容器结果当作本次三个功能的部署验收。未推送、发布或销毁实例，继续依赖原自动挂起策略。
+
+## 2026-11-20 Linux 部署包
+
+更新：下述首包通过的是解压/HTTP 检查，随后用户反馈并复现了会话页冷启动缺陷，不能视为完整 UI 验收。已生成修复包 `20261120T045848Z-c86ae7da`，路径、哈希、真实浏览器验证与标题问题剩余边界见[会话页缺陷补验](next-stage-plan.md#会话页冷启动与标题兼容修复2026-11-20)。旧包保留供追溯，应使用修复包。
+
+实际成功命令：
+
+```powershell
+pwsh -NoProfile -File ./scripts/remote-check.ps1 -Task build -Target linux -Scope package -Machine linux-01 -ReuseRunId 20261120T021838Z-42691ee3
+```
+
+本地/远程 exit 0，runId `20261120T022055Z-76646039`。core、Web、CLI 构建成功，复制 136 个已安装生产依赖；17 项打包及解压运行断言通过，包括 SQLite 实际 SQL、CLI 版本、启动脚本、静态页面/JS、会话搜索、费用来源 API 和正常停止。不是本轮重跑全量单元测试。
+
+本地文件：`.artifacts/remote-check/20261120T022055Z-76646039/aiusage-1.5.28-linux-x64-node22-20261120T022055Z-76646039.tar.gz`，9,353,210 字节，SHA256 `0eca82fdc4cb670b5347ee2f41b73f3a6b744238023f5117e404ecc25067ad52`；下载后与远端大小/哈希一致。包内包含 `DEPLOY.md`、`BUILD-INFO.json`、`start.sh`；目标环境为 Linux x86_64、Node.js 22（ABI 127）和 glibc，本次实际 glibc 为 2.41，不宣称已验证所有旧发行版。解压后执行 `cd aiusage`、`./start.sh --host 127.0.0.1 --port 3847`。网络监听需由环境配置 `AIUSAGE_DASHBOARD_PASSWORD`。
+
+失败过程保留在对应证据目录：`20261120T021045Z-f761cbc8` 为 `pnpm deploy --offline` 缺失工作区 Web 依赖元数据；改为复制已安装生产依赖图。`20261120T021625Z-8ae61933` 为 npm `buffer` 包与 Node 内置模块同名导致解析遗漏；改用包元数据搜索路径。`20261120T021838Z-42691ee3` 为凭据数据文件过滤误判正常依赖代码；收窄文件名规则后成功。未绕过包内路径/链接审查，未上传用户数据或凭据。
+
+新增打包/下载逻辑已完成语法检查与只读 review；脚本备份位于 `backups/linux-package-20261120/`。本轮未提交脚本改动、未推送或发布；实例和失败产物保留，依赖原自动挂起策略。

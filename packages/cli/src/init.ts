@@ -19,7 +19,6 @@ export interface State {
   syncTargets?: Record<string, SyncTargetState>
   lastRemoteCleanAt?: number
   lastRemoteCleanSummary?: string
-  lastLeaderboardUploadAt?: number
 }
 
 export interface SyncTargetState {

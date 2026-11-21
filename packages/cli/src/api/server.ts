@@ -19,6 +19,7 @@ import { setSyncConsent } from '../init.js'
 import { generateConsentFingerprint } from '../sync/consent.js'
 import { getSyncTarget } from '../sync/target.js'
 import { extractProject, extractProjectFromCwd } from './project-extraction.js'
+import { getSessionTitle } from '../db/session-titles.js'
 import { discoverTools } from '../discovery.js'
 import type { SyncStartResult, SyncStatusSnapshot } from '../sync/runtime.js'
 import { queryAllQuotas } from '../quota.js'
@@ -1277,8 +1278,13 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
         const toolCallCount = toolCallRows.length
 
+        const titleRow = db.prepare(`SELECT session_title FROM activity_session_titles
+          WHERE id IN (SELECT id FROM activity_records WHERE session_id = @sessionId ${toolClause} ${deviceClause})
+          ORDER BY updated_at DESC, id DESC LIMIT 1
+        `).get(filterParams) as { session_title: string } | undefined
+
         json(res, {
-          session: { ...meta, toolCallCount, cwd },
+          session: { ...meta, sessionTitle: titleRow?.session_title, toolCallCount, cwd },
           records: records.map(r => ({
             ...r,
             toolCalls: toolCallsByRecord[r.id] ?? [],
@@ -1356,7 +1362,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         `).all({ ...params, limit: pageSize, offset }) as any[]
 
         json(res, {
-          sessions,
+          sessions: sessions.map(session => ({ ...session, sessionTitle: getSessionTitle(db, session.sessionId, session.deviceInstanceId, tool || undefined) })),
           total: totalRow.total,
           page,
           pageSize,
@@ -1424,7 +1430,10 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           }
           const rows = [...(projectMap.get(name)?.sessions.values() ?? [])].sort((left, right) =>
             right.ts - left.ts || left.deviceInstanceId.localeCompare(right.deviceInstanceId) || left.sessionId.localeCompare(right.sessionId))
-          json(res, { sessions: rows.slice(paging.offset, paging.offset + paging.pageSize), total: rows.length, page: paging.page, pageSize: paging.pageSize })
+          const sessions = rows.slice(paging.offset, paging.offset + paging.pageSize).map(session => ({
+            ...session, sessionTitle: getSessionTitle(db, session.sessionId, session.deviceInstanceId, tool || undefined),
+          }))
+          json(res, { sessions, total: rows.length, page: paging.page, pageSize: paging.pageSize })
           return
         }
         const totalTokens = [...projectMap.values()].reduce((sum, project) => sum + project.tokens, 0) || 1

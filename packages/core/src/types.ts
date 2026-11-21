@@ -55,6 +55,7 @@ export interface StatsRecord {
   cost: number                         // USD，由价格表计算
   costSource: 'log' | 'pricing' | 'unknown'
   sessionId: string
+  sessionTitle?: string                // 来源明确保存的会话标题；缺失时不从正文推断
   sourceFile: string                   // 来源日志文件的绝对路径
   cwd?: string                         // 会话工作目录（原始路径，含中文等）
   device: string                       // 设备别名
@@ -86,6 +87,7 @@ export interface SyncRecord {
   cost: number
   costSource: 'log' | 'pricing' | 'unknown'
   sessionKey: string                   // sha256(device + sessionId)[0:24]
+  sessionTitle?: string                // 与会话一起同步的可选标题
   device: string
   deviceInstanceId: string
   platform?: string                    // 'win32' | 'darwin' | 'linux'

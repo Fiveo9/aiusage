@@ -7,18 +7,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const db = vi.hoisted(() => ({
   rows: new Map<string, number>(),
   recordQueries: [] as string[],
+  recordParams: [] as unknown[][],
 }))
 
 vi.mock('$lib/server/db/pool.js', () => {
   // Positions of record_id / updated_at in the INSERT's VALUES list.
   // The UPDATE ends with `record_id = ... AND updated_at < ...`, so they come last.
   const RECORD_ID_PARAM = 5
-  const UPDATED_AT_PARAM = 22
+  const UPDATED_AT_PARAM = 23
 
   const sql = (strings: TemplateStringsArray, ...params: unknown[]) => {
     const text = strings.join('?')
     if (text.includes('INSERT INTO cloud_usage_records')) {
       db.recordQueries.push(text)
+      db.recordParams.push(params)
       const recordId = params[RECORD_ID_PARAM] as string
       if (db.rows.has(recordId)) return Promise.resolve([])
       db.rows.set(recordId, params[UPDATED_AT_PARAM] as number)
@@ -26,6 +28,7 @@ vi.mock('$lib/server/db/pool.js', () => {
     }
     if (text.includes('UPDATE cloud_usage_records') && text.includes('RETURNING')) {
       db.recordQueries.push(text)
+      db.recordParams.push(params)
       const [recordId, updatedAt] = params.slice(-2) as [string, number]
       const current = db.rows.get(recordId)
       if (current === undefined || current >= updatedAt) return Promise.resolve([])
@@ -92,12 +95,29 @@ describe('POST /api/cli/sync/push result counters', () => {
   beforeEach(() => {
     db.rows.clear()
     db.recordQueries.length = 0
+    db.recordParams.length = 0
   })
 
   it('counts newly created rows as inserted', async () => {
     const { status, body } = await push([record('r1', 100), record('r2', 100)])
     expect(status).toBe(200)
     expect(body).toMatchObject({ status: 'accepted', inserted: 2, updated: 0, skipped: 0 })
+  })
+
+  it('stores real titles and keeps them when an older client omits the field', async () => {
+    const title = '真实标题 / API'
+    await push([record('named', 100, { sessionTitle: title })])
+    expect(db.recordQueries[0]).toContain('session_title')
+    expect(db.recordParams[0][18]).toBe(title)
+    await push([record('named', 200)])
+    expect(db.recordQueries.at(-1)).toContain("session_title = COALESCE(NULLIF(?, ''), cloud_usage_records.session_title)")
+    expect(db.recordParams.at(-1)?.[13]).toBe('')
+  })
+
+  it('rejects a non-text or NUL-containing title before writing it', async () => {
+    const { body } = await push([record('bad-type', 100, { sessionTitle: 42 }), record('bad-nul', 100, { sessionTitle: 'a\u0000b' })])
+    expect(body.inserted).toBe(0)
+    expect(db.recordQueries).toHaveLength(0)
   })
 
   it('counts a newer record for an existing row as updated', async () => {

@@ -580,5 +580,12 @@ const migrations = [
           AND lm.visibility = 'hidden'
       `
     }
+  },
+  {
+    version: 18,
+    name: 'cloud_session_titles',
+    up: async (tx: postgres.TransactionSql) => {
+      await tx`ALTER TABLE cloud_usage_records ADD COLUMN IF NOT EXISTS session_title TEXT NOT NULL DEFAULT ''`
+    }
   }
 ]

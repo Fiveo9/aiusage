@@ -4,6 +4,7 @@
   import { onMount } from 'svelte'
   import { formatCost, formatTokens } from '$lib/stores.js'
   import { fetchSessionDetail } from '$lib/api.js'
+  import { sessionLabel } from '$lib/session-title.js'
   import { t } from '$lib/i18n.js'
 
   let data = null
@@ -58,12 +59,13 @@
 </script>
 
 <svelte:head>
-  <title>{$t('sessions.detail.title')} — AIUsage</title>
+  <title>{data?.session ? sessionLabel(data.session, $t('sessions.unnamed')) : $t('sessions.detail.title')} — AIUsage</title>
 </svelte:head>
 
-<div class="page-header">
+<div class="page-header activity-detail-header">
   <a class="activity-back-link" href="/sessions">{$t('sessions.detail.back')}</a>
-  <h1>{$t('sessions.detail.title')}</h1>
+  <h1>{data?.session ? sessionLabel(data.session, $t('sessions.unnamed')) : $t('sessions.detail.title')}</h1>
+  {#if data?.session}<p>{formatDateTime(data.session.firstTs)}</p>{/if}
 </div>
 
 {#if loading}

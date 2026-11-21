@@ -3,6 +3,7 @@
   import { dateRange, selectedDevice, selectedTool, formatTokens, formatCost, formatDateTime, formatNumber } from '$lib/stores.js'
   import { fetchSessions, sessionDetailUrl } from '$lib/api.js'
   import { createRequestTracker, resolvePage } from '$lib/sessions-paging.js'
+  import { sessionLabel } from '$lib/session-title.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
@@ -105,7 +106,7 @@
     <table class="activity-table">
       <thead>
         <tr>
-          <th>{$t('sessions.time')}</th>
+          <th>{$t('sessions.session')}</th>
           <th>{$t('sessions.tool')}</th>
           <th>{$t('sessions.model')}</th>
           <th class="activity-number">{$t('sessions.duration')}</th>
@@ -120,7 +121,10 @@
           <!-- svelte-ignore a11y-click-events-have-key-events -->
           <!-- svelte-ignore a11y-no-interactive-element-to-noninteractive-role -->
           <tr class="activity-clickable" on:click={() => goToDetail(session)}>
-            <td class="mono activity-time"><a class="activity-link" href={sessionDetailUrl(session.sessionId, session.deviceInstanceId, $selectedTool)} on:click|stopPropagation>{formatDateTime(session.ts)}</a></td>
+            <td class="activity-session-cell">
+              <a class="activity-link activity-session-title" title={sessionLabel(session, $t('sessions.unnamed'))} href={sessionDetailUrl(session.sessionId, session.deviceInstanceId, $selectedTool)} on:click|stopPropagation>{sessionLabel(session, $t('sessions.unnamed'))}</a>
+              <span class="activity-session-time mono">{formatDateTime(session.ts)}</span>
+            </td>
             <td><span class="activity-badge">{session.tool}</span></td>
             <td class="mono activity-model">{session.model}</td>
             <td class="mono activity-number">{formatDuration(session.duration)}</td>

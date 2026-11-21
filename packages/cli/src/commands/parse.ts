@@ -27,6 +27,7 @@ import { runParseAntigravity } from './parse-antigravity.js'
 import { cursorTranscriptComposerId, deleteCursorTranscriptEstimates, hasCursorDatabaseRecord, kiroLogLineId, prefixFingerprint, repairImporterDuplicates, replaceKiroLogLines, replaceSourceRecords, replaceSourceSnapshot } from './importer-duplicates.js'
 import type { ProgressInfo } from '../progress.js'
 import { completeJsonlInput } from '../jsonl.js'
+import { backfillSessionTitles } from './session-titles.js'
 
 interface ParseResult {
   parsedCount: number
@@ -1558,6 +1559,9 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
 
   // Backfill cwd for records parsed before this feature was added.
   backfillCwd(db)
+
+  // Title-only edits do not advance usage cursors. Refresh metadata separately.
+  await backfillSessionTitles(db, deviceInstanceId, filterTool)
 
   // Backfill legacy tool_calls with name='Skill' to extract the specific skill name.
   // Historical rows were stored before the parser learned to read block.input.skill.

@@ -60,6 +60,7 @@ export function mapStatsRecordToSyncRecord(record: StatsRecord): SyncRecord {
     cost: record.cost,
     costSource: record.costSource,
     sessionKey: generateSessionKey(record.device, record.sessionId),
+    sessionTitle: record.sessionTitle,
     device: record.device,
     deviceInstanceId: record.deviceInstanceId,
     platform: record.platform,

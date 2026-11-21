@@ -10,6 +10,21 @@ const root = path.resolve(process.env.AIUSAGE_CHECK_ROOT || '')
 if (!/^\/data\/home\/aiusage-check\/\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(root)) throw Error('Missing isolated remote-check root')
 const recycleDir = path.join(root, 'recycle')
 fs.mkdirSync(recycleDir, { recursive: true })
+const linkAudit = path.join(root, 'created-hardlinks.jsonl')
+const originalLink = fs.linkSync
+fs.linkSync = (from, to) => {
+  for (const input of [from, to]) {
+    const candidate = path.resolve(String(input))
+    if (!candidate.startsWith(root + '/')) throw Error('Hard link outside isolated run refused')
+    for (let parent = path.dirname(candidate); parent !== root; parent = path.dirname(parent)) {
+      if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) throw Error('Linked hard-link ancestor requires review')
+    }
+  }
+  const original = fs.lstatSync(from)
+  if (!original.isFile() || original.isSymbolicLink()) throw Error('Invalid hard-link source')
+  originalLink(from, to)
+  fs.appendFileSync(linkAudit, JSON.stringify({ dev: original.dev, ino: original.ino, from: String(from), to: String(to) }) + '\n')
+}
 function recycle(input) {
   const source = path.resolve(input instanceof URL ? fileURLToPath(input) : String(input))
   const rel = path.relative(root, source)
@@ -23,7 +38,14 @@ function recycle(input) {
   let stat
   try { stat = fs.lstatSync(source) } catch (error) { if (error.code === 'ENOENT') return; throw error }
   function inspect(file, info) {
-    if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) throw Error('Linked cleanup target requires review')
+    if (info.isSymbolicLink()) throw Error('Linked cleanup target requires review')
+    if (info.isFile() && info.nlink > 1) {
+      const created = fs.existsSync(linkAudit) && fs.readFileSync(linkAudit, 'utf8').trim().split('\n').some(line => {
+        try { const entry = JSON.parse(line); return entry.dev === info.dev && entry.ino === info.ino } catch { return false }
+      })
+      if (!created) throw Error('Unregistered hard link requires review')
+      fs.appendFileSync(path.join(root, 'recycle.jsonl'), JSON.stringify({ linked: path.relative(root, file), nlink: info.nlink }) + '\n')
+    }
     if (info.isDirectory()) for (const child of fs.readdirSync(file)) {
       const entry = path.join(file, child); inspect(entry, fs.lstatSync(entry))
     }

@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { ensureAiusageDir, getState, setState } from '../src/init.js'
 
 describe('Directory Initialization', () => {
-  const testDir = join(tmpdir(), 'aiusage-init-test')
+  let testDir: string
 
   beforeEach(() => {
-    mkdirSync(testDir, { recursive: true })
+    testDir = mkdtempSync(join(tmpdir(), 'aiusage-init-test-'))
   })
 
   afterEach(() => {

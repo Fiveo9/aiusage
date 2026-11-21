@@ -47,13 +47,13 @@ pnpm dev
 | `pnpm cli sync` | 与已配置的目标同步 |
 | `pnpm cli --help` | 查看完整命令列表 |
 
-同步可使用 GitHub 或 S3 兼容存储，包括 R2、MinIO。使用前先配置自己的目标；同步记录可能包含会话和项目元数据。详见[同步配置](./docs/github-sync.md)和[同步模型](./docs/sync-namespaces.md)。
+同步可使用 GitHub 或 S3 兼容存储，包括 R2、MinIO。使用前先配置自己的目标；同步记录可能包含会话和项目元数据。
 
 ## 数据与访问
 
 解析后的记录保存在 `~/.aiusage/cache.db`。费用依据可用定价与日志信息估算，更新定价或重新计算后可能变化。
 
-仪表盘默认监听 `127.0.0.1`。在 shell 环境中配置 `AIUSAGE_DASHBOARD_PASSWORD` 后，详细数据与设置需要登录，首页合计仍保持公开。监听网络地址时必须配置非空值。详见[仪表盘访问与安全说明](./docs/dashboard-security.md)。
+仪表盘默认监听 `127.0.0.1`。在 shell 环境中配置 `AIUSAGE_DASHBOARD_PASSWORD` 后，详细数据与设置需要登录，首页合计仍保持公开。监听网络地址时必须配置非空值。
 
 ## 开发与维护
 
@@ -83,7 +83,6 @@ Bug、使用问题和改动建议提交到[当前仓库的 Issues](https://githu
 ## 项目记录
 
 - [更新记录](./CHANGELOG.zh-CN.md)
-- [同步修复说明](./docs/sync-repair.md)
 
 ## 来源与许可
 

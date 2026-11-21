@@ -47,13 +47,13 @@ Run commands from the repository root:
 | `pnpm cli sync` | Sync with the configured destination |
 | `pnpm cli --help` | Browse the full command list |
 
-Sync supports GitHub and S3-compatible storage, including R2 and MinIO. Configure your destination before using it; synced records can include session and project metadata. See the [sync configuration](./docs/github-sync.md) and [sync model](./docs/sync-namespaces.md).
+Sync supports GitHub and S3-compatible storage, including R2 and MinIO. Configure your destination before using it; synced records can include session and project metadata.
 
 ## Data and access
 
 Parsed usage is stored in `~/.aiusage/cache.db`. Costs are estimates based on available pricing and log metadata, and can change after pricing updates or recalculation.
 
-The dashboard listens on `127.0.0.1` by default. Configure `AIUSAGE_DASHBOARD_PASSWORD` in the shell environment to protect detailed views and settings; home-page aggregate totals remain public. Listening on a network interface requires a non-empty value. See [dashboard access and security](./docs/dashboard-security.md).
+The dashboard listens on `127.0.0.1` by default. Configure `AIUSAGE_DASHBOARD_PASSWORD` in the shell environment to protect detailed views and settings; home-page aggregate totals remain public. Listening on a network interface requires a non-empty value.
 
 ## Development
 
@@ -83,7 +83,6 @@ Submit bugs, questions, and proposed changes to [this repository's issues](https
 ## Project notes
 
 - [Change history](./CHANGELOG.md)
-- [Sync repair guide](./docs/sync-repair.md)
 
 ## Origin and license
 

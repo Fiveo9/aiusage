@@ -981,7 +981,35 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const byModel: Record<string, number> = {}
         for (const r of byModelRows) byModel[r.model] = r.cost
 
-        json(res, { data: daily, byTool, byModel })
+        // Keep provenance on the exact same record set as the existing cost totals.
+        const provenanceColumns = 'cost, cost_source, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens'
+        const provenanceSql = df.useUnion
+          ? `SELECT ${provenanceColumns} FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+             UNION ALL SELECT ${provenanceColumns} FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}`
+          : device && device !== options?.currentDeviceInstanceId
+            ? `SELECT ${provenanceColumns} FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}`
+            : `SELECT ${provenanceColumns} FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
+        const provenanceParams = { ...df.params, ...dr.params, ...tf.params }
+        const sourceRows = db.prepare(`WITH filtered AS (${provenanceSql})
+          SELECT CASE WHEN cost_source IN ('log', 'pricing') THEN cost_source ELSE 'unknown' END AS source,
+                 COUNT(*) AS records, COALESCE(SUM(cost), 0) AS cost
+          FROM filtered GROUP BY source
+        `).all(provenanceParams) as Array<{ source: 'log' | 'pricing' | 'unknown'; records: number; cost: number }>
+        const sources = { log: { records: 0, cost: 0 }, pricing: { records: 0, cost: 0 }, unknown: { records: 0, cost: 0 } }
+        for (const row of sourceRows) sources[row.source] = { records: row.records, cost: row.cost }
+        const totalRecords = sources.log.records + sources.pricing.records + sources.unknown.records
+        const knownRecords = sources.log.records + sources.pricing.records
+        const unpricedModels = db.prepare(`WITH filtered AS (${provenanceSql})
+          SELECT model, COUNT(*) AS records,
+                 SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens
+          FROM filtered WHERE cost_source NOT IN ('log', 'pricing') OR cost_source IS NULL
+          GROUP BY model ORDER BY records DESC, model ASC
+        `).all(provenanceParams)
+        json(res, { data: daily, byTool, byModel, provenance: {
+          sources, totalRecords, knownRecords,
+          coverage: totalRecords ? knownRecords / totalRecords : null,
+          unpricedModels,
+        } })
         return
       }
 

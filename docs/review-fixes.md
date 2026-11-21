@@ -2,18 +2,20 @@
 
 来源：2026-11-19「README审阅与项目优化」（会话 240）。本次按用户授权初始化本地 Git，保留现有源码和重写后的 README，然后按以下顺序逐项实现、定向验证、只读审阅和独立提交。不自动推送或发布。
 
+当前收尾状态（2026-11-19）：10 项源码修复已提交；本机五个包的分项生产构建、站点整体类型检查和隔离 Electron 运行验证已通过。本轮执行 39 项定向回归，零失败，并完成 Electron smoke 的 5 组断言。以下分项保留初次交付记录，后续补验结果见文末「收尾验证」。未执行远程 CI、独立 PostgreSQL 多实例锁竞争、完整测试套件及实际发布。
+
 | 编号 | 问题 | 状态 |
 | --- | --- | --- |
-| R01 | JSONL 未完成尾行导致增量解析漏计 | 完成；5/5 边界回归、CLI 类型检查通过 |
+| R01 | JSONL 未完成尾行导致增量解析漏计 | 完成；5/5 边界回归及真实解析/水位集成回归通过 |
 | R02 | Docker 构建上下文未排除环境文件和备份 | 完成；排除规则和两个 COPY 入口静态核对通过 |
 | R03 | 独立包名、发布目标和小组件启动仍依赖上游发行包 | 完成；3/3 定位回归，CLI/widget 类型检查通过 |
-| R04 | 公开登录接口读取请求体无大小限制 | 完成；8/8 请求体回归、CLI 类型检查通过 |
+| R04 | 公开登录接口读取请求体无大小限制 | 完成；8/8 请求体回归及真实登录路由 413 验证通过 |
 | R05 | Codex 模型状态在文件间继承 | 完成；2/2 文件边界回归、core 类型检查通过 |
-| R06 | 登录 Cookie 缺少服务端有效期 | 完成；8/8 认证回归、CLI 类型检查通过 |
-| R07 | 小组件手动刷新忽略已保存的统计范围 | 完成；两个取数入口静态核对、widget 类型检查通过 |
+| R06 | 登录 Cookie 缺少服务端有效期 | 完成；8/8 认证回归及真实路由旧会话拒绝验证通过 |
+| R07 | 小组件手动刷新忽略已保存的统计范围 | 完成；类型检查及 Electron 实际设置/查询 IPC 通过 |
 | R08 | 小组件日界计算未适配夏令时 | 完成；18/18 日期与数据回归、widget 类型检查通过 |
 | R09 | 构建脚本依赖 Unix 命令，CI 缺少 Windows 覆盖 | 完成；五个包本机分项生产构建通过，远程 CI 未触发 |
-| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；8/8 回归及定向类型检查通过；真实 PG 并发未验证 |
+| R10 | 站点初始化并发、失败处理及数据库迁移互斥 | 完成；12/12 初始化/迁移回归及站点整体类型检查通过；独立 PG 多实例未验证 |
 
 ## 验证约束
 
@@ -70,3 +72,34 @@ widget 使用官方 better-sqlite3 12.10.0、Electron ABI 130、win32-x64 预编
 并发首请求共享初始化 Promise，迁移成功后只启动一次清理调度；失败返回 503/Retry-After 并阻止认证和业务查询，后续请求可重试。迁移在同一事务连接上先取得事务级 advisory lock，再创建/读取版本表，执行迁移并写入版本，提交或回滚时自动释放锁。初始化默认定价也在同一事务内完成。
 
 8/8 定向回归通过，包括并发请求、失败重试、CORS/preflight、事务锁顺序、失败传播及原有迁移断言。只读 diff 审阅和交付源码/新增测试的定向 TypeScript 检查通过。站点整体 `tsc --noEmit` 失败：本机缺少已声明的 `@electric-sql/pglite`，既有 `tests/helpers/pglite-sql.ts` 报 TS2307 和两个连带 TS7006；没有扩大到安装依赖或修改无关测试。临时类型配置已移入 `backups/build-recycle/`。没有连接真实 PostgreSQL，也没有执行实际多实例锁竞争或完整站点构建。
+
+## 收尾验证
+
+已按锁文件 SHA512 校验官方 PGlite 0.5.8 归档并补齐本机缺失依赖，未更改 manifest/lockfile，未执行安装生命周期脚本。站点整体 `tsc --noEmit` 现已通过，前述依赖缺失阻断已解除。实际 PostgreSQL SQL 引擎测试使用内存 PGlite，不使用个人或生产数据库。
+
+| 实际命令 / 检查 | 结果 | 本地证据（相对 `.artifacts/closeout-20261119/`） |
+| --- | --- | --- |
+| `pnpm --dir packages/core run build` | exit 0；ESM 和类型声明成功 | `core-build.log` |
+| `pnpm --dir packages/web run build`，带临时回收 preload | exit 0；生产 SPA 成功 | `web-build.log` |
+| `pnpm --dir packages/cli run build` | exit 0；包含本次 Web 输出 | `cli-build.log` |
+| CLI/Web `index.html` SHA256 比对；`node packages/cli/dist/index.js --version` | 相同；exit 0，1.5.28 | 本轮命令输出 |
+| `pnpm --dir packages/site run build`，带临时回收 preload | exit 0；adapter-node 成功 | `site-build.log` |
+| `pnpm --dir packages/widget run build` | exit 0；renderer、TypeScript、已准备 native 绑定通过 | `widget-build.log` |
+| `pnpm --dir packages/site exec tsc --noEmit` | exit 0，完整站点类型检查通过 | `site-typecheck.log`（无错误输出） |
+| `pnpm --dir packages/cli exec tsc --noEmit` | exit 0，含新增回归 | 本轮命令输出 |
+| `pnpm --dir packages/site exec vitest run tests/db/entry-hidden-migration.pg.test.ts tests/initialization.test.ts tests/db/migration-lock.test.ts tests/db/schema-migrations.test.ts` | exit 0，11/11 | 本轮命令输出 |
+| `pnpm --dir packages/site exec vitest run tests/db/migration-atomicity.pg.test.ts` | exit 0，1/1 | `site-atomicity.log` |
+| `pnpm --dir packages/core exec vitest run tests/codex.test.ts tests/codex-reasoning.test.ts tests/codex-file-boundary.test.ts` | exit 0，21/21 | `core-codex.log` |
+| `pnpm --dir packages/cli exec vitest run --config vitest.review.config.ts tests/review/parse-boundary.test.ts` | exit 0，2/2 | `parse-boundary.log` |
+| `pnpm --dir packages/cli exec vitest run --config vitest.review.config.ts tests/review/login-api.test.ts` | exit 0，4/4 | `login-api.log` |
+| 实际 Electron 33.4.11 隐藏窗口 smoke（合成主目录、禁止网络） | exit 0，5 组断言；renderer 无错误，进程已退出 | `widget-smoke.json`、`widget-smoke.log` |
+
+新增回归覆盖实际 `runParse → SQLite → watermark`：未完成尾行补全后入库一次、CRLF/中文字节游标准确、跨文件模型为 unknown；实际 HTTP 登录接口对声明长度和 chunked 超限均返回 413、非法 JSON 返回 400、新会话有效、八天旧会话被拒绝。新增 PGlite 事务测试确认迁移后启动失败会同时回滚 schema 和版本表，后续重试及再次初始化成功。
+
+Electron smoke 实际加载构建后的 main/preload/renderer 和 ABI 130 SQLite 绑定，验证 30 天初始总量、保存后立即切换 7 天/14 天范围、页面内容存在、无 renderer 错误及正常退出。它是隐藏窗口功能回归，不代表人工托盘交互、界面观感或其他操作系统的验收。
+
+交付源码与新增测试已完成只读 review。临时 smoke/preload、下载归档、合成数据库及 Vite 临时文件均移入 `backups/build-recycle/`，可恢复；最终构建产物保留在对应 `dist/` 和 `build/`，日志保留在 `.artifacts/closeout-20261119/`。本轮没有物理删除操作。
+
+最终构建依赖复核发现 site Docker 的定向 COPY 未包含新增的根回收脚本，已补上且静态确认位于 core 构建之前；同一 Dockerfile 的镜像来源/vendor 标签已改为独立项目，原许可证及作者归属保留。该修正提交为 `9fe1055`，未执行容器构建。core/CLI 构建清理修正和本机构建验证记录提交为 `095be15`。
+
+剩余边界：仓库无 `scripts/remote-check.ps1`，因此没有执行远程 Linux/CI 或独立 PostgreSQL 多实例锁竞争；PGlite 不能替代多进程数据库锁验证。未从零重编译 Electron 原生模块，未运行完整测试套件、根级 `pnpm build`、容器构建或干净机器依赖安装。npm/Docker 命名空间权限、发布及推送未执行。上述未执行项不标为通过。

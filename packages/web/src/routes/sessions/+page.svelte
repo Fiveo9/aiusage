@@ -1,9 +1,12 @@
 <script>
   import '$lib/activity.css'
+  import { afterNavigate, goto } from '$app/navigation'
+  import { onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, formatTokens, formatCost, formatDateTime, formatNumber } from '$lib/stores.js'
   import { fetchSessions, sessionDetailUrl } from '$lib/api.js'
   import { createRequestTracker, resolvePage } from '$lib/sessions-paging.js'
   import { sessionLabel } from '$lib/session-title.js'
+  import { readSessionQuery, sessionListUrl, sessionFilterKey } from '$lib/session-query.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
@@ -15,6 +18,47 @@
   let page = 1
   const pageSize = 50
   const beginRequest = createRequestTracker()
+  let query = ''
+  let sort = 'newest'
+  let state = null
+  let filterKey = ''
+  let ready = false
+
+  afterNavigate(({ to }) => {
+    if (!to || to.url.pathname !== '/sessions') return
+    state = readSessionQuery(to.url.searchParams, { ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+    const range = state.from && state.to ? { from: state.from, to: state.to, month: state.month } : { range: state.range }
+    filterKey = sessionFilterKey(range, state.device, state.tool)
+    dateRange.set(range)
+    selectedDevice.set(state.device)
+    selectedTool.set(state.tool)
+    query = state.q
+    sort = state.sort
+    page = state.page
+    ready = true
+    if (to.url.pathname + to.url.search !== sessionListUrl(state)) {
+      navigate(state, true)
+      return
+    }
+    loadData(state)
+  })
+  onDestroy(() => { ready = false; beginRequest() })
+
+  function navigate(next, replaceState = false) {
+    beginRequest()
+    return goto(sessionListUrl(next), { keepFocus: true, noScroll: true, replaceState })
+  }
+
+  function syncFilters(range, device, tool) {
+    const key = sessionFilterKey(range, device, tool)
+    if (!ready || key === filterKey) return
+    filterKey = key
+    navigate({ ...state, range: '', from: '', to: '', month: '', ...range, device, tool, page: 1 })
+  }
+
+  function applySearch() {
+    navigate({ ...state, q: query.trim(), sort, page: 1 })
+  }
 
   function formatDuration(ms) {
     if (!ms || ms < 1000) return '< 1s'
@@ -24,24 +68,23 @@
     return `${m}m ${s % 60}s`
   }
 
-  async function loadData() {
+  async function loadData(snapshot) {
     // A response only counts while its request is the latest one: a slow answer for
     // an earlier filter or page must not replace the list or move the page.
     const isLatest = beginRequest()
-    const requestedPage = page
+    const requestedPage = snapshot.page
     loading = true
     error = null
     try {
       const response = await fetchSessions({
-        ...$dateRange,
-        device: $selectedDevice,
-        tool: $selectedTool,
+        ...snapshot,
         page: requestedPage,
         pageSize,
       })
       if (!isLatest()) return
       data = response
-      page = resolvePage(response, requestedPage, pageSize)
+      const resolvedPage = resolvePage(response, requestedPage, pageSize)
+      if (resolvedPage !== requestedPage) navigate({ ...snapshot, page: resolvedPage }, true)
     } catch (e) {
       if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
@@ -51,19 +94,22 @@
     }
   }
 
-  $: $dateRange, $selectedDevice, $selectedTool, (page = 1)
-  $: $dateRange, $selectedDevice, $selectedTool, page, loadData()
+  $: syncFilters($dateRange, $selectedDevice, $selectedTool)
 
   function nextPage() {
-    if (data && page * pageSize < data.total) page++
+    if (data && page * pageSize < data.total) navigate({ ...state, page: page + 1 })
   }
 
   function prevPage() {
-    if (page > 1) page--
+    if (page > 1) navigate({ ...state, page: page - 1 })
   }
 
   function goToDetail(session) {
-    window.location.href = sessionDetailUrl(session.sessionId, session.deviceInstanceId, $selectedTool)
+    goto(detailUrl(session))
+  }
+
+  function detailUrl(session) {
+    return sessionDetailUrl(session.sessionId, session.deviceInstanceId, $selectedTool, sessionListUrl(state))
   }
 </script>
 
@@ -75,6 +121,18 @@
   <h1>{$t('sessions.title')}</h1>
   <p>{$t('sessions.desc')}</p>
 </div>
+
+<form class="session-search filter-bar" on:submit|preventDefault={applySearch}>
+  <label for="session-search">{$t('sessions.search')}</label>
+  <input id="session-search" type="search" maxlength="200" bind:value={query} placeholder={$t('sessions.searchHint')} />
+  <button type="submit" class="activity-page-button" disabled={!ready}>{$t('sessions.search')}</button>
+  <label for="session-sort">{$t('sessions.sort')}</label>
+  <select id="session-sort" bind:value={sort} on:change={applySearch} disabled={!ready}>
+    <option value="newest">{$t('sessions.sortNewest')}</option>
+    <option value="cost">{$t('sessions.sortCost')}</option>
+    <option value="tokens">{$t('sessions.sortTokens')}</option>
+  </select>
+</form>
 
 <div class="filter-bar">
   <DateRangeSelector />
@@ -122,7 +180,7 @@
           <!-- svelte-ignore a11y-no-interactive-element-to-noninteractive-role -->
           <tr class="activity-clickable" on:click={() => goToDetail(session)}>
             <td class="activity-session-cell">
-              <a class="activity-link activity-session-title" title={sessionLabel(session, $t('sessions.unnamed'))} href={sessionDetailUrl(session.sessionId, session.deviceInstanceId, $selectedTool)} on:click|stopPropagation>{sessionLabel(session, $t('sessions.unnamed'))}</a>
+              <a class="activity-link activity-session-title" title={sessionLabel(session, $t('sessions.unnamed'))} href={detailUrl(session)} on:click|stopPropagation>{sessionLabel(session, $t('sessions.unnamed'))}</a>
               <span class="activity-session-time mono">{formatDateTime(session.ts)}</span>
             </td>
             <td><span class="activity-badge">{session.tool}</span></td>
@@ -147,3 +205,12 @@
     </nav>
   </div>
 {/if}
+
+<style>
+  .session-search { flex-wrap: wrap; }
+  .session-search input, .session-search select {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-subtle);
+    border-radius: 6px; padding: 0.5rem; font: inherit; max-width: 100%;
+  }
+  .session-search input { flex: 1; min-width: 12rem; }
+</style>

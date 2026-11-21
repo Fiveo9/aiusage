@@ -1295,6 +1295,12 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
       // ── /api/sessions ─────────────────────────────────────────────
       if (url.pathname === '/api/sessions') {
+        const query = (url.searchParams.get('q') || '').trim()
+        const sort = url.searchParams.get('sort') || 'newest'
+        if (query.length > 200 || !['newest', 'cost', 'tokens'].includes(sort) || query.includes('\0')) {
+          json(res, { error: { code: 'INVALID_PARAM', message: 'Invalid session search or sort' } }, 400)
+          return
+        }
         // Absent or empty gives the default; anything but a positive integer is rejected
         const parsePagingParam = (name: string, fallback: number): number | null => {
           const value = url.searchParams.get(name)
@@ -1325,44 +1331,44 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const params: Record<string, unknown> = { ...dr.params, ...df.params, ...tf.params }
         const recordFilter = `${dr.where} ${df.where} ${tf.where}`
 
-        const totalRow = db.prepare(`
-          SELECT COUNT(*) AS total FROM (SELECT 1 FROM activity_records r
-          WHERE 1=1 ${recordFilter} GROUP BY r.device_instance_id, r.session_id)
-        `).get(params) as any
+        // Resolve the latest title outside the date window, matching the displayed title.
+        // Search session metadata before paging without filtering away its usage records.
+        const grouped = `WITH grouped AS (
+          SELECT r.session_id AS sessionId, r.device_instance_id AS deviceInstanceId,
+                 r.tool, r.model, MIN(r.ts) AS ts, MAX(r.ts) AS lastTs,
+                 MAX(r.ts) - MIN(r.ts) AS duration,
+                 SUM(r.input_tokens) AS inputTokens, SUM(r.output_tokens) AS outputTokens,
+                 SUM(r.cache_read_tokens) AS cacheReadTokens, SUM(r.cache_write_tokens) AS cacheWriteTokens,
+                 SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens + r.thinking_tokens) AS totalTokens,
+                 SUM(r.cost) AS cost,
+                 (SELECT st.session_title FROM activity_session_titles st
+                  WHERE st.session_id = r.session_id AND st.device_instance_id = r.device_instance_id
+                    ${tool ? 'AND st.tool = @tool' : ''}
+                  ORDER BY st.updated_at DESC, st.id DESC LIMIT 1) AS sessionTitle
+          FROM activity_records r WHERE 1=1 ${recordFilter}
+          GROUP BY r.device_instance_id, r.session_id
+        ), matched AS (SELECT * FROM grouped
+          ${query ? "WHERE instr(lower(sessionId), lower(@query)) > 0 OR instr(lower(COALESCE(sessionTitle, '')), lower(@query)) > 0" : ''})`
+        if (query) params.query = query
+        const order = `${sort === 'cost' ? 's.cost' : sort === 'tokens' ? 's.totalTokens' : 's.lastTs'} DESC, s.sessionId ASC, s.deviceInstanceId ASC`
+        const totalRow = db.prepare(`${grouped} SELECT COUNT(*) AS total FROM matched`).get(params) as { total: number }
 
         // Aggregate records per session first: joining tool_calls before the SUMs would count
         // a record once per tool call. Tool calls are then counted for the page's sessions only.
-        const sessions = db.prepare(`
-          SELECT s.sessionId, s.deviceInstanceId, s.tool, s.model, s.ts, s.duration,
-                 s.inputTokens, s.outputTokens, s.cacheReadTokens, s.cacheWriteTokens, s.cost,
+        const sessions = db.prepare(`${grouped}
+          SELECT s.*,
                  (
                    SELECT COUNT(*)
                    FROM records r
                    JOIN activity_tool_calls tc ON tc.record_id = r.id
                    WHERE r.session_id = s.sessionId AND r.device_instance_id = s.deviceInstanceId ${recordFilter}
                  ) AS toolCallCount
-          FROM (
-            SELECT r.session_id AS sessionId, r.device_instance_id AS deviceInstanceId,
-                   r.tool,
-                   r.model,
-                   MIN(r.ts) AS ts,
-                   MAX(r.ts) - MIN(r.ts) AS duration,
-                   SUM(r.input_tokens) AS inputTokens,
-                   SUM(r.output_tokens) AS outputTokens,
-                   SUM(r.cache_read_tokens) AS cacheReadTokens,
-                   SUM(r.cache_write_tokens) AS cacheWriteTokens,
-                   SUM(r.cost) AS cost
-            FROM activity_records r
-            WHERE 1=1 ${recordFilter}
-            GROUP BY r.device_instance_id, r.session_id
-            ORDER BY MIN(r.ts) DESC, r.session_id ASC, r.device_instance_id
-            LIMIT @limit OFFSET @offset
-          ) s
-          ORDER BY s.ts DESC, s.sessionId ASC, s.deviceInstanceId
+          FROM (SELECT * FROM matched s ORDER BY ${order} LIMIT @limit OFFSET @offset) s
+          ORDER BY ${order}
         `).all({ ...params, limit: pageSize, offset }) as any[]
 
         json(res, {
-          sessions: sessions.map(session => ({ ...session, sessionTitle: getSessionTitle(db, session.sessionId, session.deviceInstanceId, tool || undefined) })),
+          sessions,
           total: totalRow.total,
           page,
           pageSize,

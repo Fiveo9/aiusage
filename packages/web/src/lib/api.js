@@ -98,8 +98,8 @@ export function activityDetailUrl(path, params) {
   return buildUrl(path, params)
 }
 
-export function sessionDetailUrl(sessionId, device, tool) {
-  return buildUrl(`/sessions/${encodeURIComponent(sessionId)}`, { device, tool })
+export function sessionDetailUrl(sessionId, device, tool, back) {
+  return buildUrl(`/sessions/${encodeURIComponent(sessionId)}`, { device, tool, back })
 }
 
 export function fetchActivityDetail(kind, params) {

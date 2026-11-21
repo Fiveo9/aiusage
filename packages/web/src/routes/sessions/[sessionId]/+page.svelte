@@ -63,7 +63,7 @@
 </svelte:head>
 
 <div class="page-header activity-detail-header">
-  <a class="activity-back-link" href="/sessions">{$t('sessions.detail.back')}</a>
+  <a class="activity-back-link" href={$page.url.searchParams.get('back')?.startsWith('/sessions?') ? $page.url.searchParams.get('back') : '/sessions'}>{$t('sessions.detail.back')}</a>
   <h1>{data?.session ? sessionLabel(data.session, $t('sessions.unnamed')) : $t('sessions.detail.title')}</h1>
   {#if data?.session}<p>{formatDateTime(data.session.firstTs)}</p>{/if}
 </div>

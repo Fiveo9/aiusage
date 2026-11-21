@@ -27,6 +27,8 @@ export function setDevice(deviceInstanceId) {
 
 export const selectedTool = persisted('aiusage-selectedTool', '') // '' = all tools, value = tool name
 
+export const modelDisplayMode = persisted('aiusage-modelDisplayMode', 'full') // 'full' | 'merged'
+
 export function setTool(tool) {
   selectedTool.set(tool)
 }

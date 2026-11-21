@@ -2,7 +2,15 @@ import { writable, derived } from 'svelte/store'
 
 const translations = {
   en: {
-    activity: { device: 'Device', callIndex: 'Call index' },
+    activity: {
+      device: 'Device', callIndex: 'Call index',
+      sessionList: 'Session history', projectRanking: 'Project ranking', toolRanking: 'Tool ranking',
+      openSession: 'Select a session to view its timeline', openProject: 'Select a project to view its sessions',
+      pagination: 'Pagination', toolType: 'Tool type', calls: 'Calls',
+      projectDetail: 'Sessions in this project for the selected filters.',
+      toolDetail: 'Individual tool calls for the selected filters.',
+      events: 'Call history', timeline: 'Session timeline',
+    },
     nav: {
       home: 'Home',
       overview: 'Overview',
@@ -523,7 +531,15 @@ const translations = {
     },
   },
   zh: {
-    activity: { device: '设备', callIndex: '调用序号' },
+    activity: {
+      device: '设备', callIndex: '调用序号',
+      sessionList: '会话记录', projectRanking: '项目排名', toolRanking: '工具排名',
+      openSession: '选择会话查看时间线', openProject: '选择项目查看会话记录',
+      pagination: '分页', toolType: '工具类型', calls: '调用次数',
+      projectDetail: '当前筛选条件下，此项目的会话记录。',
+      toolDetail: '当前筛选条件下，此工具的逐次调用记录。',
+      events: '调用记录', timeline: '会话时间线',
+    },
     nav: {
       home: '首页',
       overview: '概览',

@@ -1,4 +1,5 @@
 <script>
+  import '$lib/activity.css'
   import { page } from '$app/stores'
   import { onMount } from 'svelte'
   import { formatCost, formatTokens } from '$lib/stores.js'
@@ -61,7 +62,7 @@
 </svelte:head>
 
 <div class="page-header">
-  <a class="back-link" href="/sessions">{$t('sessions.detail.back')}</a>
+  <a class="activity-back-link" href="/sessions">{$t('sessions.detail.back')}</a>
   <h1>{$t('sessions.detail.title')}</h1>
 </div>
 
@@ -111,7 +112,7 @@
     {/each}
   </div>
 {:else if error}
-  <div class="state-msg error">{error}</div>
+  <div class="card state-msg error" role="alert">{error}</div>
 {:else if data}
   {@const session = data.session}
   {@const records = data.records}
@@ -121,7 +122,7 @@
   <div class="detail-header">
     <div class="identity card">
       <div class="id-row">
-        <span class="id-tool">{session.tool}</span>
+        <span class="activity-badge">{session.tool}</span>
         <span class="id-model mono">{(session.models ?? [session.model]).join(', ')}</span>
       </div>
       <div class="id-time mono">{formatDateTime(session.firstTs)}</div>
@@ -191,6 +192,7 @@
   </div>
 
   <!-- ── Timeline ──────────────────────────────────────────────── -->
+  <h2 class="section-title">{$t('activity.timeline')}</h2>
   <div class="timeline">
     {#each records as record, i}
       {@const recordTotal = record.inputTokens + record.outputTokens + (record.cacheReadTokens || 0) + (record.cacheWriteTokens || 0) + (record.thinkingTokens || 0)}
@@ -250,9 +252,9 @@
                   <span class="tc-offset mono muted">{formatRelativeTs(tc.ts - record.ts)}</span>
                 {/if}
                 {#if tc.type === 'mcp'}
-                  <span class="badge badge-mcp">mcp</span>
+                  <span class="activity-badge activity-badge-mcp">mcp</span>
                 {:else if tc.type === 'skill'}
-                  <span class="badge badge-skill">skill</span>
+                  <span class="activity-badge activity-badge-skill">skill</span>
                 {/if}
               </div>
             {/each}
@@ -269,26 +271,17 @@
 {/if}
 
 <style>
-  .back-link {
-    display: inline-block;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    text-decoration: none;
-    margin-bottom: 0.5rem;
-    transition: color 0.15s;
-  }
-  .back-link:hover { color: var(--accent); }
-
   /* ── Header: two-column grid ──────────────────────────────── */
   .detail-header {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 1rem;
     margin-bottom: 1.5rem;
   }
 
   /* Identity card */
   .identity {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -298,19 +291,11 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-  .id-tool {
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-family: var(--mono);
-    color: var(--accent);
-    background: var(--accent-dim);
-    padding: 0.125rem 0.4rem;
-    border-radius: 3px;
+    flex-wrap: wrap;
   }
   .id-model {
+    overflow-wrap: anywhere;
+    min-width: 0;
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--text);
@@ -331,12 +316,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+    flex-wrap: wrap;
     margin-top: auto;
     padding-top: 0.5rem;
     border-top: 1px solid var(--border-subtle);
   }
   .id-session {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+    min-width: 0;
     color: var(--text-muted);
   }
   .id-duration {
@@ -347,6 +335,7 @@
 
   /* Metrics card */
   .metrics {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -354,16 +343,18 @@
   }
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.5rem;
   }
   .metric-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
   }
   .metric-label {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 550;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -386,7 +377,7 @@
   }
   .tb-row {
     display: grid;
-    grid-template-columns: 5.5rem 1fr 4.5rem;
+    grid-template-columns: 5.5rem minmax(0, 1fr) 4.5rem;
     align-items: center;
     gap: 0.5rem;
   }
@@ -446,7 +437,7 @@
 
   /* Record card */
   .record-card {
-    padding: 0.625rem 1rem;
+    padding: 1rem 1.25rem;
   }
   .record-header {
     display: flex;
@@ -459,6 +450,8 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    flex-wrap: wrap;
+    min-width: 0;
   }
   .record-index {
     font-size: 0.6875rem;
@@ -470,7 +463,8 @@
     font-size: 0.6875rem;
   }
   .record-model {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
     color: var(--text-secondary);
   }
   .record-cost {
@@ -523,7 +517,7 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.15rem 0.3rem;
+    padding: 0.35rem 0.5rem;
     border-radius: 3px;
     background: var(--raised);
   }
@@ -534,31 +528,14 @@
   }
   .tc-name {
     flex: 1;
-    font-size: 0.6875rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.75rem;
     color: var(--text);
   }
   .tc-offset {
     font-size: 0.6875rem;
     flex-shrink: 0;
-  }
-
-  .badge {
-    font-size: 0.625rem;
-    font-weight: 600;
-    padding: 0.0625rem 0.3rem;
-    border-radius: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-family: var(--mono);
-    flex-shrink: 0;
-  }
-  .badge-mcp {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-  .badge-skill {
-    background: var(--green-dim);
-    color: var(--green);
   }
 
   .muted { color: var(--text-muted); }
@@ -585,7 +562,7 @@
       grid-template-columns: repeat(2, 1fr);
     }
     .tb-row {
-      grid-template-columns: 4.5rem 1fr 3.5rem;
+      grid-template-columns: 4.5rem minmax(0, 1fr) 3.5rem;
     }
     .record-header {
       flex-direction: column;
@@ -593,6 +570,9 @@
     }
     .record-tokens {
       gap: 0.5rem;
+    }
+    .tool-call {
+      flex-wrap: wrap;
     }
   }
 </style>

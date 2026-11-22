@@ -18,6 +18,12 @@ vi.mock('$lib/server/db/pool.js', () => {
 
   const sql = (strings: TemplateStringsArray, ...params: unknown[]) => {
     const text = strings.join('?')
+    if (text.includes('SELECT status FROM users') || text.includes('SELECT status FROM user_devices')) {
+      return Promise.resolve([{ status: 'active' }])
+    }
+    if (text.includes('INSERT INTO cloud_device_instances')) {
+      return Promise.resolve([{ id: 'instance_1' }])
+    }
     if (text.includes('INSERT INTO cloud_usage_records')) {
       db.recordQueries.push(text)
       db.recordParams.push(params)

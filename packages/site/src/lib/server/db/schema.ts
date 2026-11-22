@@ -625,5 +625,14 @@ const migrations = [
       )`
       await tx`CREATE INDEX idx_auth_rate_limits_window_start ON auth_rate_limits(window_start)`
     }
+  },
+  {
+    version: 21,
+    name: 'cloud_sync_batch_receipts',
+    up: async (tx: postgres.TransactionSql) => {
+      // Serialized JSON keeps rejected identifiers losslessly: JSONB cannot
+      // represent a JSON \u0000 escape, even when that identifier was rejected.
+      await tx`ALTER TABLE cloud_sync_batches ADD COLUMN IF NOT EXISTS response_summary TEXT`
+    }
   }
 ]

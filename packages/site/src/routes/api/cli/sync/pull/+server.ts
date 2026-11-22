@@ -29,7 +29,10 @@ export const GET: RequestHandler = async ({ request, url }) => {
   }
 
   const cursor = url.searchParams.get('cursor')
-  const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || String(defaultLimit))), maxLimit)
+  if (cursor !== null && (!/^\d+$/.test(cursor) || BigInt(cursor) > 9223372036854775807n)) return json({ error: 'Invalid cursor', error_code: 'invalid_cursor' }, { status: 400 })
+  const limitText = url.searchParams.get('limit') || String(defaultLimit)
+  if (!/^-?\d+$/.test(limitText) || !Number.isSafeInteger(Number(limitText))) return json({ error: 'Invalid limit', error_code: 'invalid_limit' }, { status: 400 })
+  const limit = Math.min(Math.max(1, Number(limitText)), maxLimit)
 
   // Get current sync generation
   const reset = await sql`SELECT sync_generation FROM cloud_sync_resets WHERE user_id = ${userId}`
@@ -38,7 +41,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
   // Query records from all devices (including self), using change_seq as cursor.
   // Local merge logic (mergeSyncedRecordsIntoRecords) deduplicates via LEFT JOIN,
   // so self-records won't cause duplicates.
-  const cursorValue = cursor ? parseInt(cursor) : 0
+  const cursorValue = cursor ? BigInt(cursor).toString() : '0'
 
   const rows = await sql`
     SELECT
@@ -95,15 +98,16 @@ export const GET: RequestHandler = async ({ request, url }) => {
     }
   }
 
-  const nextCursor = hasMore ? String((resultRows[resultRows.length - 1] as Record<string, unknown>).change_seq) : null
+  const observedCursor = resultRows.length ? String(resultRows[resultRows.length - 1].change_seq) : cursor
+  const nextCursor = hasMore ? observedCursor : null
 
   // Update sync state
   try {
     await sql`
       INSERT INTO cloud_sync_state (user_id, device_id, last_pull_at, last_server_cursor, updated_at)
-      VALUES (${userId}, ${deviceId}, NOW(), ${nextCursor}, NOW())
+      VALUES (${userId}, ${deviceId}, NOW(), ${observedCursor}, NOW())
       ON CONFLICT (user_id, device_id)
-      DO UPDATE SET last_pull_at = NOW(), last_server_cursor = ${nextCursor}, updated_at = NOW()
+      DO UPDATE SET last_pull_at = NOW(), last_server_cursor = COALESCE(EXCLUDED.last_server_cursor, cloud_sync_state.last_server_cursor), updated_at = NOW()
     `
   } catch {}
 

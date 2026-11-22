@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
 import { requireUser } from '$lib/server/auth/session.js'
+import { lockCloudUser } from '$lib/server/cloud/sync-state.js'
 
 export const PATCH: RequestHandler = async (event) => {
   const user = await requireUser(event)
@@ -28,20 +29,12 @@ export const DELETE: RequestHandler = async (event) => {
   const url = event.url
   const deleteData = url.searchParams.get('delete_data') === 'true'
 
-  const devices = await sql`
-    SELECT id, status FROM user_devices WHERE id = ${deviceId} AND user_id = ${user.id}
-  `
-  const device = devices[0] as { id: string; status: string } | undefined
-
-  if (!device) {
-    return json({ error: 'Device not found' }, { status: 404 })
-  }
-
-  if (device.status === 'revoked') {
-    return json({ error: 'Device already revoked' }, { status: 400 })
-  }
-
-  await sql.begin(async (tx) => {
+  return sql.begin(async (tx) => {
+    await lockCloudUser(tx, user.id)
+    const devices = await tx`SELECT id, status FROM user_devices WHERE id = ${deviceId} AND user_id = ${user.id} FOR UPDATE`
+    const device = devices[0] as { id: string; status: string } | undefined
+    if (!device) return json({ error: 'Device not found' }, { status: 404 })
+    if (device.status === 'revoked') return json({ error: 'Device already revoked' }, { status: 400 })
     // Revoke device
     await tx`UPDATE user_devices SET status = 'revoked', revoked_at = NOW() WHERE id = ${deviceId}`
 
@@ -49,11 +42,11 @@ export const DELETE: RequestHandler = async (event) => {
     if (deleteData) {
       await tx`
         UPDATE cloud_usage_records
-        SET deleted_at = NOW(), server_updated_at = NOW()
+        SET deleted_at = NOW(), server_updated_at = NOW(),
+          change_seq = nextval(pg_get_serial_sequence('cloud_usage_records', 'change_seq'))
         WHERE user_id = ${user.id} AND device_id = ${deviceId} AND deleted_at IS NULL
       `
     }
+    return json({ success: true, data_deleted: deleteData })
   })
-
-  return json({ success: true, data_deleted: deleteData })
 }

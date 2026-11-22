@@ -7,6 +7,7 @@ import { getConfigValue, CFG } from '$lib/server/config.js'
 import { checkCloudSyncAccess } from '$lib/server/cloud/star-check.js'
 import { nanoid } from 'nanoid'
 import { readLimitedText, parseJsonObject } from '$lib/server/request-body.js'
+import { lockCloudGeneration } from '$lib/server/cloud/sync-state.js'
 
 /** A record of a push that was not stored, and why. */
 export interface RejectedRecord {
@@ -59,6 +60,24 @@ function recordProblem(record: Record<string, unknown>): RejectedRecord['reason'
   return null
 }
 
+async function registerInstance(tx: postgres.TransactionSql, userId: string, deviceId: string, instanceId: string, generation: number): Promise<string> {
+  const existing = await tx`SELECT id FROM cloud_device_instances WHERE device_id = ${deviceId}`
+  const rows = existing.length ? await tx`
+    INSERT INTO cloud_device_instances (id, user_id, device_id, device_instance_id, sync_generation)
+    VALUES (${nanoid()}, ${userId}, ${deviceId}, ${instanceId}, ${generation})
+    ON CONFLICT (device_id) DO UPDATE SET device_instance_id = EXCLUDED.device_instance_id,
+      sync_generation = EXCLUDED.sync_generation, updated_at = NOW()
+    WHERE cloud_device_instances.user_id = EXCLUDED.user_id RETURNING id
+  ` : await tx`
+    INSERT INTO cloud_device_instances (id, user_id, device_id, device_instance_id, sync_generation)
+    VALUES (${nanoid()}, ${userId}, ${deviceId}, ${instanceId}, ${generation})
+    ON CONFLICT (user_id, device_instance_id) DO UPDATE SET device_id = EXCLUDED.device_id,
+      sync_generation = EXCLUDED.sync_generation, updated_at = NOW() RETURNING id
+  `
+  if (!rows.length) throw new Error('Device instance registration failed')
+  return rows[0].id as string
+}
+
 export const POST: RequestHandler = async ({ request }) => {
   const maxRecords = await getConfigValue(CFG.SYNC_MAX_RECORDS)
   const maxTombstones = await getConfigValue(CFG.SYNC_MAX_TOMBSTONES)
@@ -103,21 +122,6 @@ export const POST: RequestHandler = async ({ request }) => {
     }, { status: starCheck.status || 403 })
   }
 
-  // Check idempotency
-  const existing = await sql`
-    SELECT id, status, record_count FROM cloud_sync_batches
-    WHERE device_id = ${deviceId} AND idempotency_key = ${idempotencyKey}
-  `
-  if (existing.length > 0) {
-    const batch = existing[0] as { id: string; status: string; record_count: number }
-    return json({
-      status: batch.status,
-      batch_id: batch.id,
-      record_count: batch.record_count,
-      message: 'Already processed'
-    })
-  }
-
   // Validate body
   const schemaVersion = body.schema_version
   if (schemaVersion !== 1) {
@@ -130,7 +134,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   const clientSyncGeneration = body.sync_generation
-  if (typeof clientSyncGeneration !== 'number') {
+  if (typeof clientSyncGeneration !== 'number' || !Number.isSafeInteger(clientSyncGeneration) || clientSyncGeneration < 0) {
     return json({ error: 'Missing sync_generation', error_code: 'invalid_payload' }, { status: 400 })
   }
 
@@ -144,38 +148,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ error: `Too many tombstones (max ${maxTombstones})`, error_code: 'payload_too_large' }, { status: 400 })
   }
 
-  // Get or create cloud device instance
-  let instance: postgres.Row[] = await sql`
-    SELECT id, sync_generation FROM cloud_device_instances
-    WHERE user_id = ${userId} AND device_instance_id = ${deviceInstanceId}
-  `
-
-  if (instance.length === 0) {
-    // First time this device syncs — create instance
-    const instanceId = nanoid()
-    await sql`
-      INSERT INTO cloud_device_instances (id, user_id, device_id, device_instance_id, sync_generation)
-      VALUES (${instanceId}, ${userId}, ${deviceId}, ${deviceInstanceId}, 1)
-    `
-    instance = [{ id: instanceId, sync_generation: 1 }]
-  }
-
-  const instanceRow = instance[0] as { id: string; sync_generation: number }
-
-  // Check sync generation
-  const reset = await sql`SELECT sync_generation FROM cloud_sync_resets WHERE user_id = ${userId}`
-  const serverGeneration = reset.length > 0 ? Number((reset[0] as { sync_generation: string | number }).sync_generation) : 1
-
-  if (clientSyncGeneration < serverGeneration) {
-    return json({
-      error: 'Sync generation stale. Please pull first.',
-      error_code: 'sync_generation_stale',
-      server_generation: serverGeneration
-    }, { status: 409 })
-  }
-
   // Process records and tombstones in a transaction
-  const batchId = nanoid()
+  let batchId = nanoid()
   let inserted = 0
   let updated = 0
   // Records not written: older than or equal to the stored version (the
@@ -189,7 +163,27 @@ export const POST: RequestHandler = async ({ request }) => {
   const rejectedTombstones: RejectedTombstone[] = []
 
   try {
-    await sql.begin(async (tx) => {
+    return await sql.begin(async (tx) => {
+      const serverGeneration = await lockCloudGeneration(tx, userId)
+      if (clientSyncGeneration < serverGeneration) return json({ error: 'Sync generation stale. Please pull first.',
+        error_code: 'sync_generation_stale', server_generation: serverGeneration }, { status: 409 })
+      const devices = await tx`SELECT status FROM user_devices WHERE user_id = ${userId} AND id = ${deviceId} FOR UPDATE`
+      if (!devices.length || devices[0].status !== 'active') return json({ error: 'Device revoked', error_code: 'device_revoked' }, { status: 401 })
+      const batches = await tx`SELECT id, status, response_summary FROM cloud_sync_batches
+        WHERE device_id = ${deviceId} AND idempotency_key = ${idempotencyKey} FOR UPDATE`
+      const previous = batches[0]
+      if (previous?.status === 'accepted') {
+        let summary: Record<string, unknown> | null = null
+        try {
+          const value = typeof previous.response_summary === 'string' ? JSON.parse(previous.response_summary) : previous.response_summary
+          if (value && typeof value === 'object' && !Array.isArray(value)) summary = value as Record<string, unknown>
+        } catch { /* incomplete legacy receipts are never acknowledged */ }
+        if (!summary) return json({ error: 'Legacy receipt unavailable; retry with a new idempotency key.', error_code: 'receipt_unavailable' }, { status: 500 })
+        if (summary.sync_generation !== serverGeneration) return json({ error: 'Idempotency key belongs to an older generation.', error_code: 'idempotency_generation_stale', server_generation: serverGeneration }, { status: 409 })
+        return json(summary)
+      }
+      if (previous) batchId = previous.id as string
+      const instanceRowId = await registerInstance(tx, userId, deviceId, deviceInstanceId, serverGeneration)
       // Upsert records
       for (const record of records) {
         const problem = record !== null && typeof record === 'object' ? recordProblem(record) : 'invalid_value'
@@ -200,7 +194,7 @@ export const POST: RequestHandler = async ({ request }) => {
         }
 
         const id = nanoid()
-        const updatedAt = record.updatedAt || Date.now()
+        const updatedAt = record.updatedAt ?? Date.now()
         // Plain INSERT first: a returned row means the record is new.
         const created = await tx`
           INSERT INTO cloud_usage_records (
@@ -251,7 +245,8 @@ export const POST: RequestHandler = async ({ request }) => {
             platform = ${record.platform || null},
             updated_at = ${updatedAt},
             server_updated_at = NOW(),
-            deleted_at = NULL
+            deleted_at = NULL,
+            change_seq = nextval(pg_get_serial_sequence('cloud_usage_records', 'change_seq'))
           WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}
             AND device_instance_id = ${deviceInstanceId} AND record_id = ${record.id}
             AND updated_at < ${updatedAt}
@@ -269,25 +264,23 @@ export const POST: RequestHandler = async ({ request }) => {
           skipped++
           continue
         }
+        const tombstoneUpdatedAt = tombstone.updatedAt ?? Date.now()
         await tx`
           UPDATE cloud_usage_records
-          SET deleted_at = NOW(), server_updated_at = NOW(), updated_at = ${tombstone.updatedAt || Date.now()}
+          SET deleted_at = NOW(), server_updated_at = NOW(), updated_at = ${tombstoneUpdatedAt},
+            change_seq = nextval(pg_get_serial_sequence('cloud_usage_records', 'change_seq'))
           WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}
             AND device_instance_id = ${deviceInstanceId} AND record_id = ${tombstone.record_id}
+            AND updated_at <= ${tombstoneUpdatedAt}
+            AND (deleted_at IS NULL OR updated_at < ${tombstoneUpdatedAt})
         `
       }
-
-      // Record batch
-      await tx`
-        INSERT INTO cloud_sync_batches (id, user_id, device_id, idempotency_key, direction, record_count, status)
-        VALUES (${batchId}, ${userId}, ${deviceId}, ${idempotencyKey}, 'push', ${records.length}, 'accepted')
-      `
 
       // Update device instance cursor
       await tx`
         UPDATE cloud_device_instances
         SET last_push_cursor = ${(body.server_cursor as string | undefined) || null}, updated_at = NOW()
-        WHERE id = ${instanceRow.id}
+        WHERE id = ${instanceRowId}
       `
 
       // Update sync state
@@ -297,31 +290,30 @@ export const POST: RequestHandler = async ({ request }) => {
         ON CONFLICT (user_id, device_id)
         DO UPDATE SET last_push_at = NOW(), updated_at = NOW()
       `
-    })
-
-    // Get latest change_seq for cursor
-    const cursorRow = await sql`
-      SELECT MAX(change_seq) as max_seq FROM cloud_usage_records WHERE user_id = ${userId}
-    `
-    const serverCursor = String((cursorRow[0] as { max_seq: number | null })?.max_seq || '0')
-
-    return json({
-      status: 'accepted',
-      batch_id: batchId,
-      inserted,
-      updated,
-      skipped,
-      rejected,
-      rejected_tombstones: rejectedTombstones,
-      sync_generation: serverGeneration,
-      server_cursor: serverCursor
+      const cursorRow = await tx`SELECT MAX(change_seq) AS max_seq FROM cloud_usage_records
+        WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}`
+      const summary = { status: 'accepted', batch_id: batchId, inserted, updated, skipped, rejected,
+        rejected_tombstones: rejectedTombstones, sync_generation: serverGeneration, server_cursor: String(cursorRow[0]?.max_seq ?? '0') }
+      await tx`INSERT INTO cloud_sync_batches (id, user_id, device_id, idempotency_key, direction, record_count, status, response_summary)
+        VALUES (${batchId}, ${userId}, ${deviceId}, ${idempotencyKey}, 'push', ${records.length}, 'accepted', ${JSON.stringify(summary)})
+        ON CONFLICT (device_id, idempotency_key) DO UPDATE SET status = 'accepted', error_code = NULL, response_summary = EXCLUDED.response_summary,
+          record_count = EXCLUDED.record_count
+        WHERE cloud_sync_batches.status != 'accepted'`
+      return json(summary)
     })
   } catch (err) {
+    if (isHttpError(err)) return json({ error: err.body.message, error_code: err.body.message }, { status: err.status })
+    if ((err as { code?: string; constraint?: string }).code === '23505'
+      && (err as { constraint?: string }).constraint?.startsWith('cloud_device_instances_')) {
+      return json({ error: 'Device instance is already bound.', error_code: 'device_instance_conflict' }, { status: 409 })
+    }
     // Record failed batch
     try {
       await sql`
         INSERT INTO cloud_sync_batches (id, user_id, device_id, idempotency_key, direction, record_count, status, error_code)
         VALUES (${batchId}, ${userId}, ${deviceId}, ${idempotencyKey}, 'push', ${records.length}, 'failed', 'server_error')
+        ON CONFLICT (device_id, idempotency_key) DO UPDATE SET status = 'failed', error_code = 'server_error'
+        WHERE cloud_sync_batches.status != 'accepted'
       `
     } catch {}
 

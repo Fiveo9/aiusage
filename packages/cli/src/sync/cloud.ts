@@ -3,6 +3,8 @@ import { computeHmac, sha256, generateNonce, generateIdempotencyKey, buildCanoni
 import { loadCredentials } from '../device-auth/credentials.js'
 import { getSiteUrl } from '../site-url.js'
 import { fromCloudRecord, parseSyncGeneration, toCloudRecord } from './cloud-dto.js'
+import { readFileSync } from 'node:fs'
+declare const __VERSION__: string
 
 const SYNC_PUSH_PATH = '/api/cli/sync/push'
 const SYNC_PULL_PATH = '/api/cli/sync/pull'
@@ -102,7 +104,7 @@ export async function cloudPush(
   deviceInstanceId: string,
   syncGeneration: number
 ): Promise<PushResult> {
-  const serverUrl = getSiteUrl()
+  const serverUrl = getSiteUrl().replace(/\/+$/, '')
   const creds = loadCredentials()
   if (!creds) throw new CloudSyncError('Not logged in.', 'not_logged_in')
 
@@ -117,7 +119,7 @@ export async function cloudPush(
   })
 
   const headers = buildHeaders('POST', SYNC_PUSH_PATH, body)
-  const response = await fetch(`${serverUrl}${SYNC_PUSH_PATH}`, { method: 'POST', headers, body })
+  const response = await fetch(`${serverUrl}${SYNC_PUSH_PATH}`, { method: 'POST', headers, body, redirect: 'error' })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {
@@ -133,6 +135,10 @@ export async function cloudPush(
   }
 
   if (!data) throw new CloudSyncError('Invalid response from server', 'invalid_response')
+
+  if (data.status === 'failed' || data.status === 'rejected') {
+    throw new CloudSyncError('Server did not accept the sync batch.', typeof data.error_code === 'string' ? data.error_code : 'server_error')
+  }
 
   return {
     inserted: (data.inserted as number) || 0,
@@ -153,7 +159,7 @@ export async function cloudPull(
   cursor?: string,
   limit: number = 1000
 ): Promise<PullResult> {
-  const serverUrl = getSiteUrl()
+  const serverUrl = getSiteUrl().replace(/\/+$/, '')
   const creds = loadCredentials()
   if (!creds) throw new CloudSyncError('Not logged in.', 'not_logged_in')
 
@@ -166,7 +172,7 @@ export async function cloudPull(
 
   // For GET requests, body is empty
   const headers = buildHeaders('GET', SYNC_PULL_PATH, '')
-  const response = await fetch(`${serverUrl}${path}`, { method: 'GET', headers })
+  const response = await fetch(`${serverUrl}${path}`, { method: 'GET', headers, redirect: 'error' })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {
@@ -220,14 +226,14 @@ export async function cloudPull(
 }
 
 export async function cloudClear(): Promise<{ syncGeneration: number }> {
-  const serverUrl = getSiteUrl()
+  const serverUrl = getSiteUrl().replace(/\/+$/, '')
   const creds = loadCredentials()
   if (!creds) throw new CloudSyncError('Not logged in.', 'not_logged_in')
 
   const SYNC_CLEAR_PATH = '/api/cli/sync/clear'
   const body = '{}'
   const headers = buildHeaders('POST', SYNC_CLEAR_PATH, body)
-  const response = await fetch(`${serverUrl}${SYNC_CLEAR_PATH}`, { method: 'POST', headers, body })
+  const response = await fetch(`${serverUrl}${SYNC_CLEAR_PATH}`, { method: 'POST', headers, body, redirect: 'error' })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {
@@ -249,13 +255,12 @@ export async function cloudClear(): Promise<{ syncGeneration: number }> {
 }
 
 function getClientVersion(): string {
-  try {
-    const { readFileSync } = require('node:fs')
-    const { join } = require('node:path')
-    const pkgPath = join(__dirname, '../../package.json')
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-    return pkg.version || '0.0.0'
-  } catch {
-    return '0.0.0'
+  if (typeof __VERSION__ === 'string' && __VERSION__) return __VERSION__
+  for (const relative of ['../../package.json', '../package.json']) {
+    try {
+      const pkg = JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'))
+      if (typeof pkg.version === 'string' && pkg.version) return pkg.version
+    } catch { /* source and bundled ESM use different relative roots */ }
   }
+  return '0.0.0'
 }

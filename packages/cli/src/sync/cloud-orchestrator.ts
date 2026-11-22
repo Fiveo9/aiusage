@@ -133,10 +133,14 @@ export class CloudSyncOrchestrator {
       // Step 2a records the verdicts again.
       let insertedCount = 0
       const claimed = new Map<string, Set<string>>()
+      const liveVersions = new Map<string, bigint>()
       const tick = nextSyncTick(this.db)
       for (const record of pullResult.records) {
         if (record.deviceInstanceId === this.options.deviceInstanceId) continue
         const owner = record.deviceInstanceId || ''
+        const key = JSON.stringify([owner, record.id])
+        const version = BigInt(record.updatedAt)
+        if (version > (liveVersions.get(key) ?? -1n)) liveVersions.set(key, version)
         if (!claimed.has(owner)) claimed.set(owner, new Set())
         claimed.get(owner)!.add(record.id)
       }
@@ -185,6 +189,13 @@ export class CloudSyncOrchestrator {
       // cloud never claimed is not touched.
       for (const tombstone of pullResult.tombstones) {
         if (!tombstone.id || !tombstone.device_instance_id || tombstone.device_instance_id === this.options.deviceInstanceId) continue
+        const liveVersion = liveVersions.get(JSON.stringify([tombstone.device_instance_id, tombstone.id]))
+        const rawVersion = tombstone.updated_at
+        const tombstoneVersion = typeof rawVersion === 'number' && Number.isSafeInteger(rawVersion) && rawVersion >= 0 ? BigInt(rawVersion)
+          : typeof rawVersion === 'string' && /^\d+$/.test(rawVersion) ? BigInt(rawVersion) : undefined
+        // A live version observed on another page must not be erased by an
+        // older (or unversioned) tombstone from the same namespace.
+        if (liveVersion !== undefined && (tombstoneVersion === undefined || tombstoneVersion < liveVersion)) continue
         const options = { owner: tombstone.device_instance_id, knownTargets: knownTargets ?? [this.target] }
         if (deleteSyncedRecord(this.db, this.target, tombstone.id, options)) prunedCount++
       }

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { t } from '$lib/i18n.js'
   import { fetchQuotas } from '$lib/api.js'
+  import { RefreshCw, AlertTriangle, XCircle, CircleDashed } from 'lucide-svelte'
 
   let data = null
   let error = null
@@ -37,7 +38,6 @@
   onMount(load)
 
   // Fallback: convert snake_case tier names to readable labels
-  // e.g. "seven_day_omelette" → "7d Omelette", "five_hour" → "5h"
   function formatUnknownTier(name) {
     return name
       .split('_')
@@ -56,12 +56,6 @@
   function toolLabel(tool) {
     const key = TOOL_LABEL_KEYS[tool]
     return key ? $t(key) : tool
-  }
-
-  function utilizationColor(pct) {
-    if (pct >= 90) return 'red'
-    if (pct >= 70) return 'orange'
-    return 'green'
   }
 
   function utilizationBarColor(pct) {
@@ -89,12 +83,6 @@
     return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
-  /** True if this quota card has any interesting data to show */
-  function hasContent(quota) {
-    return quota.credentialStatus !== 'not_found'
-  }
-
-  /** Quotas with credentials (to show), plus not_found ones for context */
   $: visibleQuotas = data?.quotas ?? []
   $: activeQuotas = visibleQuotas.filter(q => q.credentialStatus !== 'not_found')
   $: inactiveQuotas = visibleQuotas.filter(q => q.credentialStatus === 'not_found')
@@ -110,174 +98,147 @@
       <h1>{$t('quotas.title')}</h1>
       <p>{$t('quotas.desc')}</p>
     </div>
-    <button class="refresh-btn" on:click={load} disabled={loading}>
-      <span class="refresh-icon" class:spinning={loading}>↻</span>
-      {loading ? $t('quotas.refreshing') : $t('quotas.refresh')}
+    <button type="button" class="eng-btn" on:click={load} disabled={loading}>
+      <span class="refresh-icon" class:spinning={loading}>
+        <RefreshCw size={13} strokeWidth={1.9} />
+      </span>
+      <span>{loading ? $t('quotas.refreshing') : $t('quotas.refresh')}</span>
     </button>
   </div>
 </div>
 
 {#if loading && !data}
-  <div class="card state-msg">
-    <span class="loading-spin"></span>
-    <span>{$t('common.loading')}</span>
+  <div class="quota-grid">
+    {#each [1, 2] as _}
+      <div class="card quota-card">
+        <div class="skeleton skeleton-line" style="width: 40%;"></div>
+        <div class="skeleton" style="height: 10px; margin-top: 0.75rem;"></div>
+        <div class="skeleton" style="height: 10px;"></div>
+      </div>
+    {/each}
   </div>
 {:else if error}
   <div class="card state-msg error"><p>{error}</p></div>
 {:else if visibleQuotas.length === 0}
   <div class="card state-msg"><p>{$t('common.noData')}</p></div>
 {:else}
-  <!-- Active tools with credentials -->
-  {#if activeQuotas.length > 0}
-    <div class="quota-grid">
-      {#each activeQuotas as quota (quota.tool)}
-        <div class="quota-card card">
-          <div class="card-header">
-            <span class="tool-name">{toolLabel(quota.tool)}</span>
-            <span class="query-time mono">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt)}</span>
-          </div>
+  <div class:is-stale={loading}>
+    {#if activeQuotas.length > 0}
+      <div class="quota-grid">
+        {#each activeQuotas as quota (quota.tool)}
+          <div class="quota-card card">
+            <div class="card-header">
+              <span class="tool-name">{toolLabel(quota.tool)}</span>
+              <span class="query-time mono">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt)}</span>
+            </div>
 
-          {#if quota.credentialStatus === 'expired' && !quota.success}
-            <div class="status-msg status-warn">
-              <span class="status-icon">⚠</span>
-              <div>
-                <div class="status-title">{$t('quotas.expired')}</div>
-                <div class="status-hint">{$t('quotas.expiredHint')}</div>
-              </div>
-            </div>
-          {:else if quota.credentialStatus === 'parse_error'}
-            <div class="status-msg status-error">
-              <span class="status-icon">✕</span>
-              <div>
-                <div class="status-title">{$t('quotas.queryFailed')}</div>
-                {#if quota.credentialMessage}
-                  <div class="status-hint">{quota.credentialMessage}</div>
-                {/if}
-              </div>
-            </div>
-          {:else if !quota.success}
-            <div class="status-msg status-error">
-              <span class="status-icon">✕</span>
-              <div>
-                <div class="status-title">{$t('quotas.queryFailed')}</div>
-                {#if quota.error}
-                  <div class="status-hint">{quota.error}</div>
-                {/if}
-              </div>
-            </div>
-          {:else if quota.tiers.length === 0}
-            <div class="status-msg status-neutral">
-              <span class="status-icon">○</span>
-              <div class="status-title">{$t('quotas.noTiers')}</div>
-            </div>
-          {:else}
-            <div class="tiers">
-              {#each quota.tiers as tier (tier.name)}
-                {@const pct = Math.min(Math.round(tier.utilization), 100)}
-                {@const countdown = countdownStr(tier.resetsAt)}
-                <div class="tier-row">
-                  <div class="tier-label">
-                    <span class="tier-name">{tierLabel(tier.name)}</span>
-                    {#if countdown}
-                      <span class="tier-reset mono">↻ {countdown}</span>
-                    {/if}
-                  </div>
-                  <div class="tier-bar-wrap">
-                    <div class="tier-bar">
-                      <div
-                        class="tier-fill"
-                        style="width: {pct}%; background: {utilizationBarColor(tier.utilization)}"
-                      ></div>
-                    </div>
-                    <span class="tier-pct mono" style="color: {utilizationBarColor(tier.utilization)}">{pct}%</span>
-                  </div>
+            {#if quota.credentialStatus === 'expired' && !quota.success}
+              <div class="status-msg status-warn">
+                <span class="status-icon"><AlertTriangle size={15} strokeWidth={1.9} /></span>
+                <div>
+                  <div class="status-title">{$t('quotas.expired')}</div>
+                  <div class="status-hint">{$t('quotas.expiredHint')}</div>
                 </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  <!-- Inactive tools (no credentials) -->
-  {#if inactiveQuotas.length > 0}
-    <div class="section-title" style="margin-top: {activeQuotas.length > 0 ? '2rem' : '0'}">
-      {$t('common.noData')}
-    </div>
-    <div class="inactive-list">
-      {#each inactiveQuotas as quota (quota.tool)}
-        <div class="inactive-card card">
-          <span class="tool-name">{toolLabel(quota.tool)}</span>
-          <div class="inactive-hint">
-            <span class="hint-icon">○</span>
-            <span>{$t('quotas.noCredentials')} — {$t('quotas.noCredentialsHint')}</span>
+              </div>
+            {:else if quota.credentialStatus === 'parse_error'}
+              <div class="status-msg status-error">
+                <span class="status-icon"><XCircle size={15} strokeWidth={1.9} /></span>
+                <div>
+                  <div class="status-title">{$t('quotas.queryFailed')}</div>
+                  {#if quota.credentialMessage}
+                    <div class="status-hint">{quota.credentialMessage}</div>
+                  {/if}
+                </div>
+              </div>
+            {:else if !quota.success}
+              <div class="status-msg status-error">
+                <span class="status-icon"><XCircle size={15} strokeWidth={1.9} /></span>
+                <div>
+                  <div class="status-title">{$t('quotas.queryFailed')}</div>
+                  {#if quota.error}
+                    <div class="status-hint">{quota.error}</div>
+                  {/if}
+                </div>
+              </div>
+            {:else if quota.tiers.length === 0}
+              <div class="status-msg status-neutral">
+                <span class="status-icon"><CircleDashed size={15} strokeWidth={1.9} /></span>
+                <div class="status-title">{$t('quotas.noTiers')}</div>
+              </div>
+            {:else}
+              <div class="tiers">
+                {#each quota.tiers as tier (tier.name)}
+                  {@const pct = Math.min(Math.round(tier.utilization), 100)}
+                  {@const countdown = countdownStr(tier.resetsAt)}
+                  <div class="tier-row">
+                    <div class="tier-label">
+                      <span class="tier-name">{tierLabel(tier.name)}</span>
+                      {#if countdown}
+                        <span class="tier-reset mono">
+                          <RefreshCw size={10} strokeWidth={2} />
+                          <span>{countdown}</span>
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="tier-bar-wrap">
+                      <div class="tier-bar">
+                        <span class="tier-tick" style="left: 70%" aria-hidden="true"></span>
+                        <span class="tier-tick" style="left: 90%" aria-hidden="true"></span>
+                        <div
+                          class="tier-fill"
+                          style="width: {pct}%; background: {utilizationBarColor(tier.utilization)}"
+                        ></div>
+                      </div>
+                      <span class="tier-pct mono" style="color: {utilizationBarColor(tier.utilization)}">{pct}%</span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
+        {/each}
+      </div>
+    {/if}
+
+    {#if inactiveQuotas.length > 0}
+      <div class="section-title" style="margin-top: {activeQuotas.length > 0 ? '1.75rem' : '0'}">
+        {$t('common.noData')}
+      </div>
+      <div class="inactive-list">
+        {#each inactiveQuotas as quota (quota.tool)}
+          <div class="inactive-card card">
+            <span class="tool-name">{toolLabel(quota.tool)}</span>
+            <div class="inactive-hint">
+              <span class="hint-icon"><CircleDashed size={13} strokeWidth={1.85} /></span>
+              <span>{$t('quotas.noCredentials')} — {$t('quotas.noCredentialsHint')}</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
 {/if}
 
 <style>
-  .page-header-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
+  .refresh-icon {
+    display: inline-flex;
+    align-items: center;
   }
 
-  .refresh-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 1.1rem;
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: var(--shadow-sm);
-    transition: all 0.16s ease;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .refresh-btn:hover:not(:disabled) {
-    background: var(--hover);
-    border-color: var(--border-medium);
-    color: var(--accent);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-  }
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .refresh-icon {
-    font-size: 0.875rem;
-    display: inline-block;
-  }
   .refresh-icon.spinning {
     animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
   }
 
   .quota-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 1.25rem;
+    gap: 1rem;
   }
 
   .quota-card {
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
-    padding: 1.5rem;
+    gap: 1rem;
   }
 
   .card-header {
@@ -285,32 +246,33 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .tool-name {
-    font-size: 1rem;
-    font-weight: 700;
+    font-size: var(--text-base);
+    font-weight: 650;
     letter-spacing: -0.015em;
     color: var(--text);
   }
 
   .query-time {
-    font-size: 0.75rem;
+    font-size: var(--text-2xs);
     color: var(--text-muted);
     white-space: nowrap;
   }
 
-  /* Tiers */
   .tiers {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.875rem;
   }
 
   .tier-row {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
+    gap: 0.35rem;
   }
 
   .tier-label {
@@ -321,18 +283,21 @@
   }
 
   .tier-name {
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text-secondary);
   }
 
   .tier-reset {
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: var(--text-2xs);
     font-weight: 500;
     color: var(--text-muted);
     padding: 0.1rem 0.45rem;
     background: var(--raised);
-    border-radius: 999px;
+    border-radius: var(--radius-xs);
     border: 1px solid var(--border-subtle);
   }
 
@@ -343,51 +308,59 @@
   }
 
   .tier-bar {
+    position: relative;
     flex: 1;
-    height: 7px;
+    height: 6px;
     background: var(--raised);
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
     overflow: hidden;
   }
 
+  .tier-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-medium);
+    z-index: 2;
+    opacity: 0.7;
+  }
+
   .tier-fill {
+    position: relative;
+    z-index: 1;
     height: 100%;
     border-radius: inherit;
-    box-shadow: 0 0 6px currentColor;
-    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: width 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .tier-pct {
-    font-family: var(--font-numeric);
-    font-variant-numeric: tabular-nums;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    width: 3.25rem;
+    font-size: var(--text-xs);
+    font-weight: 650;
+    width: 3rem;
     text-align: right;
     flex-shrink: 0;
   }
 
-  /* Status messages */
   .status-msg {
     display: flex;
     align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.875rem 1rem;
+    gap: 0.625rem;
+    padding: 0.75rem 0.875rem;
     border-radius: var(--radius-sm);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
   }
 
   .status-warn {
     background: var(--amber-dim);
     color: var(--amber);
-    border: 1px solid var(--amber);
+    border: 1px solid color-mix(in oklch, var(--amber) 30%, transparent);
   }
 
   .status-error {
     background: var(--rose-dim);
     color: var(--rose);
-    border: 1px solid var(--rose);
+    border: 1px solid color-mix(in oklch, var(--rose) 30%, transparent);
   }
 
   .status-neutral {
@@ -397,60 +370,50 @@
   }
 
   .status-icon {
-    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
-    margin-top: 0.05rem;
+    margin-top: 0.1rem;
   }
 
   .status-title {
     font-weight: 600;
-    margin-bottom: 0.15rem;
+    margin-bottom: 0.125rem;
   }
 
   .status-hint {
-    font-size: 0.75rem;
+    font-size: var(--text-2xs);
     opacity: 0.85;
-    line-height: 1.4;
+    line-height: 1.45;
   }
 
-  /* Inactive list */
   .inactive-list {
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
+    gap: 0.5rem;
   }
 
   .inactive-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-    padding: 1rem 1.35rem;
-    opacity: 0.65;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.875rem 1.125rem;
+    opacity: 0.68;
   }
 
   .inactive-hint {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.75rem;
+    gap: 0.45rem;
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
   .hint-icon {
-    font-size: 0.75rem;
-  }
-
-  .loading-spin {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--border-medium);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-right: 0.5rem;
-    vertical-align: middle;
+    display: inline-flex;
+    align-items: center;
   }
 
   @media (max-width: 800px) {

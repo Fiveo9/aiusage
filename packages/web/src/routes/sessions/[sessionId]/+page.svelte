@@ -6,6 +6,7 @@
   import { fetchSessionDetail } from '$lib/api.js'
   import { sessionLabel } from '$lib/session-title.js'
   import { t } from '$lib/i18n.js'
+  import { ArrowLeft } from 'lucide-svelte'
 
   let data = null
   let error = null
@@ -34,7 +35,7 @@
 
   function formatGap(ms) {
     const s = Math.round(ms / 1000)
-    return `— ${s}s ${$t('sessions.detail.gap')} —`
+    return `${s}s ${$t('sessions.detail.gap')}`
   }
 
   function tokenPercent(part, total) {
@@ -63,7 +64,8 @@
 
 <div class="page-header activity-detail-header">
   <a class="activity-back-link" href={$page.url.searchParams.get('back')?.startsWith('/sessions?') ? $page.url.searchParams.get('back') : '/sessions'}>
-    ← {$t('sessions.detail.back')}
+    <ArrowLeft size={14} strokeWidth={1.9} />
+    <span>{$t('sessions.detail.back')}</span>
   </a>
   <h1>{data?.session ? sessionLabel(data.session, $t('sessions.unnamed')) : $t('sessions.detail.title')}</h1>
   {#if data?.session}<p class="numeric">{formatDateTime(data.session.firstTs)}</p>{/if}
@@ -72,29 +74,29 @@
 {#if loading}
   <div class="detail-header">
     <div class="identity card">
-      <div class="ph-line ph-w40"></div>
-      <div class="ph-line ph-w60"></div>
-      <div class="ph-line ph-w80"></div>
+      <div class="skeleton ph-line ph-w40"></div>
+      <div class="skeleton ph-line ph-w60"></div>
+      <div class="skeleton ph-line ph-w80"></div>
       <div class="id-footer" style="margin-top:auto; padding-top:0.75rem; border-top:1px solid var(--border-subtle);">
-        <div class="ph-line ph-w50"></div>
-        <div class="ph-line ph-w20"></div>
+        <div class="skeleton ph-line ph-w50"></div>
+        <div class="skeleton ph-line ph-w20"></div>
       </div>
     </div>
     <div class="metrics card">
       <div class="metrics-grid">
         {#each [1,2,3,4] as _}
           <div class="metric-cell">
-            <div class="ph-line ph-w60" style="height:0.5rem;margin-bottom:0.35rem"></div>
-            <div class="ph-line ph-w40" style="height:1rem"></div>
+            <div class="skeleton ph-line ph-w60" style="height:0.5rem;margin-bottom:0.35rem"></div>
+            <div class="skeleton ph-line ph-w40" style="height:1rem"></div>
           </div>
         {/each}
       </div>
       <div style="padding-top:0.75rem;border-top:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:0.4rem">
         {#each [1,2] as _}
           <div style="display:grid;grid-template-columns:5.5rem 1fr 4.5rem;gap:0.5rem;align-items:center">
-            <div class="ph-line ph-w60" style="height:0.5rem"></div>
-            <div class="ph-line" style="height:6px;border-radius:3px"></div>
-            <div class="ph-line ph-w50" style="height:0.5rem"></div>
+            <div class="skeleton ph-line ph-w60" style="height:0.5rem"></div>
+            <div class="skeleton ph-line" style="height:6px;border-radius:3px"></div>
+            <div class="skeleton ph-line ph-w50" style="height:0.5rem"></div>
           </div>
         {/each}
       </div>
@@ -104,12 +106,12 @@
     {#each [1,2,3] as _}
       <div class="record-card card">
         <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">
-          <div class="ph-line ph-w40"></div>
-          <div class="ph-line ph-w20"></div>
+          <div class="skeleton ph-line ph-w40"></div>
+          <div class="skeleton ph-line ph-w20"></div>
         </div>
         <div style="display:flex;gap:0.75rem">
-          <div class="ph-line ph-w20"></div>
-          <div class="ph-line ph-w20"></div>
+          <div class="skeleton ph-line ph-w20"></div>
+          <div class="skeleton ph-line ph-w20"></div>
         </div>
       </div>
     {/each}
@@ -274,51 +276,52 @@
 {/if}
 
 <style>
-  /* ── Header: two-column grid ──────────────────────────────── */
   .detail-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    gap: 1.25rem;
-    margin-bottom: 1.75rem;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
   }
 
-  /* Identity card */
   .identity {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 1.35rem 1.5rem;
+    gap: 0.65rem;
   }
+
   .id-row {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
   }
+
   .id-model {
     overflow-wrap: anywhere;
     min-width: 0;
-    font-size: 0.875rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-size: var(--text-sm);
+    font-weight: 650;
     color: var(--text);
   }
+
   .id-time {
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--text-secondary);
   }
+
   .id-path {
-    font-size: 0.75rem;
+    font-size: var(--text-2xs);
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     background: var(--raised);
-    padding: 0.35rem 0.6rem;
-    border-radius: var(--radius-sm);
+    padding: 0.3rem 0.55rem;
+    border-radius: var(--radius-xs);
     border: 1px solid var(--border-subtle);
   }
+
   .id-footer {
     display: flex;
     align-items: center;
@@ -326,133 +329,140 @@
     gap: 0.75rem;
     flex-wrap: wrap;
     margin-top: auto;
-    padding-top: 0.875rem;
+    padding-top: 0.75rem;
     border-top: 1px solid var(--border-subtle);
   }
+
   .id-session {
-    font-size: 0.75rem;
+    font-size: var(--text-2xs);
     overflow-wrap: anywhere;
     min-width: 0;
     color: var(--text-muted);
   }
+
   .id-duration {
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font-size: var(--text-xs);
+    font-weight: 650;
     color: var(--text);
   }
 
-  /* Metrics card */
   .metrics {
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    padding: 1.35rem 1.5rem;
+    gap: 0.875rem;
   }
+
   .metrics-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
   }
+
   .metric-cell {
     min-width: 0;
     overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
   }
+
   .metric-label {
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
-    font-family: var(--font-sans);
   }
+
   .metric-value {
-    font-size: 1.125rem;
-    font-weight: 700;
+    font-size: 1.0625rem;
+    font-weight: 650;
     letter-spacing: -0.02em;
     color: var(--text);
   }
 
-  /* Token breakdown bars */
   .token-breakdown {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    padding-top: 0.875rem;
+    gap: 0.375rem;
+    padding-top: 0.75rem;
     border-top: 1px solid var(--border-subtle);
   }
+
   .tb-row {
     display: grid;
     grid-template-columns: 5.5rem minmax(0, 1fr) 4.5rem;
     align-items: center;
     gap: 0.625rem;
   }
+
   .tb-label {
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
     text-align: right;
   }
+
   .tb-bar {
-    height: 6px;
+    height: 5px;
     background: var(--raised);
-    border-radius: 999px;
+    border-radius: 3px;
     overflow: hidden;
   }
+
   .tb-fill {
     display: block;
     height: 100%;
     border-radius: inherit;
     min-width: 2px;
   }
+
   .tb-input { background: var(--chart-input); }
   .tb-output { background: var(--chart-output); }
   .tb-cache-read { background: var(--chart-cache-read); }
   .tb-cache-write { background: var(--chart-cache-write); }
   .tb-thinking { background: var(--chart-thinking); }
+
   .tb-value {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
     text-align: right;
   }
 
-  /* ── Timeline ─────────────────────────────────────────────── */
+  /* ── Timeline with Subtle Vertical Rail ── */
   .timeline {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.625rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--border-subtle);
   }
 
   .gap-divider {
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 0.25rem 0;
+    justify-content: flex-start;
+    padding: 0.15rem 0;
   }
+
   .gap-text {
     font-family: var(--mono);
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--text-2xs);
+    font-weight: 500;
     color: var(--text-muted);
     background: var(--raised);
     border: 1px solid var(--border-subtle);
-    padding: 0.2rem 0.75rem;
-    border-radius: 999px;
+    padding: 0.125rem 0.55rem;
+    border-radius: var(--radius-xs);
   }
 
-  /* Record card */
   .record-card {
-    padding: 1.125rem 1.35rem;
-    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .record-card:hover {
-    border-color: var(--border-medium);
+    padding: 0.95rem 1.125rem;
   }
 
   .record-header {
@@ -460,121 +470,126 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.45rem;
   }
+
   .record-meta-left {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.55rem;
     flex-wrap: wrap;
     min-width: 0;
   }
+
   .record-index {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     color: var(--accent);
     min-width: 1.5rem;
   }
+
   .record-relts {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
+
   .record-model {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     overflow-wrap: anywhere;
     color: var(--text);
   }
+
   .record-cost {
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font-size: var(--text-sm);
+    font-weight: 650;
   }
 
-  /* Record token dots */
   .record-tokens {
     display: flex;
     align-items: center;
     gap: 0.875rem;
     flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-    padding: 0.35rem 0.6rem;
+    padding: 0.35rem 0.55rem;
     background: var(--raised);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
   }
+
   .rt-item {
     display: flex;
     align-items: center;
     gap: 0.35rem;
   }
+
   .rt-dot {
     width: 6px;
     height: 6px;
-    border-radius: 50%;
+    border-radius: 2px;
     flex-shrink: 0;
   }
+
   .rt-input { background: var(--chart-input); }
   .rt-output { background: var(--chart-output); }
   .rt-cache-read { background: var(--chart-cache-read); }
   .rt-cache-write { background: var(--chart-cache-write); }
   .rt-thinking { background: var(--chart-thinking); }
+
   .rt-val {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
   }
+
   .rt-total {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     margin-left: auto;
     font-weight: 600;
   }
 
-  /* Tool calls */
   .tool-calls {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
     border-top: 1px solid var(--border-subtle);
-    padding-top: 0.625rem;
-    margin-top: 0.375rem;
+    padding-top: 0.55rem;
+    margin-top: 0.5rem;
   }
+
   .tool-call {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.4rem 0.625rem;
-    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.55rem;
+    border-radius: var(--radius-xs);
     background: var(--raised);
-    border: 1px solid transparent;
   }
+
   .tool-call:hover {
-    border-color: var(--border-subtle);
     background: var(--hover);
   }
+
   .tc-index {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     min-width: 1.5rem;
     color: var(--text-muted);
   }
+
   .tc-name {
     flex: 1;
     min-width: 0;
     overflow-wrap: anywhere;
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
   }
+
   .tc-offset {
-    font-size: 0.6875rem;
+    font-size: var(--text-2xs);
     flex-shrink: 0;
   }
 
-  .muted { color: var(--text-muted); }
-  .accent { color: var(--accent); }
-
-  /* ── Loading placeholders ──────────────────────────────────── */
   .ph-line {
     height: 0.75rem;
-    background: var(--raised);
     border-radius: 4px;
   }
   .ph-w20 { width: 20%; }
@@ -583,26 +598,13 @@
   .ph-w60 { width: 60%; }
   .ph-w80 { width: 80%; }
 
-  /* ── Responsive ───────────────────────────────────────────── */
   @media (max-width: 800px) {
-    .detail-header {
-      grid-template-columns: 1fr;
-    }
-    .metrics-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .tb-row {
-      grid-template-columns: 4.5rem minmax(0, 1fr) 3.5rem;
-    }
-    .record-header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-    .record-tokens {
-      gap: 0.5rem;
-    }
-    .tool-call {
-      flex-wrap: wrap;
-    }
+    .detail-header { grid-template-columns: 1fr; }
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .tb-row { grid-template-columns: 4.5rem minmax(0, 1fr) 3.5rem; }
+    .record-header { flex-direction: column; align-items: flex-start; }
+    .record-tokens { gap: 0.5rem; }
+    .tool-call { flex-wrap: wrap; }
+    .timeline { padding-left: 0.625rem; }
   }
 </style>

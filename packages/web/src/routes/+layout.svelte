@@ -1,4 +1,6 @@
 <script>
+  import '$lib/styles/tokens.css'
+  import '$lib/styles/primitives.css'
   import { page } from '$app/stores'
   import { onDestroy, onMount } from 'svelte'
   import { lang, toggleLang, t } from '$lib/i18n.js'
@@ -6,12 +8,13 @@
   import { fetchConfig, fetchAuthStatus, login } from '$lib/api.js'
   import { displayCurrency, exchangeRate } from '$lib/stores.js'
   import { getAuthShellState } from '$lib/auth-shell.js'
+  import CommandPalette from '$lib/components/ui/CommandPalette.svelte'
   import {
     House, LayoutDashboard, Coins, DollarSign, Box,
     MessageSquare, FolderKanban, Wrench,
     Gauge, Tag, Settings,
     Sun, Moon, MonitorCog,
-    Languages, PanelLeftClose, PanelLeftOpen, ExternalLink
+    Search, PanelLeftClose, PanelLeftOpen, ExternalLink, X
   } from 'lucide-svelte'
 
   const NAV_GROUPS = [
@@ -52,6 +55,7 @@
 
   let collapsed = false
   let mobileOpen = false
+  let cmdPalette = null
 
   const themeIcons = { system: MonitorCog, dark: Moon, light: Sun }
 
@@ -139,7 +143,6 @@
   onMount(() => {
     initTheme()
     loadAuthStatus()
-    // Initialize currency stores from config
     fetchConfig().then(applyConfig).catch(() => {})
     if (typeof window !== 'undefined') {
       collapsed = localStorage.getItem(SIDEBAR_KEY) === 'true'
@@ -165,7 +168,7 @@
     <section class="auth-card">
       <a href="/" class="brand auth-brand">
         <div class="brand-logo-wrap">
-          <svg class="brand-logo" width="22" height="22" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <svg class="brand-logo" width="18" height="18" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <rect width="64" height="64" rx="16" fill="currentColor"/>
             <rect x="12" y="38" width="10" height="16" rx="3" fill="white"/>
             <rect x="27" y="26" width="10" height="28" rx="3" fill="white"/>
@@ -199,7 +202,7 @@
   <main class="auth-page">
     <section class="auth-card">
       <div class="auth-loading">
-        <span class="auth-spin"></span>
+        <span class="loading-spin"></span>
         <span>{$t('auth.checking')}</span>
       </div>
     </section>
@@ -209,11 +212,15 @@
      mounted a second time when the auth check settles on `/` (issue #109). -->
 <div class:app={!shouldShowPublicHome} class:public-shell={shouldShowPublicHome} class:collapsed>
 
+  {#if !shouldShowPublicHome}
+    <CommandPalette bind:this={cmdPalette} />
+  {/if}
+
   {#if shouldShowPublicHome}
     <header class="public-header">
       <button class="public-unlock" type="button" on:click={openUnlock} aria-label={$t('auth.unlockDashboard')}>
         <div class="brand-logo-wrap">
-          <svg class="brand-logo" width="18" height="18" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <svg class="brand-logo" width="16" height="16" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <rect width="64" height="64" rx="16" fill="currentColor"/>
             <rect x="12" y="38" width="10" height="16" rx="3" fill="white"/>
             <rect x="27" y="26" width="10" height="28" rx="3" fill="white"/>
@@ -232,10 +239,12 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="auth-modal-backdrop" on:click={closeUnlock}></div>
     <section class="auth-card auth-modal" role="dialog" aria-modal="true" aria-labelledby="unlock-title">
-      <button class="auth-close" type="button" on:click={closeUnlock} aria-label="Close">×</button>
+      <button class="auth-close" type="button" on:click={closeUnlock} aria-label="Close">
+        <X size={14} strokeWidth={2} />
+      </button>
       <div class="brand auth-brand">
         <div class="brand-logo-wrap">
-          <svg class="brand-logo" width="22" height="22" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <svg class="brand-logo" width="18" height="18" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <rect width="64" height="64" rx="16" fill="currentColor"/>
             <rect x="12" y="38" width="10" height="16" rx="3" fill="white"/>
             <rect x="27" y="26" width="10" height="28" rx="3" fill="white"/>
@@ -270,7 +279,7 @@
 
       <a href="/" class="brand">
         <div class="brand-logo-wrap">
-          <svg class="brand-logo" width="20" height="20" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <svg class="brand-logo" width="16" height="16" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <rect width="64" height="64" rx="16" fill="currentColor"/>
             <rect x="12" y="38" width="10" height="16" rx="3" fill="white"/>
             <rect x="27" y="26" width="10" height="28" rx="3" fill="white"/>
@@ -278,12 +287,25 @@
           </svg>
         </div>
         {#if !collapsed}
-          <div class="brand-text-wrap">
-            <span class="brand-name">AIUsage</span>
-            <span class="brand-tag">PRO</span>
-          </div>
+          <span class="brand-name">AIUsage</span>
         {/if}
       </a>
+
+      <div class="sidebar-search-wrap">
+        <button
+          type="button"
+          class="cmd-trigger"
+          on:click={() => cmdPalette?.openPalette()}
+          title={$t('cmd.search') + ' (⌘K)'}
+          aria-label={$t('cmd.search')}
+        >
+          <Search size={13} strokeWidth={1.9} />
+          {#if !collapsed}
+            <span class="cmd-trigger-text">{$t('cmd.search')}</span>
+            <kbd class="cmd-kbd">⌘K</kbd>
+          {/if}
+        </button>
+      </div>
 
       <nav class="sidebar-nav">
         {#each NAV_GROUPS as group}
@@ -298,12 +320,9 @@
                 class:active={$page.url.pathname === item.path}
                 title={collapsed ? $t(item.key) : undefined}
               >
-                <span class="nav-icon"><svelte:component this={item.icon} size={16} strokeWidth={1.8} /></span>
+                <span class="nav-icon"><svelte:component this={item.icon} size={15} strokeWidth={1.85} /></span>
                 {#if !collapsed}
                   <span class="nav-label">{$t(item.key)}</span>
-                {/if}
-                {#if $page.url.pathname === item.path}
-                  <span class="nav-active-pill" aria-hidden="true"></span>
                 {/if}
               </a>
             {/each}
@@ -312,33 +331,21 @@
       </nav>
 
       <div class="sidebar-footer">
-        <button class="ctrl-btn" on:click={cycleTheme} title={$t(`theme.${$userPref}`)}>
-          <span class="ctrl-icon"><svelte:component this={themeIcons[$userPref]} size={14} strokeWidth={1.75} /></span>
-          {#if !collapsed}
-            <span class="ctrl-label">{$t(`theme.${$userPref}`)}</span>
-          {/if}
+        <button class="ctrl-btn" on:click={cycleTheme} title={$t(`theme.${$userPref}`)} aria-label={$t(`theme.${$userPref}`)}>
+          <svelte:component this={themeIcons[$userPref]} size={14} strokeWidth={1.8} />
         </button>
 
-        <button class="ctrl-btn" on:click={toggleLang} title={$lang === 'en' ? '中文' : 'EN'}>
-          <span class="ctrl-icon lang-icon">{$lang === 'en' ? '中' : 'EN'}</span>
-          {#if !collapsed}
-            <span class="ctrl-label">{$lang === 'en' ? '中文' : 'English'}</span>
-          {/if}
+        <button class="ctrl-btn" on:click={toggleLang} title={$lang === 'en' ? '中文' : 'English'} aria-label="Toggle language">
+          <span class="lang-icon">{$lang === 'en' ? '中' : 'EN'}</span>
         </button>
 
-        <button class="ctrl-btn collapse-btn" on:click={toggleSidebar} title={$t(collapsed ? 'nav.expand' : 'nav.collapse')}>
-          <span class="ctrl-icon">{#if collapsed}<PanelLeftOpen size={14} strokeWidth={1.75} />{:else}<PanelLeftClose size={14} strokeWidth={1.75} />{/if}</span>
-          {#if !collapsed}
-            <span class="ctrl-label">{$t('nav.collapse')}</span>
-          {/if}
-        </button>
-
-        <a class="ctrl-btn" href="https://aiusage.jtanx.com" target="_blank" rel="noopener" title="aiusage.jtanx.com">
-          <span class="ctrl-icon"><ExternalLink size={14} strokeWidth={1.75} /></span>
-          {#if !collapsed}
-            <span class="ctrl-label">{$lang === 'en' ? 'Website' : '官网'}</span>
-          {/if}
+        <a class="ctrl-btn" href="https://aiusage.jtanx.com" target="_blank" rel="noopener" title="aiusage.jtanx.com" aria-label="Website">
+          <ExternalLink size={14} strokeWidth={1.8} />
         </a>
+
+        <button class="ctrl-btn" on:click={toggleSidebar} title={$t(collapsed ? 'nav.expand' : 'nav.collapse')} aria-label={$t(collapsed ? 'nav.expand' : 'nav.collapse')}>
+          {#if collapsed}<PanelLeftOpen size={14} strokeWidth={1.8} />{:else}<PanelLeftClose size={14} strokeWidth={1.8} />{/if}
+        </button>
       </div>
 
     </div>
@@ -354,7 +361,7 @@
       </button>
       <a href="/" class="brand brand-mobile">
         <div class="brand-logo-wrap">
-          <svg class="brand-logo" width="18" height="18" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <svg class="brand-logo" width="15" height="15" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <rect width="64" height="64" rx="16" fill="currentColor"/>
             <rect x="12" y="38" width="10" height="16" rx="3" fill="white"/>
             <rect x="27" y="26" width="10" height="28" rx="3" fill="white"/>
@@ -364,11 +371,14 @@
         <span class="brand-name">AIUsage</span>
       </a>
       <div class="mobile-controls">
+        <button class="ctrl-btn" on:click={() => cmdPalette?.openPalette()} aria-label={$t('cmd.search')}>
+          <Search size={14} strokeWidth={1.8} />
+        </button>
         <button class="ctrl-btn" on:click={cycleTheme} aria-label="Toggle theme">
-          <span class="ctrl-icon"><svelte:component this={themeIcons[$userPref]} size={14} strokeWidth={1.75} /></span>
+          <svelte:component this={themeIcons[$userPref]} size={14} strokeWidth={1.8} />
         </button>
         <button class="ctrl-btn" on:click={toggleLang} aria-label="Toggle language">
-          <span class="ctrl-icon lang-icon">{$lang === 'en' ? '中' : 'EN'}</span>
+          <span class="lang-icon">{$lang === 'en' ? '中' : 'EN'}</span>
         </button>
       </div>
     </header>
@@ -386,201 +396,22 @@
 {/if}
 
 <style>
-  /* ── Reset & Base ───────────────────────────────────────────────────────── */
-  :global(*) {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-  :global(html) {
-    font-size: 112.5%;
-    color-scheme: light;
-  }
-  :global(html[data-theme="dark"]) {
-    color-scheme: dark;
-  }
-  :global(body) {
-    font-family: var(--font-sans);
-    font-size: var(--text-base);
-    line-height: 1.6;
-    font-variant-numeric: tabular-nums;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  :global(button), :global(input), :global(select), :global(textarea) {
-    font: inherit;
-    letter-spacing: normal;
-  }
-  :global(:focus-visible) {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  :global(::selection) {
-    background: var(--accent-dim);
-    color: var(--accent-strong);
-  }
-
-  /* ── Custom Modern Scrollbar ───────────────────────────────────────────── */
-  :global(::-webkit-scrollbar) {
-    width: 6px;
-    height: 6px;
-  }
-  :global(::-webkit-scrollbar-track) {
-    background: transparent;
-  }
-  :global(::-webkit-scrollbar-thumb) {
-    background: var(--border-medium);
-    border-radius: 999px;
-  }
-  :global(::-webkit-scrollbar-thumb:hover) {
-    background: var(--text-muted);
-  }
-
-  /* ── Light Theme (Vercel/Linear Clean Crisp Style) ──────────────────────── */
-  :global(:root) {
-    --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-    --font-numeric: var(--font-sans);
-    --text-xs: 0.75rem;
-    --text-sm: 0.8125rem;
-    --text-base: 0.875rem;
-    --text-title: 1.5rem;
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --control-height: 2.125rem;
-
-    --bg: oklch(0.985 0.003 240);
-    --surface: oklch(1 0 0);
-    --surface-elevated: oklch(1 0 0);
-    --raised: oklch(0.968 0.004 240);
-    --hover: oklch(0.948 0.006 240);
-    --sidebar-bg: oklch(0.99 0.002 240 / 0.88);
-    
-    --border-subtle: oklch(0.915 0.006 240);
-    --border-medium: oklch(0.84 0.01 240);
-    --border-highlight: oklch(0 0 0 / 0.06);
-
-    --text: oklch(0.18 0.015 250);
-    --text-secondary: oklch(0.42 0.015 250);
-    --text-muted: oklch(0.55 0.012 250);
-
-    --accent: oklch(0.58 0.17 160);
-    --accent-strong: oklch(0.50 0.18 160);
-    --accent-dim: oklch(0.58 0.17 160 / 0.12);
-    --accent-hover: oklch(0.53 0.18 160);
-
-    --green: oklch(0.62 0.17 150);
-    --green-dim: oklch(0.62 0.17 150 / 0.12);
-    --blue: oklch(0.56 0.15 250);
-    --blue-dim: oklch(0.56 0.15 250 / 0.12);
-    --purple: oklch(0.58 0.16 300);
-    --purple-dim: oklch(0.58 0.16 300 / 0.12);
-    --rose: oklch(0.58 0.20 25);
-    --rose-dim: oklch(0.58 0.20 25 / 0.12);
-    --amber: oklch(0.70 0.17 75);
-    --amber-dim: oklch(0.70 0.17 75 / 0.12);
-
-    --badge-override-bg: oklch(0.58 0.17 160 / 0.12);
-    --badge-override-fg: oklch(0.58 0.17 160);
-    --badge-matched-bg: oklch(0.62 0.17 150 / 0.12);
-    --badge-matched-fg: oklch(0.62 0.17 150);
-    --badge-noprice-bg: oklch(0.58 0.20 25 / 0.10);
-    --badge-noprice-fg: oklch(0.58 0.20 25);
-
-    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.04), 0 0 0 1px oklch(0 0 0 / 0.02);
-    --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.05), 0 2px 6px -1px oklch(0 0 0 / 0.03), 0 0 0 1px oklch(0 0 0 / 0.03);
-    --shadow-lg: 0 12px 28px -4px oklch(0 0 0 / 0.08), 0 4px 12px -2px oklch(0 0 0 / 0.04), 0 0 0 1px oklch(0 0 0 / 0.04);
-    --glow-card: 0 0 0 1px var(--border-subtle);
-
-    --overlay: oklch(0 0 0 / 0.35);
-    --mono: 'JetBrains Mono', 'SF Mono', Consolas, ui-monospace, monospace;
-    --sidebar-width: 224px;
-    --sidebar-collapsed: 68px;
-
-    --chart-input: oklch(0.64 0.15 160);
-    --chart-output: oklch(0.58 0.16 250);
-    --chart-cache-read: oklch(0.70 0.12 70);
-    --chart-cache-write: oklch(0.65 0.14 310);
-    --chart-thinking: oklch(0.62 0.18 25);
-    --chart-total: oklch(0.58 0.17 160);
-  }
-
-  /* ── Dark Theme (Linear / Vercel Deep Metallic Aesthetic) ───────────────── */
-  :global(:root[data-theme="dark"]) {
-    --bg: oklch(0.13 0.006 250);
-    --surface: oklch(0.165 0.008 250);
-    --surface-elevated: oklch(0.19 0.010 250);
-    --raised: oklch(0.20 0.010 250);
-    --hover: oklch(0.235 0.012 250);
-    --sidebar-bg: oklch(0.145 0.007 250 / 0.85);
-
-    --border-subtle: oklch(1 0 0 / 0.07);
-    --border-medium: oklch(1 0 0 / 0.13);
-    --border-highlight: oklch(1 0 0 / 0.12);
-
-    --text: oklch(0.96 0.005 250);
-    --text-secondary: oklch(0.76 0.01 250);
-    --text-muted: oklch(0.56 0.01 250);
-
-    --accent: oklch(0.74 0.18 160);
-    --accent-strong: oklch(0.82 0.16 160);
-    --accent-dim: oklch(0.74 0.18 160 / 0.15);
-    --accent-hover: oklch(0.80 0.17 160);
-
-    --green: oklch(0.75 0.16 150);
-    --green-dim: oklch(0.75 0.16 150 / 0.16);
-    --blue: oklch(0.74 0.15 250);
-    --blue-dim: oklch(0.74 0.15 250 / 0.16);
-    --purple: oklch(0.75 0.15 300);
-    --purple-dim: oklch(0.75 0.15 300 / 0.16);
-    --rose: oklch(0.73 0.19 25);
-    --rose-dim: oklch(0.73 0.19 25 / 0.16);
-    --amber: oklch(0.78 0.16 75);
-    --amber-dim: oklch(0.78 0.16 75 / 0.16);
-
-    --badge-override-bg: oklch(0.74 0.18 160 / 0.18);
-    --badge-override-fg: oklch(0.74 0.18 160);
-    --badge-matched-bg: oklch(0.75 0.16 150 / 0.18);
-    --badge-matched-fg: oklch(0.75 0.16 150);
-    --badge-noprice-bg: oklch(0.73 0.19 25 / 0.16);
-    --badge-noprice-fg: oklch(0.73 0.19 25);
-
-    --shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.45), inset 0 1px 0 0 oklch(1 0 0 / 0.05);
-    --shadow-md: 0 4px 16px 0 oklch(0 0 0 / 0.55), inset 0 1px 0 0 oklch(1 0 0 / 0.08);
-    --shadow-lg: 0 16px 36px 0 oklch(0 0 0 / 0.70), inset 0 1px 0 0 oklch(1 0 0 / 0.10);
-    --glow-card: 0 0 0 1px oklch(1 0 0 / 0.07);
-
-    --overlay: oklch(0 0 0 / 0.65);
-
-    --chart-input: oklch(0.75 0.15 160);
-    --chart-output: oklch(0.73 0.15 250);
-    --chart-cache-read: oklch(0.78 0.10 70);
-    --chart-cache-write: oklch(0.75 0.12 310);
-    --chart-thinking: oklch(0.74 0.18 25);
-    --chart-total: oklch(0.74 0.18 160);
-  }
-
   /* ── App Shell Layout ─────────────────────────────────────────────────── */
   .app {
     display: flex;
     min-height: 100vh;
-    background: radial-gradient(circle at 18% 0%, var(--accent-dim) 0%, transparent 40%), var(--bg);
-    background-attachment: fixed;
+    background: var(--bg);
   }
 
   .public-shell {
     min-height: 100vh;
     padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem;
-    background: radial-gradient(circle at 50% 0%, var(--accent-dim) 0%, transparent 50%), var(--bg);
+    background: var(--bg);
   }
 
   .public-header {
-    max-width: 1200px;
-    margin: 0 auto 1.5rem;
+    max-width: 1180px;
+    margin: 0 auto 1.25rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -589,34 +420,31 @@
 
   .public-page-content {
     min-height: calc(100vh - 5.5rem);
-    max-width: 1200px;
+    max-width: 1180px;
     margin: 0 auto;
   }
 
   .public-unlock {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
-    height: 2.5rem;
-    padding: 0 1.1rem;
+    gap: 0.5rem;
+    height: 2.25rem;
+    padding: 0 0.875rem 0 0.5rem;
     border: 1px solid var(--border-subtle);
     border-radius: 999px;
     background: var(--surface);
     color: var(--text);
     box-shadow: var(--shadow-sm);
     font: inherit;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
     font-weight: 600;
     cursor: pointer;
-    backdrop-filter: blur(12px);
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: border-color 0.15s ease, color 0.15s ease;
   }
 
   .public-unlock:hover {
-    border-color: var(--accent);
+    border-color: var(--border-medium);
     color: var(--accent);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
   }
 
   /* Note: layout-style.test.ts strictly checks width, min-width, and padding */
@@ -635,16 +463,14 @@
     box-shadow: var(--shadow-sm);
     font: inherit;
     font-size: 0.8125rem;
-    font-weight: 700;
+    font-weight: 650;
     cursor: pointer;
-    backdrop-filter: blur(12px);
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: border-color 0.15s ease, color 0.15s ease;
   }
 
   .public-lang:hover {
     border-color: var(--border-medium);
-    color: var(--accent);
-    transform: translateY(-1px);
+    color: var(--text);
   }
 
   /* ── Auth Modal / Page ─────────────────────────────────────────────────── */
@@ -653,8 +479,8 @@
     inset: 0;
     z-index: 500;
     background: var(--overlay);
-    backdrop-filter: blur(12px);
-    animation: fadeIn 0.15s ease-out;
+    backdrop-filter: blur(6px);
+    animation: fadeIn 0.12s ease-out;
   }
 
   .auth-modal {
@@ -663,11 +489,11 @@
     left: 50%;
     z-index: 510;
     transform: translate(-50%, -50%);
-    animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: modalPop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes modalPop {
-    from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+    from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); }
     to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   }
 
@@ -675,18 +501,16 @@
     position: absolute;
     top: 1rem;
     right: 1rem;
-    width: 2rem;
-    height: 2rem;
-    border-radius: 999px;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border-subtle);
     background: var(--raised);
     color: var(--text-secondary);
-    font-size: 1.25rem;
-    line-height: 1;
     display: grid;
     place-items: center;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   }
 
   .auth-close:hover {
@@ -700,30 +524,28 @@
     display: grid;
     place-items: center;
     padding: 1.5rem;
-    background:
-      radial-gradient(circle at 50% 20%, var(--accent-dim) 0%, transparent 45%),
-      var(--bg);
+    background: var(--bg);
   }
 
   .auth-card {
-    width: min(100%, 400px);
+    width: min(100%, 380px);
     background: var(--surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    padding: 2rem 1.75rem;
-    backdrop-filter: blur(16px);
+    padding: 1.75rem;
   }
 
   .auth-brand {
     width: fit-content;
     padding: 0;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
+    border-bottom: none;
   }
 
   .auth-card h1 {
-    font-size: 1.35rem;
-    font-weight: 700;
+    font-size: 1.25rem;
+    font-weight: 650;
     letter-spacing: -0.02em;
     line-height: 1.3;
     margin-bottom: 0.375rem;
@@ -732,79 +554,75 @@
 
   .auth-card p {
     color: var(--text-secondary);
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
     line-height: 1.5;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
   }
 
   .auth-card form {
     display: grid;
-    gap: 0.875rem;
+    gap: 0.75rem;
   }
 
   .auth-card input {
     width: 100%;
-    height: 2.75rem;
+    height: 2.375rem;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-medium);
     background: var(--raised);
     color: var(--text);
-    padding: 0 1rem;
+    padding: 0 0.75rem;
     font: inherit;
-    font-size: 0.9375rem;
+    font-size: var(--text-base);
     outline: none;
-    transition: all 0.15s ease;
+    transition: border-color 0.14s ease, background-color 0.14s ease;
   }
 
   .auth-card input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-dim);
     background: var(--surface);
   }
 
-  .auth-card button {
-    height: 2.75rem;
+  .auth-card form button {
+    height: 2.375rem;
     border: 0;
     border-radius: var(--radius-sm);
     background: var(--accent);
     color: #ffffff;
     font: inherit;
     font-weight: 600;
-    font-size: 0.9375rem;
+    font-size: var(--text-sm);
     cursor: pointer;
-    box-shadow: 0 2px 8px -1px var(--accent-dim);
-    transition: all 0.15s ease;
+    transition: background-color 0.14s ease;
   }
 
-  .auth-card button:hover:not(:disabled) {
+  .auth-card form button:hover:not(:disabled) {
     background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px 0 var(--accent-dim);
   }
 
-  .auth-card button:disabled {
-    opacity: 0.55;
+  .auth-card form button:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
   .auth-error {
-    margin-top: 1rem;
-    padding: 0.625rem 0.875rem;
+    margin-top: 0.875rem;
+    padding: 0.5rem 0.75rem;
     border-radius: var(--radius-sm);
     background: var(--rose-dim);
     color: var(--rose);
-    font-size: 0.875rem;
-    border: 1px solid var(--rose-dim);
+    font-size: var(--text-xs);
+    border: 1px solid color-mix(in oklch, var(--rose) 30%, transparent);
   }
 
   .auth-home {
     display: inline-flex;
     align-items: center;
-    margin-top: 1.25rem;
+    margin-top: 1rem;
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: 0.875rem;
-    transition: color 0.15s;
+    font-size: var(--text-xs);
+    transition: color 0.14s;
   }
 
   .auth-home:hover {
@@ -815,38 +633,24 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.75rem;
+    gap: 0.625rem;
     color: var(--text-secondary);
-    padding: 1.5rem 0;
+    font-size: var(--text-sm);
+    padding: 1.25rem 0;
   }
 
-  .auth-spin {
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--border-medium);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  /* ── Modern Linear Sidebar ─────────────────────────────────────────────── */
+  /* ── Minimalist Linear Sidebar ─────────────────────────────────────────── */
   .sidebar {
     width: var(--sidebar-width);
     height: 100vh;
     height: 100dvh;
     background: var(--sidebar-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
     border-right: 1px solid var(--border-subtle);
     position: fixed;
     top: 0;
     left: 0;
     z-index: 200;
-    transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -864,66 +668,100 @@
     overflow: hidden;
   }
 
-  /* Brand Logo & Name */
   .brand {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 1.125rem 1rem;
+    gap: 0.625rem;
+    padding: 0.95rem 0.875rem 0.75rem;
     text-decoration: none;
     flex-shrink: 0;
     overflow: hidden;
     white-space: nowrap;
-    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .app.collapsed .brand {
+    justify-content: center;
+    padding-inline: 0.5rem;
   }
 
   .brand-logo-wrap {
-    width: 32px;
-    height: 32px;
-    border-radius: 9px;
-    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: var(--accent);
     color: #ffffff;
     display: grid;
     place-items: center;
-    box-shadow: 0 2px 8px -1px var(--accent-dim);
     flex-shrink: 0;
   }
 
   .brand-logo {
     display: block;
     color: currentColor;
-    width: 20px;
-    height: 20px;
-  }
-
-  .brand-text-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
   }
 
   .brand-name {
     font-family: var(--font-sans);
-    font-weight: 700;
-    font-size: 1.0625rem;
+    font-weight: 650;
+    font-size: 0.9375rem;
     letter-spacing: -0.02em;
     color: var(--text);
   }
 
-  .brand-tag {
-    font-size: 0.625rem;
-    font-weight: 700;
-    padding: 0.125rem 0.375rem;
-    border-radius: 4px;
-    background: var(--accent-dim);
-    color: var(--accent-strong);
-    letter-spacing: 0.04em;
-  }
-
   .brand-mobile {
     padding: 0;
-    border-bottom: none;
+  }
+
+  /* Command Palette Trigger */
+  .sidebar-search-wrap {
+    padding: 0 0.625rem 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .cmd-trigger {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    height: 1.875rem;
+    padding: 0 0.55rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+  }
+
+  .app.collapsed .cmd-trigger {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .cmd-trigger:hover {
+    border-color: var(--border-medium);
+    color: var(--text);
+    background: var(--raised);
+  }
+
+  .cmd-trigger-text {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cmd-kbd {
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+    line-height: 1.3;
   }
 
   /* Navigation */
@@ -931,23 +769,23 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0.75rem 0;
+    padding: 0.25rem 0 0.75rem;
     scrollbar-width: thin;
     scrollbar-color: var(--border-subtle) transparent;
   }
 
   .nav-group {
-    margin-bottom: 0.875rem;
+    margin-bottom: 0.75rem;
   }
 
   .group-label {
     font-family: var(--font-sans);
-    font-size: 0.6875rem;
-    font-weight: 700;
+    font-size: 0.625rem;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.07em;
     color: var(--text-muted);
-    padding: 0.375rem 1.125rem 0.25rem;
+    padding: 0.375rem 0.875rem 0.2rem;
     white-space: nowrap;
     overflow: hidden;
   }
@@ -955,18 +793,24 @@
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    margin: 0.125rem 0.5rem;
+    gap: 0.625rem;
+    padding: 0.38rem 0.625rem;
+    margin: 1px 0.5rem;
     text-decoration: none;
     color: var(--text-secondary);
     font-size: var(--text-sm);
     font-weight: 500;
-    border-radius: var(--radius-sm);
-    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+    border-radius: var(--radius-xs);
+    transition: background-color 0.12s ease, color 0.12s ease;
     position: relative;
     white-space: nowrap;
     overflow: hidden;
+  }
+
+  .app.collapsed .nav-item {
+    justify-content: center;
+    padding: 0.42rem 0;
+    margin: 2px 0.5rem;
   }
 
   .nav-item:hover {
@@ -975,65 +819,80 @@
   }
 
   .nav-item.active {
-    color: var(--accent);
-    background: var(--accent-dim);
+    color: var(--text);
+    background: var(--raised);
     font-weight: 600;
   }
 
-  .nav-active-pill {
+  .nav-item.active::before {
+    content: '';
     position: absolute;
-    right: 0.5rem;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
+    left: 0;
+    top: 5px;
+    bottom: 5px;
+    width: 2.5px;
+    border-radius: 2px;
     background: var(--accent);
-    box-shadow: 0 0 6px var(--accent);
+  }
+
+  .app.collapsed .nav-item.active::before {
+    display: none;
+  }
+
+  .nav-item.active .nav-icon {
+    color: var(--accent);
   }
 
   .nav-icon {
-    width: 20px;
+    width: 18px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    color: var(--text-muted);
+    transition: color 0.12s ease;
+  }
+
+  .nav-item:hover .nav-icon {
+    color: var(--text-secondary);
   }
 
   .nav-label {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  /* Sidebar footer controls */
+  /* Compact Single-Row Footer */
   .sidebar-footer {
-    padding: 0.625rem 0.375rem;
+    padding: 0.5rem;
     border-top: 1px solid var(--border-subtle);
     flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    background: var(--surface);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+    background: var(--sidebar-bg);
+  }
+
+  .app.collapsed .sidebar-footer {
+    grid-template-columns: 1fr;
   }
 
   .ctrl-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.625rem;
-    padding: 0.375rem 0.75rem;
-    margin: 0 0.25rem;
+    justify-content: center;
+    height: 1.875rem;
     background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
     color: var(--text-muted);
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-xs);
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.16s ease;
-    white-space: nowrap;
-    overflow: hidden;
-    width: calc(100% - 0.5rem);
-    text-align: left;
     text-decoration: none;
-    min-height: var(--control-height);
+    transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   }
 
   .ctrl-btn:hover {
@@ -1041,39 +900,18 @@
     background: var(--hover);
   }
 
-  .ctrl-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .ctrl-icon {
-    width: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
   .lang-icon {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 700;
+    line-height: 1;
   }
-
-  .ctrl-label {
-    font-family: var(--font-sans);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    flex: 1;
-  }
-
-  .collapse-btn { margin-top: 0.125rem; }
 
   /* ── Main Area ────────────────────────────────────────────────────────── */
   .main-area {
     flex: 1;
     min-width: 0;
     margin-left: var(--sidebar-width);
-    transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: margin-left 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -1087,11 +925,9 @@
   .mobile-header {
     display: none;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
+    gap: 0.625rem;
+    padding: 0.625rem 1rem;
     background: var(--sidebar-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border-subtle);
     position: sticky;
     top: 0;
@@ -1111,11 +947,10 @@
 
   .hamburger span {
     display: block;
-    width: 18px;
+    width: 17px;
     height: 1.5px;
     background: var(--text-secondary);
     border-radius: 1px;
-    transition: background 0.15s;
   }
 
   .hamburger:hover span {
@@ -1125,198 +960,37 @@
   .mobile-controls {
     margin-left: auto;
     display: flex;
+    align-items: center;
     gap: 0.25rem;
   }
 
   .mobile-controls .ctrl-btn {
-    padding: 0.25rem 0.5rem;
-    width: auto;
-    margin: 0;
+    width: 1.875rem;
   }
 
   /* Page Content Container */
   .page-content {
     flex: 1;
     min-width: 0;
-    padding: 2.25rem clamp(1.25rem, 3.5vw, 3.25rem);
+    padding: 1.75rem clamp(1rem, 3vw, 2.5rem) 2.5rem;
     width: 100%;
-    max-width: 1600px;
+    max-width: 1520px;
     margin-inline: auto;
-    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: fadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(4px); }
+    from { opacity: 0; transform: translateY(3px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  /* Mobile Backdrop */
   .mobile-backdrop {
     display: none;
     position: fixed;
     inset: 0;
     background: var(--overlay);
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(4px);
     z-index: 190;
-  }
-
-  /* ── Universal Component Tokens ────────────────────────────────────────── */
-  :global(.card) {
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 1.35rem 1.5rem;
-    box-shadow: var(--shadow-sm);
-    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
-    overflow: hidden;
-    position: relative;
-  }
-
-  :global(.card:hover) {
-    border-color: var(--border-medium);
-  }
-
-  :global(.section-title) {
-    font-family: var(--font-sans);
-    font-size: var(--text-sm);
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    line-height: 1.4;
-    color: var(--text);
-    margin-bottom: 1.125rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  :global(.page-header) {
-    margin-bottom: 1.75rem;
-  }
-
-  :global(.page-header h1) {
-    font-size: 1.625rem;
-    font-weight: 700;
-    letter-spacing: -0.025em;
-    color: var(--text);
-    line-height: 1.25;
-    margin-bottom: 0.375rem;
-  }
-
-  :global(.page-header p) {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    line-height: 1.5;
-  }
-
-  :global(.page-header-row) {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  :global(.filter-bar) {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-    padding: 0.625rem 0.875rem;
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
-    backdrop-filter: blur(12px);
-  }
-
-  :global(table) {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-
-  :global(th) {
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    text-align: left;
-    padding: 0.75rem 1rem;
-    background: var(--raised);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  :global(th:first-child) {
-    border-top-left-radius: var(--radius-sm);
-  }
-  :global(th:last-child) {
-    border-top-right-radius: var(--radius-sm);
-  }
-
-  :global(td) {
-    padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--border-subtle);
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-    transition: color 0.15s, background-color 0.15s;
-  }
-
-  :global(tbody tr) {
-    transition: background-color 0.15s ease;
-  }
-
-  :global(tbody tr:hover) {
-    background: var(--hover);
-  }
-
-  :global(tbody tr:last-child td) {
-    border-bottom: none;
-  }
-
-  :global(.mono) { font-family: var(--mono); }
-  :global(.numeric) {
-    font-family: var(--font-numeric);
-    font-variant-numeric: tabular-nums;
-  }
-  :global(code), :global(pre), :global(kbd) { font-family: var(--mono); }
-  :global(.accent) { color: var(--accent); }
-  :global(.green) { color: var(--green); }
-  :global(.blue) { color: var(--blue); }
-  :global(.purple) { color: var(--purple); }
-
-  :global(.state-msg) {
-    text-align: center;
-    padding: 4.5rem 2rem;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    background: var(--surface);
-    border: 1px dashed var(--border-subtle);
-    border-radius: var(--radius-md);
-  }
-
-  :global(.state-msg h2) {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 0.5rem;
-  }
-
-  :global(.state-msg.error) {
-    color: var(--rose);
-    border-color: var(--rose-dim);
-    background: var(--rose-dim);
-  }
-
-  /* ── Reduced Motion ───────────────────────────────────────────────────── */
-  @media (prefers-reduced-motion: reduce) {
-    :global(*) {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-    }
   }
 
   /* ── Mobile Overrides ─────────────────────────────────────────────────── */
@@ -1339,7 +1013,7 @@
       display: block;
     }
     .page-content {
-      padding: 1.25rem 1rem;
+      padding: 1.125rem 0.875rem 2rem;
     }
     .public-shell {
       padding: 1rem 0.875rem 1.5rem;
@@ -1349,7 +1023,7 @@
     }
     .public-unlock {
       height: 2.25rem;
-      padding: 0 0.875rem;
+      padding: 0 0.875rem 0 0.45rem;
       font-size: 0.8125rem;
     }
     .public-lang {

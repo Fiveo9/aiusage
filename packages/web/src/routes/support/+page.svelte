@@ -1,5 +1,6 @@
 <script>
   import { t } from '$lib/i18n.js'
+  import { ArrowUpRight, X } from 'lucide-svelte'
 
   let qrOpen = false
 
@@ -23,7 +24,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <svelte:head>
-  <title>{$t('support.title')} · AIUsage</title>
+  <title>{$t('support.title')} — AIUsage</title>
 </svelte:head>
 
 <div class="page-header">
@@ -32,10 +33,10 @@
 </div>
 
 <div class="support-layout">
-  <section class="support-section wechat-section">
+  <section class="card support-section wechat-section">
     <h2>{$t('support.personal')}</h2>
     <div class="wechat-block">
-      <button class="qr-trigger" on:click={openQr} aria-label={$t('support.qrExpand')}>
+      <button type="button" class="qr-trigger" on:click={openQr} aria-label={$t('support.qrExpand')}>
         <img src="/wechat-support-qr.jpg" alt="WeChat QR" width="180" height="180" />
       </button>
       <div>
@@ -46,27 +47,36 @@
     <a class="support-row" href="mailto:hi@jtanx.com">
       <span>
         <strong>{$t('support.email')}</strong>
-        <small>hi@jtanx.com</small>
+        <small class="mono">hi@jtanx.com</small>
       </span>
-      <span class="open-label">{$t('support.open')} ↗</span>
+      <span class="open-label">
+        <span>{$t('support.open')}</span>
+        <ArrowUpRight size={13} strokeWidth={2} />
+      </span>
     </a>
   </section>
 
-  <section class="support-section">
+  <section class="card support-section">
     <h2>{$t('support.community')}</h2>
     <a class="support-row" href="https://discord.gg/freMjPK478" target="_blank" rel="noopener">
       <span>
         <strong>{$t('support.discord')}</strong>
         <small>{$t('support.discordHint')}</small>
       </span>
-      <span class="open-label">{$t('support.open')} ↗</span>
+      <span class="open-label">
+        <span>{$t('support.open')}</span>
+        <ArrowUpRight size={13} strokeWidth={2} />
+      </span>
     </a>
     <a class="support-row" href="https://t.me/+DWaxtoPB7CY2Yjc1" target="_blank" rel="noopener">
       <span>
         <strong>{$t('support.telegram')}</strong>
         <small>{$t('support.telegramHint')}</small>
       </span>
-      <span class="open-label">{$t('support.open')} ↗</span>
+      <span class="open-label">
+        <span>{$t('support.open')}</span>
+        <ArrowUpRight size={13} strokeWidth={2} />
+      </span>
     </a>
   </section>
 </div>
@@ -77,7 +87,9 @@
     <div class="qr-card">
       <img src="/wechat-support-qr.jpg" alt="WeChat QR" width="280" height="280" />
       <p class="qr-card-hint">{$t('support.qrScanHint')}</p>
-      <button class="qr-close" on:click={closeQr} aria-label="Close">&times;</button>
+      <button type="button" class="qr-close" on:click={closeQr} aria-label="Close">
+        <X size={15} strokeWidth={2} />
+      </button>
     </div>
   </div>
 {/if}
@@ -85,38 +97,31 @@
 <style>
   .support-layout {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-    gap: 1.25rem;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 1rem;
   }
 
   .support-section {
-    background: var(--surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: 12px;
-    padding: 1.35rem 1.5rem;
-    box-shadow: var(--shadow-sm);
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.75rem;
   }
 
   .support-section h2 {
-    font-family: var(--font-sans);
-    font-size: 0.95rem;
-    font-weight: 650;
-    letter-spacing: -0.01em;
+    font-size: var(--text-sm);
+    font-weight: 600;
     color: var(--text);
     margin: 0 0 0.25rem;
   }
 
   .wechat-block {
     display: flex;
-    gap: 1.25rem;
+    gap: 1rem;
     align-items: center;
-    padding: 1rem;
+    padding: 0.875rem;
     background: var(--raised);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
   }
 
   .qr-trigger {
@@ -125,35 +130,34 @@
     border: 1px solid var(--border-subtle);
     background: var(--surface);
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.14s ease;
   }
 
   .qr-trigger:hover {
-    transform: scale(1.02);
-    box-shadow: var(--shadow-md);
+    border-color: var(--border-medium);
   }
 
   .qr-trigger img {
     display: block;
-    width: 140px;
-    height: 140px;
+    width: 128px;
+    height: 128px;
     object-fit: contain;
     background: var(--surface);
   }
 
   .wechat-block h3 {
-    font-size: 0.9rem;
-    font-weight: 650;
+    font-size: var(--text-sm);
+    font-weight: 600;
     color: var(--text);
-    margin: 0 0 0.35rem;
+    margin: 0 0 0.25rem;
   }
 
   .wechat-block p {
     color: var(--text-secondary);
-    font-size: 0.8rem;
-    line-height: 1.55;
+    font-size: var(--text-xs);
+    line-height: 1.5;
     margin: 0;
   }
 
@@ -162,45 +166,45 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.85rem 1rem;
+    padding: 0.75rem 0.9rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     background: var(--surface);
     text-decoration: none;
     color: var(--text);
-    transition: all 0.15s ease;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
   }
 
   .support-row:hover {
     background: var(--hover);
-    border-color: var(--border);
-    transform: translateX(2px);
+    border-color: var(--border-medium);
   }
 
   .support-row strong {
     display: block;
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--text);
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.15rem;
   }
 
   .support-row small {
     display: block;
     color: var(--text-muted);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     line-height: 1.4;
   }
 
   .open-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
     flex-shrink: 0;
     color: var(--accent);
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
   }
 
-  /* ── QR Lightbox Modal ──────────────────────────────────── */
   .qr-overlay {
     position: fixed;
     inset: 0;
@@ -208,23 +212,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: oklch(0 0 0 / 0.5);
-    backdrop-filter: blur(12px);
-    animation: fadeIn 0.15s ease;
+    background: var(--overlay);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.12s ease;
   }
 
   .qr-card {
     position: relative;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 2rem;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 1rem;
+    gap: 0.875rem;
     box-shadow: var(--shadow-lg);
-    animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: popIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes fadeIn {
@@ -233,7 +237,7 @@
   }
 
   @keyframes popIn {
-    from { opacity: 0; transform: scale(0.95); }
+    from { opacity: 0; transform: scale(0.97); }
     to { opacity: 1; transform: scale(1); }
   }
 
@@ -242,12 +246,12 @@
     width: 260px;
     height: 260px;
     object-fit: contain;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border-subtle);
   }
 
   .qr-card-hint {
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
     color: var(--text-secondary);
     text-align: center;
     margin: 0;
@@ -257,32 +261,29 @@
     position: absolute;
     top: 0.75rem;
     right: 0.75rem;
-    width: 32px;
-    height: 32px;
-    border-radius: 9999px;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-xs);
     background: var(--raised);
     border: 1px solid var(--border-subtle);
-    font-size: 1.25rem;
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    line-height: 1;
-    transition: all 0.15s ease;
+    transition: background-color 0.12s ease, color 0.12s ease;
   }
 
   .qr-close:hover {
     color: var(--text);
     background: var(--hover);
-    border-color: var(--border);
+    border-color: var(--border-medium);
   }
 
   @media (max-width: 640px) {
     .support-layout {
       grid-template-columns: 1fr;
     }
-
     .wechat-block {
       flex-direction: column;
       align-items: flex-start;

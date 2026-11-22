@@ -5,12 +5,20 @@ import { nanoid } from 'nanoid'
 import { sha256, generateUserCode } from '$lib/server/crypto/hmac.js'
 import { env } from '$env/dynamic/private'
 import { getConfigValue, CFG } from '$lib/server/config.js'
+import { consumeAuthRateLimit } from '$lib/server/auth/request-rate-limit.js'
 
-export const POST: RequestHandler = async ({ request }) => {
-  const body = await request.json()
-  const { device_name, cli_version, device_challenge } = body
-
-  if (!device_name || !cli_version || !device_challenge) {
+export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+  const limit = await consumeAuthRateLimit('device_auth_start', getClientAddress(), 10, 60)
+  if (!limit.allowed) return json({ error: 'Too many device authorization requests', error_code: 'rate_limit_ip' }, {
+    status: 429, headers: { 'Retry-After': String(limit.retryAfter) },
+  })
+  const body = await request.json().catch(() => null)
+  const device_name = body?.device_name
+  const cli_version = body?.cli_version
+  const device_challenge = body?.device_challenge
+  if (typeof device_name !== 'string' || !device_name.trim() || device_name.length > 128
+    || typeof cli_version !== 'string' || !cli_version.trim() || cli_version.length > 256
+    || typeof device_challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(device_challenge)) {
     return json({ error: 'Missing required fields' }, { status: 400 })
   }
 
@@ -24,7 +32,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
   await sql`
     INSERT INTO device_auth_requests (id, device_challenge, user_code, verification_url, device_name, cli_version, status, expires_at)
-    VALUES (${id}, ${device_challenge}, ${userCode}, ${verificationUrl}, ${device_name}, ${cli_version}, 'pending', ${expiresAt})
+    VALUES (${id}, ${device_challenge}, ${userCode}, ${verificationUrl}, ${device_name.trim()}, ${cli_version.trim()}, 'pending', ${expiresAt})
   `
 
   return json({

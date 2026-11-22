@@ -3,6 +3,8 @@ import { createHash, createHmac } from 'node:crypto'
 
 const db = vi.hoisted(() => ({
   revoked: false,
+  banned: false,
+  absent: false,
   replay: false,
   sql: vi.fn(),
 }))
@@ -20,14 +22,16 @@ import { verifyDeviceRequest } from '../../src/lib/server/auth/device-request.js
 
 beforeEach(() => {
   db.revoked = false
+  db.banned = false
+  db.absent = false
   db.replay = false
   db.sql.mockReset().mockImplementation(async (strings: TemplateStringsArray) => {
     const query = strings.join('?')
-    if (query.includes('FROM user_devices')) return [{
+    if (query.includes('FROM user_devices')) return db.absent ? [] : [{
       id: 'device', user_id: 'user', secret_encrypted: 'fixture',
-      status: db.revoked ? 'revoked' : 'active', user_status: 'active',
+      status: db.revoked ? 'revoked' : 'active', user_status: db.banned ? 'banned' : 'active',
     }]
-    if (query.includes('SELECT nonce')) return db.replay ? [{ nonce: 'nonce' }] : []
+    if (query.includes('INSERT INTO upload_nonces')) return db.replay ? [] : [{ nonce: 'nonce' }]
     return []
   })
 })
@@ -79,5 +83,18 @@ describe('shared cloud-sync device authentication', () => {
   it('rejects a reused nonce', async () => {
     db.replay = true
     await expect(verifyDeviceRequest(signedRequest('/api/cli/sync/pull', 'GET', ''), '')).resolves.toHaveProperty('error_code', 'nonce_reused')
+  })
+
+  it('rejects an equal-character-length multibyte signature without throwing', async () => {
+    const request = signedRequest('/api/cli/sync/pull', 'GET', '')
+    request.headers.set('X-AIUsage-Signature', 'é'.repeat(76))
+    await expect(verifyDeviceRequest(request, '')).resolves.toMatchObject({ valid: false, error_code: 'invalid_signature' })
+  })
+
+  it.each(['revoked', 'banned', 'absent'] as const)('does not reveal %s device state before signature verification', async state => {
+    db[state] = true
+    const request = signedRequest('/api/cli/sync/pull', 'GET', '')
+    request.headers.set('X-AIUsage-Signature', 'invalid')
+    await expect(verifyDeviceRequest(request, '')).resolves.toMatchObject({ valid: false, error_code: 'invalid_signature' })
   })
 })

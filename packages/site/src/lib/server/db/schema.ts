@@ -611,5 +611,19 @@ const migrations = [
       )`
       await tx`CREATE INDEX idx_oauth_states_expiry ON oauth_states(expires_at)`
     }
+  },
+  {
+    version: 20,
+    name: 'authentication_request_rate_limits',
+    up: async (tx: postgres.TransactionSql) => {
+      await tx`CREATE TABLE auth_rate_limits (
+        scope TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        window_start TIMESTAMPTZ NOT NULL,
+        attempts INTEGER NOT NULL CHECK (attempts >= 0),
+        PRIMARY KEY (scope, key_hash)
+      )`
+      await tx`CREATE INDEX idx_auth_rate_limits_window_start ON auth_rate_limits(window_start)`
+    }
   }
 ]

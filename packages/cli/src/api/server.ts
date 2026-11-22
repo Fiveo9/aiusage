@@ -38,7 +38,7 @@ import { insertChangedRecords, LOCAL_RECORDS_WHERE, recordIdsForReread } from '.
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
 import { getPricingRegistrySummary, getUserAliasBindings, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias, syncPricingFromLitellm } from '../pricing-registry.js'
 import type { DetectedTool } from '../discovery.js'
-import { BodyTooLargeError, readJsonBody } from './request-body.js'
+import { BodyTooLargeError, readJsonBody, readBodyBuffer } from './request-body.js'
 
 
 function getManualImportMetadata(db: Database.Database): Record<string, { lastImportedAt: number }> {
@@ -224,12 +224,6 @@ function databaseBusy(res: http.ServerResponse): void {
   }, 503)
 }
 
-async function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  return Buffer.concat(chunks)
-}
-
 function multipartBoundary(contentType: string | string[] | undefined): string | null {
   const value = Array.isArray(contentType) ? contentType[0] : contentType
   if (!value) return null
@@ -239,10 +233,16 @@ function multipartBoundary(contentType: string | string[] | undefined): string |
 }
 
 async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename: string; data: Buffer } | null> {
+  const maxFileBytes = 64 * 1024 * 1024
+  const maxBodyBytes = maxFileBytes + 64 * 1024
+  if (Number(req.headers['content-length']) > maxBodyBytes) {
+    req.pause()
+    throw new BodyTooLargeError()
+  }
   const boundary = multipartBoundary(req.headers['content-type'])
   if (!boundary) return null
 
-  const body = await readBodyBuffer(req)
+  const body = await readBodyBuffer(req, maxBodyBytes)
   const marker = Buffer.from(`--${boundary}`)
   let position = body.indexOf(marker)
   while (position !== -1) {
@@ -257,7 +257,11 @@ async function readMultipartFile(req: http.IncomingMessage): Promise<{ filename:
     const dataStart = headerEnd + 4
     const nextBoundary = body.indexOf(Buffer.from(`\r\n--${boundary}`), dataStart)
     if (nextBoundary === -1) return null
-    if (filenameMatch) return { filename: path.basename(filenameMatch[1]), data: body.subarray(dataStart, nextBoundary) }
+    if (filenameMatch) {
+      const data = body.subarray(dataStart, nextBoundary)
+      if (data.length > maxFileBytes) throw new BodyTooLargeError()
+      return { filename: path.basename(filenameMatch[1]), data }
+    }
     position = body.indexOf(marker, nextBoundary)
   }
   return null
@@ -635,6 +639,23 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
     return { accepted: true, status: currentPricingRecalcStatus() }
   }
 
+  const loginAttempts = new Map<string, number[]>()
+  function loginRetryAfter(req: http.IncomingMessage): number {
+    const now = Date.now()
+    const cutoff = now - 60_000
+    for (const [key, attempts] of loginAttempts) {
+      const recent = attempts.filter(time => time > cutoff)
+      if (recent.length) loginAttempts.set(key, recent)
+      else loginAttempts.delete(key)
+    }
+    const key = req.socket.remoteAddress || 'unknown'
+    const attempts = loginAttempts.get(key) || []
+    if (attempts.length >= 10) return Math.max(1, Math.ceil((attempts[0] + 60_000 - now) / 1000))
+    if (!loginAttempts.has(key) && loginAttempts.size >= 1024) return 60
+    attempts.push(now)
+    loginAttempts.set(key, attempts)
+    return 0
+  }
   const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('X-Content-Type-Options', 'nosniff')
@@ -661,6 +682,18 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
     if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       try {
         const body = await readJsonBody(req, 16 * 1024)
+        if (body.password !== undefined && typeof body.password !== 'string') {
+          json(res, { error: { code: 'INVALID_PARAM', message: 'password must be a string' } }, 400)
+          return
+        }
+        if (dashboardPassword) {
+          const retryAfter = loginRetryAfter(req)
+          if (retryAfter) {
+            res.setHeader('Retry-After', String(retryAfter))
+            json(res, { error: { code: 'RATE_LIMITED', message: 'Too many login attempts' } }, 429)
+            return
+          }
+        }
         if (!verifyPassword(dashboardPassword, typeof body.password === 'string' ? body.password : null)) {
           json(res, { error: { code: 'UNAUTHORIZED', message: 'Invalid password' } }, 401)
           return
@@ -1440,12 +1473,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         }
         // PUT: set price override
         if (req.method === 'PUT') {
-          let body = ''
-          for await (const chunk of req) body += chunk
           let data: Record<string, unknown>
           try {
-            data = JSON.parse(body)
-          } catch {
+            data = await readJsonBody(req)
+          } catch (error) {
+            if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
             json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
             return
           }
@@ -1751,16 +1783,13 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       // Only configured state for a sync target is exposed, never keys or values.
       if (url.pathname.startsWith('/api/github/') && req.method === 'POST') {
         try {
-          let body = ''
-          for await (const chunk of req) {
-            body += chunk
-            if (body.length > 4096) throw new Error('Body too large')
-          }
+          const body = await readJsonBody(req, 4096)
           const action = url.pathname.slice('/api/github/'.length)
-          const result = await githubDeviceAction(action, JSON.parse(body || '{}'))
+          const result = await githubDeviceAction(action, body)
           if (action === 'connect' && result.ok) options?.onConfigUpdated?.()
           json(res, result)
         } catch (error) {
+          if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
           json(res, { error: { code: 'GITHUB_AUTH_FAILED', message: safeGitHubError(error) } }, 400)
         }
         return
@@ -1801,12 +1830,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         }
 
         if (req.method === 'PUT') {
-          let body = ''
-          for await (const chunk of req) body += chunk
           let update: Record<string, unknown>
           try {
-            update = JSON.parse(body) as Record<string, unknown>
-          } catch {
+            update = await readJsonBody(req)
+          } catch (error) {
+            if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
             json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
             return
           }
@@ -2080,6 +2108,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       // ── 404 ───────────────────────────────────────────────────────
       json(res, { error: { code: 'NOT_FOUND', message: 'Endpoint not found' } }, 404)
     } catch (error) {
+      if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
       console.error('API error:', error)
       json(res, { error: { code: 'INTERNAL', message: 'Internal server error' } }, 500)
     }

@@ -4,6 +4,7 @@ import type http from 'node:http'
 export const AUTH_COOKIE_NAME = 'aiusage_dashboard_auth'
 const AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 const AUTH_COOKIE_MAX_AGE_MS = AUTH_COOKIE_MAX_AGE_SECONDS * 1000
+const COMPARISON_KEY = randomBytes(32)
 
 export function getDashboardPassword(): string | null {
   const password = process.env.AIUSAGE_DASHBOARD_PASSWORD?.trim()
@@ -78,9 +79,8 @@ function parseCookies(cookieHeader: string): Map<string, string> {
 }
 
 function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a)
-  const right = Buffer.from(b)
-  if (left.length !== right.length) return false
+  const left = createHmac('sha256', COMPARISON_KEY).update(a).digest()
+  const right = createHmac('sha256', COMPARISON_KEY).update(b).digest()
   return timingSafeEqual(left, right)
 }
 

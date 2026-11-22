@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 import {
   checkPasswordResetRateLimit,
   createPasswordResetToken,
@@ -9,7 +10,7 @@ import {
 } from '$lib/server/auth/email-verification.js'
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
-  const body = await request.json()
+  const body = await readLimitedJson(request, AUTH_BODY_LIMIT)
   const email = String(body.email || '').trim().toLowerCase()
 
   if (!email) {

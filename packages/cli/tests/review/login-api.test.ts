@@ -32,13 +32,13 @@ afterEach(async () => {
   db.close()
 })
 
-function call(path: string, chunks: string[] = [], headers: Record<string, string> = {}) {
-  return new Promise<{ status: number; cookie?: string; body: string }>((resolve, reject) => {
+function call(path: string, chunks: string[] = [], headers: Record<string, string> = {}, method = chunks.length ? 'POST' : 'GET') {
+  return new Promise<{ status: number; cookie?: string; body: string; retryAfter?: string }>((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, path,
-      method: chunks.length ? 'POST' : 'GET', headers }, res => {
+      method, headers }, res => {
       let body = ''
       res.on('data', chunk => { body += chunk })
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, cookie: res.headers['set-cookie']?.[0], body }))
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, cookie: res.headers['set-cookie']?.[0], body, retryAfter: res.headers['retry-after'] }))
     })
     req.on('error', reject)
     for (const chunk of chunks) req.write(chunk)
@@ -71,4 +71,38 @@ it('accepts a newly issued session and rejects an eight-day-old session', async 
   const oldStatus = await call('/api/auth/status', [], { Cookie: expired })
   expect(JSON.parse(oldStatus.body).authenticated).toBe(false)
   expect((await call('/api/config', [], { Cookie: expired })).status).toBe(401)
+})
+
+it.each(['/api/pricing', '/api/config'])('rejects non-object JSON at %s', async path => {
+  const cookie = buildAuthCookie(fixture.value).split(';')[0]
+  expect((await call(path, ['null'], { Cookie: cookie }, 'PUT')).status).toBe(400)
+})
+
+it.each(['/api/pricing', '/api/config'])('rejects oversized UTF-8 bodies at %s', async path => {
+  const cookie = buildAuthCookie(fixture.value).split(';')[0]
+  const payload = JSON.stringify({ ignored: 'x'.repeat(1024 * 1024) })
+  expect((await call(path, [payload], { Cookie: cookie }, 'PUT')).status).toBe(413)
+})
+
+it('uses bytes and returns 413 at GitHub action endpoints', async () => {
+  const cookie = buildAuthCookie(fixture.value).split(';')[0]
+  expect((await call('/api/github/unknown', [JSON.stringify({ ignored: '中'.repeat(2000) })], { Cookie: cookie })).status).toBe(413)
+})
+
+it('rejects a malformed password type at login', async () => {
+  expect((await call('/api/auth/login', [JSON.stringify({ password: ['invalid'] })])).status).toBe(400)
+})
+
+it('limits repeated login attempts and returns Retry-After', async () => {
+  for (let i = 0; i < 10; i++) expect((await call('/api/auth/login', [JSON.stringify({ password: 'synthetic-wrong' })])).status).toBe(401)
+  const result = await call('/api/auth/login', [JSON.stringify({ password: 'synthetic-wrong' })])
+  expect(result.status).toBe(429)
+  expect(Number(result.retryAfter)).toBeGreaterThan(0)
+})
+
+it('prechecks oversized Kelivo multipart upload before reading its declared body', async () => {
+  const cookie = buildAuthCookie(fixture.value).split(';')[0]
+  const result = await call('/api/import/kelivo', ['small'], { Cookie: cookie,
+    'Content-Type': 'multipart/form-data; boundary=synthetic', 'Content-Length': '100000000' })
+  expect(result.status).toBe(413)
 })

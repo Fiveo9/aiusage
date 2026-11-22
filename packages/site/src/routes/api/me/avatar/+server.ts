@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit'
+import { isHttpError, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
 import { requireUser } from '$lib/server/auth/session.js'
@@ -6,8 +6,25 @@ import { uploadFile, deleteFile, extractKeyFromUrl } from '$lib/server/storage/r
 import { getConfigValue, CFG } from '$lib/server/config.js'
 import sharp from 'sharp'
 import { nanoid } from 'nanoid'
+import { readLimitedBuffer } from '$lib/server/request-body.js'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
+function matchesImageType(buffer: Buffer, type: string): boolean {
+  if (type === 'image/png') return buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  if (type === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255
+  if (type === 'image/gif') return ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))
+  if (type === 'image/webp') return buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  return false
+}
+
+export async function _processAvatarImage(buffer: Buffer, type: string, size: number, quality: number): Promise<Buffer> {
+  if (!matchesImageType(buffer, type)) throw new Error('Invalid image signature')
+  return sharp(buffer, { limitInputPixels: 16_000_000, animated: false })
+    .resize(size, size, { fit: 'cover', position: 'centre' })
+    .webp({ quality })
+    .toBuffer()
+}
 
 export const POST: RequestHandler = async (event) => {
   const user = await requireUser(event)
@@ -21,7 +38,14 @@ export const POST: RequestHandler = async (event) => {
     return json({ error: 'Expected multipart/form-data' }, { status: 400 })
   }
 
-  const formData = await event.request.formData()
+  let formData: FormData
+  try {
+    const body = await readLimitedBuffer(event.request, maxSize + 64 * 1024)
+    formData = await new Request(event.request, { body: new Uint8Array(body) }).formData()
+  } catch (error) {
+    if (isHttpError(error) && error.status === 413) return json({ error: 'Payload too large' }, { status: 413 })
+    return json({ error: 'Invalid multipart upload' }, { status: 400 })
+  }
   const file = formData.get('avatar')
 
   if (!file || !(file instanceof File)) {
@@ -30,7 +54,7 @@ export const POST: RequestHandler = async (event) => {
 
   if (file.size > maxSize) {
     const maxMB = Math.round(maxSize / 1024 / 1024)
-    return json({ error: `File too large (max ${maxMB}MB)` }, { status: 400 })
+    return json({ error: `File too large (max ${maxMB}MB)` }, { status: 413 })
   }
 
   if (!ALLOWED_TYPES.includes(file.type)) {
@@ -47,10 +71,7 @@ export const POST: RequestHandler = async (event) => {
   // Resize and compress to WebP
   let processed: Buffer
   try {
-    processed = await sharp(buffer)
-      .resize(avatarSize, avatarSize, { fit: 'cover', position: 'centre' })
-      .webp({ quality: avatarQuality })
-      .toBuffer()
+    processed = await _processAvatarImage(buffer, file.type, avatarSize, avatarQuality)
   } catch (err) {
     console.error('Avatar image processing failed:', err)
     return json({ error: 'Failed to process image. The file may be corrupted or in an unsupported format.' }, { status: 400 })

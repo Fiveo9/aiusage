@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit'
+import { isHttpError, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import type postgres from 'postgres'
 import { sql } from '$lib/server/db/pool.js'
@@ -6,6 +6,7 @@ import { verifyDeviceRequest } from '$lib/server/auth/device-request.js'
 import { getConfigValue, CFG } from '$lib/server/config.js'
 import { checkCloudSyncAccess } from '$lib/server/cloud/star-check.js'
 import { nanoid } from 'nanoid'
+import { readLimitedText, parseJsonObject } from '$lib/server/request-body.js'
 
 /** A record of a push that was not stored, and why. */
 export interface RejectedRecord {
@@ -68,14 +69,17 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ error: 'Content-Type must be application/json', error_code: 'invalid_content_type' }, { status: 415 })
   }
 
-  const bodyText = await request.text()
-  if (bodyText.length > bodyMaxSize) {
-    return json({ error: 'Payload too large', error_code: 'payload_too_large' }, { status: 413 })
+  let bodyText: string
+  try {
+    bodyText = await readLimitedText(request, bodyMaxSize)
+  } catch (error) {
+    if (isHttpError(error) && error.status === 413) return json({ error: 'Payload too large', error_code: 'payload_too_large' }, { status: 413 })
+    throw error
   }
 
   let body: Record<string, unknown>
   try {
-    body = JSON.parse(bodyText)
+    body = parseJsonObject(bodyText)
   } catch {
     return json({ error: 'Invalid JSON', error_code: 'invalid_json' }, { status: 400 })
   }

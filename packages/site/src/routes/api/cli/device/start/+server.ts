@@ -6,13 +6,14 @@ import { sha256, generateUserCode } from '$lib/server/crypto/hmac.js'
 import { env } from '$env/dynamic/private'
 import { getConfigValue, CFG } from '$lib/server/config.js'
 import { consumeAuthRateLimit } from '$lib/server/auth/request-rate-limit.js'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const limit = await consumeAuthRateLimit('device_auth_start', getClientAddress(), 10, 60)
   if (!limit.allowed) return json({ error: 'Too many device authorization requests', error_code: 'rate_limit_ip' }, {
     status: 429, headers: { 'Retry-After': String(limit.retryAfter) },
   })
-  const body = await request.json().catch(() => null)
+  const body = await readLimitedJson(request, AUTH_BODY_LIMIT)
   const device_name = body?.device_name
   const cli_version = body?.cli_version
   const device_challenge = body?.device_challenge

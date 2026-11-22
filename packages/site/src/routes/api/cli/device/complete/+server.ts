@@ -4,13 +4,14 @@ import { sql } from '$lib/server/db/pool.js'
 import { nanoid } from 'nanoid'
 import { sha256, generateDeviceSecret, encryptDeviceSecret } from '$lib/server/crypto/hmac.js'
 import { createHash } from 'node:crypto'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 
 function pkceChallenge(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url')
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-  const body = await request.json().catch(() => null)
+  const body = await readLimitedJson(request, AUTH_BODY_LIMIT)
   const device_request_id = body?.device_request_id
   const device_verifier = body?.device_verifier
   if (typeof device_request_id !== 'string' || !device_request_id.trim() || device_request_id.length > 256

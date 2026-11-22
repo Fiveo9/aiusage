@@ -4,7 +4,7 @@ export class BodyTooLargeError extends Error {
   constructor() { super('Request body too large') }
 }
 
-export function readJsonBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<Record<string, unknown>> {
+export function readBodyBuffer(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers['content-length'])
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -36,16 +36,18 @@ export function readJsonBody(req: IncomingMessage, maxBytes = 1024 * 1024): Prom
     }
     const onEnd = () => {
       cleanup()
-      try {
-        const text = Buffer.concat(chunks, bytes).toString('utf8')
-        const value = text.trim() ? JSON.parse(text) : {}
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SyntaxError('Expected JSON object')
-        resolve(value)
-      } catch (error) { reject(error) }
+      resolve(Buffer.concat(chunks, bytes))
     }
     req.on('data', onData)
     req.once('end', onEnd)
     req.once('error', onError)
     req.once('aborted', onAborted)
   })
+}
+
+export async function readJsonBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<Record<string, unknown>> {
+  const text = (await readBodyBuffer(req, maxBytes)).toString('utf8')
+  const value = text.trim() ? JSON.parse(text) : {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SyntaxError('Expected JSON object')
+  return value
 }

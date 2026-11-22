@@ -9,9 +9,10 @@ import {
   sendVerificationEmail
 } from '$lib/server/auth/email-verification.js'
 import { nanoid } from 'nanoid'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
-  const body = await request.json()
+  const body = await readLimitedJson(request, AUTH_BODY_LIMIT)
   const username = String(body.username || '').trim()
   const email = String(body.email || '').trim().toLowerCase()
   const password = body.password
@@ -36,7 +37,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   }
 
   const userId = nanoid()
-  const passwordHash = await hashPassword(password)
+  const passwordHash = await hashPassword(password as string)
 
   await sql.begin(async (tx) => {
     await tx`

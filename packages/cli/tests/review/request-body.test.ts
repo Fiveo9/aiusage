@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { PassThrough } from 'node:stream'
 import { createServer, request, type IncomingMessage } from 'node:http'
-import { BodyTooLargeError, readJsonBody } from '../../src/api/request-body.js'
+import { BodyTooLargeError, readJsonBody, readBodyBuffer } from '../../src/api/request-body.js'
 
 function input(headers = {}) {
   const stream = new PassThrough() as PassThrough & IncomingMessage
@@ -29,6 +29,23 @@ it('rejects chunked oversize while streaming', async () => {
   const result = readJsonBody(req, 10)
   req.write(Buffer.alloc(6))
   req.write(Buffer.alloc(5))
+  await expect(result).rejects.toBeInstanceOf(BodyTooLargeError)
+  expect(req.isPaused()).toBe(true)
+})
+
+it('preserves exact binary upload bytes', async () => {
+  const req = input()
+  const body = Buffer.from([0, 255, 128, 13, 10])
+  const result = readBodyBuffer(req, body.length)
+  req.end(body)
+  expect(await result).toEqual(body)
+})
+
+it('limits chunked binary uploads and pauses input', async () => {
+  const req = input()
+  const result = readBodyBuffer(req, 8)
+  req.write(Buffer.alloc(5))
+  req.write(Buffer.alloc(4))
   await expect(result).rejects.toBeInstanceOf(BodyTooLargeError)
   expect(req.isPaused()).toBe(true)
 })

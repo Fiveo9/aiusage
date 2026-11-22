@@ -3,6 +3,9 @@ import { runMigrations } from '$lib/server/db/schema.js'
 import { getUserFromEvent } from '$lib/server/auth/session.js'
 import { startCleanupCron } from '$lib/server/db/cleanup.js'
 import { generateCsrfToken, validateCsrfToken, setCsrfCookie, getCsrfTokenFromCookie, isValidCsrfToken } from '$lib/server/auth/csrf.js'
+import { isHttpError } from '@sveltejs/kit'
+import { getConfigValue, CFG } from '$lib/server/config.js'
+import { readLimitedBuffer, parseJsonObject, AUTH_BODY_LIMIT, DEFAULT_JSON_BODY_LIMIT } from '$lib/server/request-body.js'
 
 let initializationPromise: Promise<void> | null = null
 
@@ -65,6 +68,26 @@ export const handle: Handle = async ({ event, resolve }) => {
       if (!validateCsrfToken(event.request)) {
         return new Response('CSRF token validation failed', { status: 403 })
       }
+    }
+  }
+
+  // Bound all state-changing request bodies before a route can deserialize them.
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(event.request.method) && event.request.body) {
+    let maxBytes = DEFAULT_JSON_BODY_LIMIT
+    if (event.url.pathname.startsWith('/api/auth/') || event.url.pathname.startsWith('/api/cli/device/')) maxBytes = AUTH_BODY_LIMIT
+    if (event.url.pathname === '/api/cli/sync/push') maxBytes = await getConfigValue(CFG.SYNC_BODY_MAX_SIZE)
+    if (event.url.pathname === '/api/me/avatar') maxBytes = await getConfigValue(CFG.AVATAR_MAX_FILE_SIZE) + 64 * 1024
+    try {
+      const buffer = await readLimitedBuffer(event.request, maxBytes)
+      if (buffer.length && event.request.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+        parseJsonObject(buffer.toString('utf8'))
+      }
+      event.request = new Request(event.request, { body: new Uint8Array(buffer) })
+    } catch (error) {
+      if (isHttpError(error)) return new Response(JSON.stringify({ error: error.body.message }), {
+        status: error.status, headers: { 'Content-Type': 'application/json', ...(error.status === 413 ? { Connection: 'close' } : {}) },
+      })
+      throw error
     }
   }
 

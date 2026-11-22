@@ -2,10 +2,11 @@ import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
 import { requireUser } from '$lib/server/auth/session.js'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 
 export const POST: RequestHandler = async (event) => {
   const user = await requireUser(event)
-  const body = await event.request.json().catch(() => null)
+  const body = await readLimitedJson(event.request, AUTH_BODY_LIMIT)
   const user_code = typeof body?.user_code === 'string' ? body.user_code.trim().toUpperCase() : ''
   if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(user_code)) {
     return json({ error: 'Missing user_code' }, { status: 400 })

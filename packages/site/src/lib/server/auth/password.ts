@@ -1,13 +1,27 @@
 import bcrypt from 'bcryptjs'
 import { getConfigValue, CFG } from '$lib/server/config.js'
+import { error } from '@sveltejs/kit'
 
 const SALT_ROUNDS = 12
+export const DUMMY_PASSWORD_HASH = bcrypt.hashSync('authentication-timing-placeholder', SALT_ROUNDS)
+export const MAX_PASSWORD_BYTES = 72
+
+export function passwordInputError(password: unknown): ValidationError {
+  if (typeof password !== 'string') return { code: 'password_type' }
+  if (password.length > 128 || Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
+    return { code: 'password_too_long', params: { max: MAX_PASSWORD_BYTES } }
+  }
+  return null
+}
 
 export async function hashPassword(password: string): Promise<string> {
+  const inputError = passwordInputError(password)
+  if (inputError) throw error(400, inputError.code)
   return bcrypt.hash(password, SALT_ROUNDS)
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  if (passwordInputError(password) || typeof hash !== 'string') return false
   return bcrypt.compare(password, hash)
 }
 
@@ -32,9 +46,12 @@ export function validateEmail(email: string): ValidationError {
   return null
 }
 
-export async function validatePassword(password: string): Promise<ValidationError> {
+export async function validatePassword(password: unknown): Promise<ValidationError> {
+  const inputError = passwordInputError(password)
+  if (inputError) return inputError
+  const value = password as string
   const minLen = await getConfigValue(CFG.PASSWORD_MIN_LENGTH)
-  if (!password || password.length < minLen) {
+  if (!value || value.length < minLen) {
     return { code: 'password_length', params: { min: minLen } }
   }
   return null

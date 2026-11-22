@@ -15,14 +15,16 @@ export const load: PageServerLoad = async ({ locals }) => {
     avatar_url: locals.user.avatar_url,
     role: locals.user.role,
     has_password: false,
+    email_verified: false,
     username_changed_at: null as string | null,
   }
 
   try {
-    const rows = await sql`SELECT password_hash, username_changed_at FROM users WHERE id = ${locals.user.id}`
-    const row = rows[0] as { password_hash: string | null; username_changed_at: string | null } | undefined
+    const rows = await sql`SELECT password_hash, email_verified, username_changed_at FROM users WHERE id = ${locals.user.id}`
+    const row = rows[0] as { password_hash: string | null; email_verified: boolean; username_changed_at: string | null } | undefined
     if (row) {
       base.has_password = row.password_hash != null
+      base.email_verified = row.email_verified === true
       base.username_changed_at = row.username_changed_at || null
     }
   } catch (err) {

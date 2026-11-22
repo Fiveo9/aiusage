@@ -16,6 +16,13 @@ function event(body: unknown, ip = '127.0.0.1') {
 }
 
 describe('password login defenses', () => {
+  it('matches legacy email casing and trims the login identifier', async () => {
+    await query("INSERT INTO users (id, username, email, email_verified, password_hash, display_name) VALUES ('owner', 'owner', 'Owner@Example.TEST', TRUE, 'synthetic-hash', 'Owner')")
+    vi.mocked(verifyPassword).mockResolvedValue(true)
+    const response = await POST(event({ login: ' OWNER@example.test ', password: 'synthetic-input' })) as Response
+    expect(response.status).toBe(200)
+    expect((await response.json()).user.id).toBe('owner')
+  })
   it('performs the dummy comparison when an account does not exist', async () => {
     expect((await POST(event({ login: 'unknown', password: 'synthetic-input' })) as Response).status).toBe(401)
     expect(verifyPassword).toHaveBeenCalledWith('synthetic-input', DUMMY_PASSWORD_HASH)

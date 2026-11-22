@@ -1,25 +1,40 @@
 <script>
   import { csrfHeaders } from '$lib/csrf'
+  import { readApiResponse } from '$lib/api-response'
+  import { invalidateAll } from '$app/navigation'
   import { page } from '$app/stores'
   import { lang } from '$lib/lang'
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
 
   let showBound = $page.url.searchParams.get('bound')
   let showError = $page.url.searchParams.get('error')
   onMount(() => {
+    let noticeTimer
     if (showBound || showError) {
-      setTimeout(() => { showBound = null; showError = null; history.replaceState(null, '', '/settings') }, 3000)
+      noticeTimer = setTimeout(() => { showBound = null; showError = null; history.replaceState(null, '', '/settings') }, 3000)
     }
+    return () => clearTimeout(noticeTimer)
   })
 
   $: zh = $lang === 'zh'
   const initialProfile = $page.data.profile
-  $: me = $page.data.profile
+  let me = initialProfile
+  let profileSource = initialProfile
+  $: if ($page.data.profile !== profileSource) applyServerProfile($page.data.profile)
 
   let editUsername = initialProfile?.username || ''
   let editDisplayName = initialProfile?.display_name || ''
   let avatarUploading = false
   let avatarPreviewSrc = initialProfile?.avatar_url || ''
+  let previewObjectUrl = ''
+  function applyServerProfile(profile) {
+    profileSource = profile
+    me = profile
+    editUsername = profile?.username || ''
+    editDisplayName = profile?.display_name || ''
+    avatarPreviewSrc = profile?.avatar_url || ''
+  }
+  onDestroy(() => { if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl) })
   let fileInput
   let profileMsg = ''
   let profileError = ''
@@ -35,7 +50,7 @@
   $: avatarMaxSize = $page.data.avatarMaxSize || 5 * 1024 * 1024
   $: identities = $page.data.identities || []
   $: hasGithub = identities.some(i => i.provider === 'github')
-  $: canUnlink = $page.data.profile?.has_password || identities.length > 1
+  $: canUnlink = (me?.has_password && me?.email_verified) || identities.length > 1
 
   const bindErrors = {
     already_linked: { en: 'This GitHub account is already linked to another user.', zh: '该 GitHub 账号已绑定其他用户。' },
@@ -84,8 +99,9 @@
       })
       if (res.ok) {
         identities = identities.filter(i => i.provider !== provider)
+        await invalidateAll()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         unbindError = getError(data.error)
       }
     } catch {
@@ -139,7 +155,9 @@
       return
     }
 
-    avatarPreviewSrc = URL.createObjectURL(file)
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl)
+    previewObjectUrl = URL.createObjectURL(file)
+    avatarPreviewSrc = previewObjectUrl
     avatarUploading = true
     profileError = ''
 
@@ -152,7 +170,7 @@
         body: formData
       })
       if (res.ok) {
-        const data = await res.json()
+        const data = await readApiResponse(res)
         avatarPreviewSrc = data.avatar_url
         me = { ...me, avatar_url: data.avatar_url }
         profileMsg = zh ? '头像已更新' : 'Avatar updated'
@@ -160,7 +178,7 @@
         avatarPreviewSrc = me?.avatar_url || ''
         let errorMsg = ''
         try {
-          const data = await res.json()
+          const data = await readApiResponse(res)
           errorMsg = data.error || ''
         } catch {
           // Response wasn't JSON (e.g. nginx/proxy error page)
@@ -176,6 +194,7 @@
       avatarPreviewSrc = me?.avatar_url || ''
       profileError = getError('network_error')
     } finally {
+      if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = '' }
       avatarUploading = false
       if (fileInput) fileInput.value = ''
     }
@@ -193,6 +212,9 @@
         avatarPreviewSrc = ''
         me = { ...me, avatar_url: null }
         profileMsg = zh ? '头像已移除' : 'Avatar removed'
+      } else {
+        const data = await readApiResponse(res)
+        profileError = getError(data.error)
       }
     } catch {
       profileError = getError('network_error')
@@ -214,10 +236,12 @@
           display_name: editDisplayName
         })
       })
-      const data = await res.json()
+      const data = await readApiResponse(res)
       if (res.ok) {
         profileMsg = zh ? '资料已更新' : 'Profile updated'
         me = { ...me, username: data.username, display_name: data.display_name, username_changed_at: data.username_changed_at }
+        editUsername = data.username
+        editDisplayName = data.display_name
       } else {
         profileError = getError(data.error_key || data.error)
       }
@@ -245,7 +269,7 @@
           new_password: newPassword
         })
       })
-      const data = await res.json()
+      const data = await readApiResponse(res)
       if (res.ok) {
         pwMsg = zh ? '密码已更新' : 'Password updated successfully'
         currentPassword = ''

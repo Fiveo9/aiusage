@@ -1,11 +1,13 @@
 import { sql } from '../db/pool.js'
 import { getConfigValue, CFG } from '../config.js'
+import { env } from '$env/dynamic/private'
 
 const STAR_REPO = 'juliantanx/aiusage'
 
 export interface StarCheckResult {
   allowed: boolean
-  error_code?: 'CLOUD_SYNC_DISABLED' | 'USER_CLOUD_BANNED' | 'STAR_REQUIRED' | 'GITHUB_BINDING_REQUIRED'
+  error_code?: 'CLOUD_SYNC_DISABLED' | 'USER_CLOUD_BANNED' | 'STAR_REQUIRED' | 'GITHUB_BINDING_REQUIRED' | 'GITHUB_UNAVAILABLE'
+  status?: 503
   message?: string
   repo?: string
   url?: string
@@ -57,7 +59,7 @@ export async function checkCloudSyncAccess(userId: string): Promise<StarCheckRes
 
   // 2. Check for GitHub identity with access token
   const identityRows = await sql`
-    SELECT access_token, provider_username
+    SELECT id, access_token, provider_username
     FROM user_identities
     WHERE user_id = ${userId} AND provider = 'github'
     LIMIT 1
@@ -67,11 +69,11 @@ export async function checkCloudSyncAccess(userId: string): Promise<StarCheckRes
       allowed: false,
       error_code: 'GITHUB_BINDING_REQUIRED',
       message: 'Please bind your GitHub account to use Cloud Sync.',
-      url: 'https://aiusage.jtanx.com/settings'
+      url: `${(env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')}/settings`
     }
   }
 
-  const identity = identityRows[0] as { access_token: string | null; provider_username: string | null }
+  const identity = identityRows[0] as { id: string; access_token: string | null; provider_username: string | null }
   const accessToken = identity.access_token
 
   if (!accessToken) {
@@ -80,7 +82,7 @@ export async function checkCloudSyncAccess(userId: string): Promise<StarCheckRes
       allowed: false,
       error_code: 'GITHUB_BINDING_REQUIRED',
       message: 'Please re-login via GitHub to refresh your access token.',
-      url: 'https://aiusage.jtanx.com/settings'
+      url: `${(env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')}/settings`
     }
   }
 
@@ -89,20 +91,27 @@ export async function checkCloudSyncAccess(userId: string): Promise<StarCheckRes
   if (user.github_starred && user.github_star_checked_at) {
     const checkedAt = new Date(user.github_star_checked_at).getTime()
     const ttlMs = ttlHours * 60 * 60 * 1000
-    if (Date.now() - checkedAt < ttlMs) {
+    const age = Date.now() - checkedAt
+    if (age >= 0 && age < ttlMs) {
       return { allowed: true }
     }
   }
 
   // 4. Call GitHub API
-  const starred = await checkGitHubStarAPI(accessToken, STAR_REPO)
+  const result = await checkGitHubStarAPI(accessToken, STAR_REPO)
+  if (result === 'reauth') return { allowed: false, error_code: 'GITHUB_BINDING_REQUIRED', message: 'Please rebind GitHub to refresh authorization.', url: `${(env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')}/settings` }
+  if (result === 'unavailable') return { allowed: false, error_code: 'GITHUB_UNAVAILABLE', status: 503, message: 'GitHub verification is temporarily unavailable. Please retry later.' }
+  const starred = result === 'starred'
 
   // Update cache
-  await sql`
+  const cached = await sql`
     UPDATE users
     SET github_starred = ${starred}, github_star_checked_at = NOW()
     WHERE id = ${userId}
+      AND EXISTS (SELECT 1 FROM user_identities WHERE id = ${identity.id} AND user_id = ${userId} AND access_token = ${accessToken})
+    RETURNING id
   `
+  if (!cached.length) return { allowed: false, error_code: 'GITHUB_BINDING_REQUIRED', message: 'GitHub identity changed. Please retry.' }
 
   if (starred) {
     return { allowed: true }
@@ -117,21 +126,19 @@ export async function checkCloudSyncAccess(userId: string): Promise<StarCheckRes
   }
 }
 
-async function checkGitHubStarAPI(accessToken: string, repo: string): Promise<boolean> {
+async function checkGitHubStarAPI(accessToken: string, repo: string): Promise<'starred' | 'not-starred' | 'reauth' | 'unavailable'> {
   try {
     const res = await fetch(`https://api.github.com/user/starred/${repo}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/vnd.github+json'
-      }
+      }, signal: AbortSignal.timeout(10_000), redirect: 'error',
     })
-    // 204 = starred, 404 = not starred
-    if (res.status !== 204 && res.status !== 404) {
-      console.error(`[star-check] GitHub API unexpected status: ${res.status}`)
-    }
-    return res.status === 204
-  } catch (err) {
-    console.error('[star-check] GitHub API error:', err)
-    return false
+    if (res.status === 204) return 'starred'
+    if (res.status === 404) return 'not-starred'
+    if (res.status === 401) return 'reauth'
+    return 'unavailable'
+  } catch {
+    return 'unavailable'
   }
 }

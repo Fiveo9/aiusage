@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid'
 import { sql } from '$lib/server/db/pool.js'
 import { getConfigValue, CFG } from '$lib/server/config.js'
 import { wrapBrandedEmail } from './email-template.js'
+import { hashIp } from '../crypto/hmac.js'
 
 const PURPOSE = 'email_verification'
 
@@ -17,11 +18,11 @@ function hashToken(token: string): string {
 }
 
 function hashValue(value: string): string {
-  return createHash('sha256').update(`${env.IP_HASH_SECRET || 'default-ip-hash-secret'}:${value}`).digest('hex')
+  return hashIp(value)
 }
 
 function getSiteUrl(): string {
-  return (env.SITE_URL || 'http://localhost:5173').replace(/\/$/, '')
+  return (env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')
 }
 
 function getSesClient(): SESv2Client {
@@ -55,16 +56,22 @@ function hasResendConfig(): boolean {
 }
 
 export async function createEmailVerification(userId: string, email: string): Promise<string> {
+  return (await createEmailVerificationWithPolling(userId, email)).url
+}
+
+export async function createEmailVerificationWithPolling(userId: string, email: string): Promise<{ url: string; pollToken: string }> {
   const tokenTtlHours = await getConfigValue(CFG.EMAIL_TOKEN_TTL_HOURS)
   const token = nanoid(48)
+  // Independent of the email token: this only permits status polling.
+  const pollToken = nanoid(48)
   const expiresAt = new Date(Date.now() + tokenTtlHours * 60 * 60 * 1000)
 
   await sql`
     INSERT INTO email_verification_tokens (id, user_id, email, token_hash, expires_at)
-    VALUES (${nanoid()}, ${userId}, ${email}, ${hashToken(token)}, ${expiresAt})
+    VALUES (${pollToken}, ${userId}, ${email.toLowerCase()}, ${hashToken(token)}, ${expiresAt})
   `
 
-  return `${getSiteUrl()}/verify-email?token=${encodeURIComponent(token)}`
+  return { url: `${getSiteUrl()}/verify-email?token=${encodeURIComponent(token)}`, pollToken }
 }
 
 export async function checkVerificationEmailRateLimit(ip: string, email: string): Promise<{ code: string } | null> {
@@ -85,24 +92,28 @@ export async function checkVerificationEmailRateLimit(ip: string, email: string)
   ])
 
   const ipHash = hashValue(ip)
-  const emailHash = hashValue(email)
+  const emailHash = hashValue(email.toLowerCase())
+
+  return sql.begin(async (tx) => {
+  // Serialize count-and-reserve, including the global limit, across processes.
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${`email-send:${PURPOSE}`}))`
 
   const [ipRows, emailRows, globalRows] = await Promise.all([
-    sql`
+    tx`
       SELECT COUNT(*)::INTEGER AS count
       FROM email_send_attempts
       WHERE purpose = ${PURPOSE}
         AND ip_hash = ${ipHash}
         AND created_at > NOW() - (${`${ipLimitWindowMinutes} minutes`})::INTERVAL
     `,
-    sql`
+    tx`
       SELECT COUNT(*)::INTEGER AS count
       FROM email_send_attempts
       WHERE purpose = ${PURPOSE}
         AND email_hash = ${emailHash}
         AND created_at > NOW() - (${`${emailLimitWindowHours} hours`})::INTERVAL
     `,
-    sql`
+    tx`
       SELECT COUNT(*)::INTEGER AS count
       FROM email_send_attempts
       WHERE purpose = ${PURPOSE}
@@ -120,7 +131,10 @@ export async function checkVerificationEmailRateLimit(ip: string, email: string)
     return { code: 'rate_limit_global' }
   }
 
+  await tx`INSERT INTO email_send_attempts (id, purpose, ip_hash, email_hash)
+    VALUES (${nanoid()}, ${PURPOSE}, ${ipHash}, ${emailHash})`
   return null
+  })
 }
 
 export async function recordVerificationEmailAttempt(ip: string, email: string): Promise<void> {
@@ -152,7 +166,7 @@ export async function sendVerificationEmail(email: string, username: string, ver
 
   const html = wrapBrandedEmail({
     title: 'Verify Your Email',
-    preheader: `Hi ${username}, verify your AIUsage email address to get started.`,
+    preheader: `Hi ${escapeHtml(username)}, verify your AIUsage email address to get started.`,
     greeting: `Hi ${escapeHtml(username)},`,
     bodyHtml: `Thanks for signing up for AIUsage. Click the button below to verify your email address and activate your account.`,
     button: { label: 'Verify Email Address', url: verificationUrl },
@@ -193,8 +207,7 @@ export async function sendVerificationEmail(email: string, username: string, ver
   }
 
   if (!env.EMAIL_WEBHOOK_URL) {
-    console.info(`[email] Verification link for ${email}: ${verificationUrl}`)
-    return
+    throw new Error('Email delivery is not configured')
   }
 
   const response = await fetch(env.EMAIL_WEBHOOK_URL, {
@@ -210,25 +223,30 @@ export async function sendVerificationEmail(email: string, username: string, ver
   })
 
   if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`Email webhook failed: ${response.status} ${detail}`)
+    throw new Error(`Email webhook failed: ${response.status}`)
   }
 }
 
 export async function consumeEmailVerificationToken(token: string): Promise<{ userId: string; email: string } | null> {
   const rows = await sql.begin(async (tx) => {
+    const candidates = await tx`SELECT user_id FROM email_verification_tokens WHERE token_hash = ${hashToken(token)}`
+    if (!candidates[0]) return []
+    // The owner lock must precede token locks, including sibling tokens.
+    await tx`SELECT id FROM users WHERE id = ${candidates[0].user_id as string} FOR UPDATE`
     const matches = await tx`
       SELECT id, user_id, email
       FROM email_verification_tokens
       WHERE token_hash = ${hashToken(token)}
         AND consumed_at IS NULL
-        AND expires_at > NOW()
+        AND expires_at > clock_timestamp()
       FOR UPDATE
     `
     const match = matches[0] as { id: string; user_id: string; email: string } | undefined
     if (!match) return []
 
-    await tx`UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = ${match.user_id} AND email = ${match.email}`
+    const updated = await tx`UPDATE users SET email_verified = TRUE, updated_at = NOW()
+      WHERE id = ${match.user_id} AND LOWER(email) = LOWER(${match.email}) RETURNING id`
+    if (!updated.length) return []
     await tx`UPDATE email_verification_tokens SET consumed_at = NOW() WHERE id = ${match.id}`
     await tx`UPDATE email_verification_tokens SET consumed_at = NOW() WHERE user_id = ${match.user_id} AND consumed_at IS NULL`
 
@@ -269,17 +287,20 @@ export async function checkPasswordResetRateLimit(ip: string, email: string): Pr
   ])
 
   const ipHash = hashValue(ip)
-  const emailHash = hashValue(email)
+  const emailHash = hashValue(email.toLowerCase())
+
+  return sql.begin(async (tx) => {
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${`email-send:${RESET_PURPOSE}`}))`
 
   const [ipRows, emailRows] = await Promise.all([
-    sql`
+    tx`
       SELECT COUNT(*)::INTEGER AS count
       FROM email_send_attempts
       WHERE purpose = ${RESET_PURPOSE}
         AND ip_hash = ${ipHash}
         AND created_at > NOW() - (${`${ipLimitWindowMinutes} minutes`})::INTERVAL
     `,
-    sql`
+    tx`
       SELECT COUNT(*)::INTEGER AS count
       FROM email_send_attempts
       WHERE purpose = ${RESET_PURPOSE}
@@ -295,7 +316,10 @@ export async function checkPasswordResetRateLimit(ip: string, email: string): Pr
     return { code: 'rate_limit_email' }
   }
 
+  await tx`INSERT INTO email_send_attempts (id, purpose, ip_hash, email_hash)
+    VALUES (${nanoid()}, ${RESET_PURPOSE}, ${ipHash}, ${emailHash})`
   return null
+  })
 }
 
 export async function recordPasswordResetAttempt(ip: string, email: string): Promise<void> {
@@ -322,7 +346,7 @@ export async function sendPasswordResetEmail(email: string, username: string, re
 
   const html = wrapBrandedEmail({
     title: 'Reset Your Password',
-    preheader: `Hi ${username}, reset your AIUsage password.`,
+    preheader: `Hi ${escapeHtml(username)}, reset your AIUsage password.`,
     greeting: `Hi ${escapeHtml(username)},`,
     bodyHtml: `We received a request to reset the password for your AIUsage account. Click the button below to set a new password.`,
     button: { label: 'Reset Password', url: resetUrl },
@@ -359,8 +383,7 @@ export async function sendPasswordResetEmail(email: string, username: string, re
   }
 
   if (!env.EMAIL_WEBHOOK_URL) {
-    console.info(`[email] Password reset link for ${email}: ${resetUrl}`)
-    return
+    throw new Error('Email delivery is not configured')
   }
 
   const response = await fetch(env.EMAIL_WEBHOOK_URL, {
@@ -376,23 +399,33 @@ export async function sendPasswordResetEmail(email: string, username: string, re
   })
 
   if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`Email webhook failed: ${response.status} ${detail}`)
+    throw new Error(`Email webhook failed: ${response.status}`)
   }
 }
 
-export async function consumePasswordResetToken(token: string): Promise<{ userId: string } | null> {
+export async function consumePasswordResetToken(token: string, passwordHash?: string | (() => Promise<string>)): Promise<{ userId: string } | null> {
   const rows = await sql.begin(async (tx) => {
+    const candidates = await tx`SELECT user_id FROM password_reset_tokens WHERE token_hash = ${hashToken(token)}`
+    if (!candidates[0]) return []
+    await tx`SELECT id FROM users WHERE id = ${candidates[0].user_id as string} FOR UPDATE`
     const matches = await tx`
       SELECT id, user_id
       FROM password_reset_tokens
       WHERE token_hash = ${hashToken(token)}
         AND consumed_at IS NULL
-        AND expires_at > NOW()
+        AND expires_at > clock_timestamp()
       FOR UPDATE
     `
     const match = matches[0] as { id: string; user_id: string } | undefined
     if (!match) return []
+
+    if (passwordHash !== undefined) {
+      // Do bcrypt only after a live token was found, without consuming it
+      // before the password and session updates can commit together.
+      const newHash = typeof passwordHash === 'function' ? await passwordHash() : passwordHash
+      await tx`UPDATE users SET password_hash = ${newHash}, updated_at = NOW() WHERE id = ${match.user_id}`
+      await tx`DELETE FROM sessions WHERE user_id = ${match.user_id}`
+    }
 
     // Consume this token and invalidate all other pending tokens for this user
     await tx`UPDATE password_reset_tokens SET consumed_at = NOW() WHERE id = ${match.id}`

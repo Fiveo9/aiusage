@@ -1,4 +1,6 @@
 import { sql } from '$lib/server/db/pool.js'
+import { error } from '@sveltejs/kit'
+import { nanoid } from 'nanoid'
 
 interface ConfigEntry {
   /** null: the key has no row in site_config, so callers use their default. */
@@ -185,6 +187,74 @@ const DEFAULTS: Record<string, number> = {
   [CFG.RETENTION_SYNC_BATCH_DAYS]:     30,
   [CFG.RETENTION_TOMBSTONE_DAYS]:      90,
   [CFG.RETENTION_DEVICE_AUTH_HOURS]:   1,
+}
+
+// Stored units, before the admin UI's display conversion. All settings are
+// integral; 0/1 is the only representation accepted for the global switch.
+export const CONFIG_BOUNDS: Record<string, readonly [number, number]> = {
+  [CFG.EMAIL_TOKEN_TTL_HOURS]: [1, 168],
+  [CFG.EMAIL_IP_LIMIT]: [1, 1000],
+  [CFG.EMAIL_IP_LIMIT_WINDOW_MINUTES]: [1, 1440],
+  [CFG.EMAIL_LIMIT]: [1, 100],
+  [CFG.EMAIL_LIMIT_WINDOW_HOURS]: [1, 168],
+  [CFG.EMAIL_GLOBAL_LIMIT]: [1, 1_000_000],
+  [CFG.EMAIL_GLOBAL_LIMIT_WINDOW_HOURS]: [1, 168],
+  [CFG.EMAIL_SEND_ATTEMPT_RETENTION_DAYS]: [1, 365],
+  [CFG.USERNAME_COOLDOWN_DAYS]: [0, 3650],
+  [CFG.USERNAME_MIN_LENGTH]: [1, 64],
+  [CFG.USERNAME_MAX_LENGTH]: [1, 64],
+  [CFG.DISPLAY_NAME_MIN_LENGTH]: [1, 256],
+  [CFG.DISPLAY_NAME_MAX_LENGTH]: [1, 256],
+  [CFG.PASSWORD_MIN_LENGTH]: [8, 72],
+  [CFG.AVATAR_MAX_FILE_SIZE]: [1024, 16 * 1024 * 1024],
+  [CFG.AVATAR_OUTPUT_SIZE]: [16, 2048],
+  [CFG.AVATAR_QUALITY]: [1, 100],
+  [CFG.SYNC_MAX_RECORDS]: [1, 10_000],
+  [CFG.SYNC_MAX_TOMBSTONES]: [1, 10_000],
+  [CFG.SYNC_BODY_MAX_SIZE]: [1024, 16 * 1024 * 1024],
+  [CFG.SYNC_PULL_DEFAULT_LIMIT]: [1, 10_000],
+  [CFG.SYNC_PULL_MAX_LIMIT]: [1, 10_000],
+  [CFG.CLOUD_SYNC_GLOBALLY_ENABLED]: [0, 1],
+  [CFG.CLOUD_STAR_CACHE_TTL_HOURS]: [0, 168],
+  [CFG.UPLOAD_TIMESTAMP_WINDOW_MS]: [1000, 15 * 60 * 1000],
+  [CFG.DEVICE_AUTH_EXPIRY_MINUTES]: [1, 60],
+  [CFG.DEVICE_AUTH_POLL_INTERVAL_SECONDS]: [1, 60],
+  [CFG.SESSION_DURATION_DAYS]: [1, 365],
+  [CFG.OAUTH_STATE_MAX_AGE_SECONDS]: [30, 3600],
+  [CFG.NONCE_RETENTION_MINUTES]: [1, 1440],
+  [CFG.RETENTION_NONCE_HOURS]: [1, 720],
+  [CFG.RETENTION_SYNC_BATCH_DAYS]: [1, 3650],
+  [CFG.RETENTION_TOMBSTONE_DAYS]: [1, 3650],
+  [CFG.RETENTION_DEVICE_AUTH_HOURS]: [0, 168],
+}
+
+export function isValidConfigValue(key: string, value: unknown): value is number {
+  if (!Object.hasOwn(CONFIG_BOUNDS, key) || typeof value !== 'number' || !Number.isSafeInteger(value)) return false
+  const [min, max] = CONFIG_BOUNDS[key]
+  return value >= min && value <= max
+}
+
+export async function setConfigsAtomically(entries: Record<string, number>, userId: string): Promise<void> {
+  if (!Object.keys(entries).length || Object.entries(entries).some(([key, value]) => !isValidConfigValue(key, value))) throw error(400, 'Invalid configuration value')
+  await sql.begin(async tx => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('site-config'))`
+    const rows = await tx`SELECT key, value FROM site_config FOR UPDATE`
+    const merged = { ...DEFAULTS }
+    for (const row of rows) merged[row.key as string] = row.value as number
+    Object.assign(merged, entries)
+    for (const [minKey, maxKey] of [[CFG.USERNAME_MIN_LENGTH, CFG.USERNAME_MAX_LENGTH], [CFG.DISPLAY_NAME_MIN_LENGTH, CFG.DISPLAY_NAME_MAX_LENGTH], [CFG.SYNC_PULL_DEFAULT_LIMIT, CFG.SYNC_PULL_MAX_LIMIT]]) {
+      if (merged[minKey] > merged[maxKey]) throw error(400, 'Minimum configuration value exceeds maximum')
+    }
+    for (const [key, value] of Object.entries(entries)) await tx`
+      INSERT INTO site_config (key, value, description, updated_at, updated_by)
+      VALUES (${key}, ${value}, ${CONFIG_DESCRIPTIONS[key] ?? null}, NOW(), ${userId})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+    `
+    await tx`INSERT INTO admin_audit_logs (id, admin_user_id, action, target_type, target_id, reason, metadata)
+      VALUES (${nanoid()}, ${userId}, 'update_config', 'site_config', 'batch', 'Updated configuration', ${JSON.stringify({ configs: entries })}::jsonb)`
+  })
+  // Never populate the process cache with a rolled-back batch.
+  invalidateConfigCache()
 }
 
 // ── Category grouping for admin UI ──

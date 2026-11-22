@@ -25,7 +25,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
   if (!starCheck.allowed) {
     return json({
       error: { code: starCheck.error_code, message: starCheck.message, repo: starCheck.repo, url: starCheck.url }
-    }, { status: 403 })
+    }, { status: starCheck.status || 403 })
   }
 
   const cursor = url.searchParams.get('cursor')

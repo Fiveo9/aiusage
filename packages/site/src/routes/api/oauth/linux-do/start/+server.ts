@@ -31,7 +31,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     path: '/', httpOnly: true, sameSite: 'lax', secure: url.protocol === 'https:', maxAge,
   })
 
-  const siteUrl = env.SITE_URL || 'http://localhost:5173'
+  const siteUrl = (env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')
   const redirectUri = `${siteUrl}/api/oauth/linux-do/callback`
   const authUrl = `${authorizationUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+profile+email&state=${state}`
 

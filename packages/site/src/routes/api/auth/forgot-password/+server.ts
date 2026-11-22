@@ -5,7 +5,6 @@ import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 import {
   checkPasswordResetRateLimit,
   createPasswordResetToken,
-  recordPasswordResetAttempt,
   sendPasswordResetEmail
 } from '$lib/server/auth/email-verification.js'
 
@@ -26,7 +25,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const users = await sql`
     SELECT id, username, email_verified
     FROM users
-    WHERE email = ${email} AND password_hash IS NOT NULL
+    WHERE LOWER(email) = ${email} AND password_hash IS NOT NULL
   `
   const user = users[0] as { id: string; username: string; email_verified: boolean } | undefined
 
@@ -38,9 +37,8 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   try {
     const resetUrl = await createPasswordResetToken(user.id)
     await sendPasswordResetEmail(email, user.username, resetUrl)
-    await recordPasswordResetAttempt(ip, email)
   } catch (err) {
-    console.error('Failed to send password reset email:', err)
+    console.error('Failed to send password reset email')
   }
 
   return json({ success: true })

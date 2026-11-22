@@ -2,13 +2,34 @@ import { sql } from '../db/pool.js'
 import { nanoid } from 'nanoid'
 import { ensureCuratedPricingAliases } from '../pricing/curated-aliases.js'
 import { planLitellmPricing, type LitellmEntry } from '@aiusage/core'
+import { error } from '@sveltejs/kit'
+import type postgres from 'postgres'
+
+async function lockAdminOperation(tx: postgres.TransactionSql, adminUserId: string, targetUserId: string) {
+  await tx`SELECT pg_advisory_xact_lock(hashtext('active-administrators'))`
+  const users = await tx`SELECT id, role, status FROM users WHERE id IN (${adminUserId}, ${targetUserId}) ORDER BY id FOR UPDATE`
+  const actor = users.find(row => row.id === adminUserId)
+  if (!actor || actor.role !== 'admin' || actor.status !== 'active') throw error(403, 'Admin session is no longer active')
+  const target = users.find(row => row.id === targetUserId)
+  if (!target) throw error(404, 'User not found')
+  return target
+}
+
+async function requireAnotherAdmin(tx: postgres.TransactionSql, targetUserId: string): Promise<void> {
+  const rows = await tx`SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin' AND status = 'active' AND id != ${targetUserId}`
+  if (Number(rows[0].count) < 1) throw error(403, 'Cannot remove the last active administrator')
+}
 
 export async function banUser(adminUserId: string, targetUserId: string, reason: string): Promise<void> {
+  if (adminUserId === targetUserId) throw error(403, 'Cannot ban yourself')
+  if (typeof reason !== 'string' || reason.length > 1000) throw error(400, 'Invalid ban reason')
   await sql.begin(async tx => {
+    const target = await lockAdminOperation(tx, adminUserId, targetUserId)
+    if (target.role === 'admin' && target.status === 'active') await requireAnotherAdmin(tx, targetUserId)
     await tx`UPDATE users SET status = 'banned', banned_at = NOW(), ban_reason = ${reason}, updated_at = NOW() WHERE id = ${targetUserId}`
     await tx`DELETE FROM sessions WHERE user_id = ${targetUserId}`
+    await logAdminAction(adminUserId, 'ban_user', 'users', targetUserId, reason, undefined, tx)
   })
-  await logAdminAction(adminUserId, 'ban_user', 'users', targetUserId, reason)
 }
 
 export async function unbanUser(adminUserId: string, targetUserId: string): Promise<void> {
@@ -22,8 +43,14 @@ export async function setCloudSync(adminUserId: string, targetUserId: string, en
 }
 
 export async function setUserRole(adminUserId: string, targetUserId: string, role: string): Promise<void> {
-  await sql`UPDATE users SET role = ${role}::user_role WHERE id = ${targetUserId}`
-  await logAdminAction(adminUserId, 'set_role', 'users', targetUserId, `Role set to ${role}`)
+  if (!['admin', 'user'].includes(role)) throw error(400, 'Invalid role')
+  if (adminUserId === targetUserId) throw error(403, 'Cannot change your own role')
+  await sql.begin(async tx => {
+    const target = await lockAdminOperation(tx, adminUserId, targetUserId)
+    if (target.role === 'admin' && target.status === 'active' && role !== 'admin') await requireAnotherAdmin(tx, targetUserId)
+    await tx`UPDATE users SET role = ${role}::user_role, updated_at = NOW() WHERE id = ${targetUserId}`
+    await logAdminAction(adminUserId, 'set_role', 'users', targetUserId, `Role set to ${role}`, undefined, tx)
+  })
 }
 
 export async function getAdminAuditLogs(limit = 50, offset = 0) {
@@ -42,8 +69,9 @@ export async function clearAdminAuditLogs(adminUserId: string): Promise<number> 
   return result.length
 }
 
-async function logAdminAction(adminUserId: string, action: string, targetType: string, targetId: string, reason: string, metadata?: Record<string, unknown>): Promise<void> {
-  await sql`
+async function logAdminAction(adminUserId: string, action: string, targetType: string, targetId: string, reason: string, metadata?: Record<string, unknown>, tx?: postgres.TransactionSql): Promise<void> {
+  const query = tx || sql
+  await query`
     INSERT INTO admin_audit_logs (id, admin_user_id, action, target_type, target_id, reason, metadata)
     VALUES (${nanoid()}, ${adminUserId}, ${action}, ${targetType}, ${targetId}, ${reason}, ${metadata ? JSON.stringify(metadata) : null}::jsonb)
   `
@@ -63,7 +91,7 @@ const LITELLM_PRICING_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/m
  * one the CLI stores. The other ids stay aliases of the key.
  */
 export async function syncPricingFromLitellm(adminUserId: string): Promise<{ added: number; updated: number; skipped: number; userPreserved: number; aliasesAdded: number; aliasesUpdated: number }> {
-  const response = await fetch(LITELLM_PRICING_URL, { headers: { Accept: 'application/json' } })
+  const response = await fetch(LITELLM_PRICING_URL, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
   if (!response.ok) throw new Error(`LiteLLM pricing fetch failed: HTTP ${response.status}`)
   const data = await response.json() as Record<string, LitellmEntry>
   const plan = planLitellmPricing(data)
@@ -71,6 +99,7 @@ export async function syncPricingFromLitellm(adminUserId: string): Promise<{ add
   const skipped = plan.skipped
 
   await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('pricing-write'))`
     for (const owner of plan.prices) {
       const entry = {
         modelKey: owner.modelKey,
@@ -89,6 +118,12 @@ export async function syncPricingFromLitellm(adminUserId: string): Promise<{ add
         await tx`
           INSERT INTO model_prices (model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id, source_url, origin, status, last_synced_at)
           VALUES (${entry.modelKey}, ${entry.provider}, ${entry.input}, ${entry.output}, ${entry.cacheRead}, ${entry.cacheWrite}, 'USD', 'litellm', ${sourceModelId}, ${LITELLM_PRICING_URL}, 'builtin', 'active', NOW())
+          ON CONFLICT (model_key) DO UPDATE SET
+            provider = EXCLUDED.provider, input = EXCLUDED.input, output = EXCLUDED.output,
+            cache_read = EXCLUDED.cache_read, cache_write = EXCLUDED.cache_write,
+            currency = 'USD', source = 'litellm', source_model_id = EXCLUDED.source_model_id,
+            source_url = EXCLUDED.source_url, status = 'active', last_synced_at = NOW(), updated_at = NOW()
+          WHERE model_prices.origin = 'builtin'
         `
         added++
       } else {
@@ -162,7 +197,10 @@ export async function updatePriceEntries(
   adminUserId: string,
   updates: Array<{ id: string; input: number; output: number; cache_read: number | null; cache_write: number | null }>
 ): Promise<void> {
+  if (!Array.isArray(updates) || !updates.length || updates.length > 1000) throw error(400, 'Invalid price updates')
+  for (const entry of updates) validatePrice(entry, entry?.id)
   await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('pricing-write'))`
     for (const u of updates) {
       await tx`
         UPDATE model_prices
@@ -170,35 +208,54 @@ export async function updatePriceEntries(
         WHERE model_key = ${u.id}
       `
     }
+    await logAdminAction(adminUserId, 'update_price_entries', 'model_prices', 'current', `Updated ${updates.length} entries`, undefined, tx)
   })
-  await logAdminAction(adminUserId, 'update_price_entries', 'model_prices', 'current', `Updated ${updates.length} entries`)
+}
+
+function validatePrice(entry: { input: unknown; output: unknown; cache_read: unknown; cache_write: unknown } | null, key: unknown): void {
+  if (!entry || typeof key !== 'string' || !key.trim() || key.length > 256 || /[\x00-\x1f]/.test(key)) throw error(400, 'Invalid model key')
+  for (const value of [entry.input, entry.output]) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1_000_000) throw error(400, 'Invalid price')
+  }
+  for (const value of [entry.cache_read, entry.cache_write]) {
+    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1_000_000)) throw error(400, 'Invalid cache price')
+  }
 }
 
 export async function addPriceEntry(
   adminUserId: string,
   entry: { model_key: string; input: number; output: number; cache_read: number | null; cache_write: number | null; currency: string }
 ): Promise<string> {
+  validatePrice(entry, entry?.model_key)
+  if (!['USD', 'CNY'].includes(entry.currency)) throw error(400, 'Invalid currency')
   const id = entry.model_key
-  await sql`
+  await sql.begin(async tx => {
+  await tx`SELECT pg_advisory_xact_lock(hashtext('pricing-write'))`
+  await tx`
     INSERT INTO model_prices (model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id, origin, status)
     VALUES (${entry.model_key}, '', ${entry.input}, ${entry.output}, ${entry.cache_read}, ${entry.cache_write}, ${entry.currency}, 'manual', ${entry.model_key}, 'user', 'active')
     ON CONFLICT (model_key) DO UPDATE SET
       input = EXCLUDED.input, output = EXCLUDED.output, cache_read = EXCLUDED.cache_read, cache_write = EXCLUDED.cache_write,
       currency = EXCLUDED.currency, source = 'manual', source_model_id = EXCLUDED.source_model_id, origin = 'user', status = 'active', updated_at = NOW()
   `
-  await sql`
+  await tx`
     INSERT INTO model_price_aliases (alias, model_key, match_type, provider, priority, source, origin, enabled)
     VALUES (${entry.model_key}, ${entry.model_key}, 'exact', '', 200, 'manual', 'user', TRUE)
     ON CONFLICT (alias) DO UPDATE SET model_key = EXCLUDED.model_key, priority = 200, source = 'manual', origin = 'user', enabled = TRUE, updated_at = NOW()
   `
-  await logAdminAction(adminUserId, 'add_price_entry', 'model_prices', id, `Added model ${entry.model_key}`)
+  await logAdminAction(adminUserId, 'add_price_entry', 'model_prices', id, `Added model ${entry.model_key}`, undefined, tx)
+  })
   return id
 }
 
 export async function deletePriceEntry(adminUserId: string, entryId: string, modelKey: string): Promise<void> {
-  await sql`DELETE FROM model_price_aliases WHERE model_key = ${modelKey}`
-  await sql`DELETE FROM model_prices WHERE model_key = ${entryId}`
-  await logAdminAction(adminUserId, 'delete_price_entry', 'model_prices', entryId, `Deleted model ${modelKey}`)
+  if (typeof entryId !== 'string' || !entryId || entryId.length > 256) throw error(400, 'Invalid entry ID')
+  await sql.begin(async tx => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('pricing-write'))`
+    await tx`DELETE FROM model_price_aliases WHERE model_key = ${entryId}`
+    await tx`DELETE FROM model_prices WHERE model_key = ${entryId}`
+    await logAdminAction(adminUserId, 'delete_price_entry', 'model_prices', entryId, `Deleted model ${entryId}`, undefined, tx)
+  })
 }
 
 export async function getPublicPriceEntries() {

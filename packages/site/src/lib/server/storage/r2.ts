@@ -38,7 +38,7 @@ export async function uploadFile(
     ContentType: contentType,
     CacheControl: 'public, max-age=31536000, immutable'
   }))
-  return `${getPublicUrl()}/${key}`
+  return `${getPublicUrl().replace(/\/+$/, '')}/${key}`
 }
 
 export async function deleteFile(key: string): Promise<void> {
@@ -49,10 +49,14 @@ export async function deleteFile(key: string): Promise<void> {
   }))
 }
 
-export function extractKeyFromUrl(url: string): string | null {
-  const publicUrl = getPublicUrl()
-  if (url.startsWith(publicUrl)) {
-    return url.slice(publicUrl.length + 1)
-  }
-  return null
+export function extractKeyFromUrl(url: string, requiredPrefix?: string): string | null {
+  try {
+    const base = new URL(`${getPublicUrl().replace(/\/+$/, '')}/`)
+    const target = new URL(url)
+    if (target.origin !== base.origin || target.search || target.hash || !target.pathname.startsWith(base.pathname)) return null
+    const key = decodeURIComponent(target.pathname.slice(base.pathname.length))
+    if (!key || key.includes('\\') || key.split('/').some(part => !part || part === '.' || part === '..')) return null
+    if (requiredPrefix && !key.startsWith(requiredPrefix)) return null
+    return key
+  } catch { return null }
 }

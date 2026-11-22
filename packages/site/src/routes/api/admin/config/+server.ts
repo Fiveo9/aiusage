@@ -1,7 +1,8 @@
-import { json } from '@sveltejs/kit'
+import { isHttpError, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { requireAdmin } from '$lib/server/auth/session.js'
-import { getAllConfigs, setConfig, getDefaultValue, CONFIG_DESCRIPTIONS, CONFIG_DESCRIPTIONS_ZH, CONFIG_CATEGORIES, CONFIG_UNITS, CONFIG_DISPLAY_MULTIPLIER, CFG } from '$lib/server/config.js'
+import { getAllConfigs, setConfigsAtomically, isValidConfigValue, getDefaultValue, CONFIG_DESCRIPTIONS, CONFIG_DESCRIPTIONS_ZH, CONFIG_CATEGORIES, CONFIG_UNITS, CONFIG_DISPLAY_MULTIPLIER, CFG } from '$lib/server/config.js'
+import { readLimitedJson } from '$lib/server/request-body.js'
 
 const ALL_KEYS: readonly string[] = Object.values(CFG)
 
@@ -39,25 +40,26 @@ export const GET: RequestHandler = async (event) => {
 
 export const PUT: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
-  const body = await event.request.json()
+  const body = await readLimitedJson(event.request)
   const entries = body.configs as Record<string, number> | undefined
 
-  if (!entries || typeof entries !== 'object') {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries) || !Object.keys(entries).length) {
     return json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const updated: string[] = []
+  const stored: Record<string, number> = {}
   for (const [key, value] of Object.entries(entries)) {
-    if (!ALL_KEYS.includes(key)) continue
-    if (typeof value !== 'number' || !isFinite(value)) continue
-
+    if (typeof value !== 'number' || !Number.isFinite(value)) return json({ error: 'Invalid configuration value' }, { status: 400 })
     const multiplier = CONFIG_DISPLAY_MULTIPLIER[key]
-    const storedValue = multiplier ? Math.round(value * multiplier) : value
-
-    const description = CONFIG_DESCRIPTIONS[key] ?? null
-    await setConfig(key, storedValue, description, admin.id)
-    updated.push(key)
+    const storedValue = multiplier ? value * multiplier : value
+    if (!isValidConfigValue(key, storedValue)) return json({ error: `Invalid configuration value: ${key}` }, { status: 400 })
+    stored[key] = storedValue
   }
-
-  return json({ updated })
+  try {
+    await setConfigsAtomically(stored, admin.id)
+  } catch (err) {
+    if (isHttpError(err)) return json({ error: err.body.message }, { status: err.status })
+    throw err
+  }
+  return json({ updated: Object.keys(stored) })
 }

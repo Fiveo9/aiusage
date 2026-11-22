@@ -77,16 +77,6 @@ export const POST: RequestHandler = async (event) => {
     return json({ error: 'Failed to process image. The file may be corrupted or in an unsupported format.' }, { status: 400 })
   }
 
-  // Delete old avatar from R2 if exists
-  const oldRows = await sql`SELECT avatar_url FROM users WHERE id = ${user.id}`
-  const oldUrl = (oldRows[0] as { avatar_url: string | null })?.avatar_url
-  if (oldUrl) {
-    const oldKey = extractKeyFromUrl(oldUrl)
-    if (oldKey) {
-      try { await deleteFile(oldKey) } catch { /* ignore */ }
-    }
-  }
-
   // Upload new avatar
   const key = `avatars/${user.id}/${nanoid(8)}.webp`
   let avatarUrl: string
@@ -97,13 +87,24 @@ export const POST: RequestHandler = async (event) => {
     return json({ error: 'Failed to store avatar. Please try again later.' }, { status: 500 })
   }
 
-  // Update user record
+  // Commit the reference before retiring the previous object. Locking also
+  // ensures concurrent uploads retire the actual previous reference.
+  let oldUrl: string | null
   try {
-    await sql`UPDATE users SET avatar_url = ${avatarUrl}, updated_at = NOW() WHERE id = ${user.id}`
+    oldUrl = await sql.begin(async (tx) => {
+      const rows = await tx`SELECT avatar_url, status FROM users WHERE id = ${user.id} FOR UPDATE`
+      if (!rows.length || rows[0].status !== 'active') throw new Error('Avatar owner unavailable')
+      await tx`UPDATE users SET avatar_url = ${avatarUrl}, updated_at = NOW() WHERE id = ${user.id}`
+      return rows[0].avatar_url as string | null
+    })
   } catch (err) {
+    try { await deleteFile(key) } catch { /* preserve the existing reference */ }
     console.error('Avatar DB update failed:', err)
     return json({ error: 'Failed to save avatar reference. Please try again.' }, { status: 500 })
   }
+
+  const oldKey = oldUrl ? extractKeyFromUrl(oldUrl, `avatars/${user.id}/`) : null
+  if (oldKey) { try { await deleteFile(oldKey) } catch { /* reference already committed */ } }
 
   return json({ avatar_url: avatarUrl })
 }
@@ -111,17 +112,19 @@ export const POST: RequestHandler = async (event) => {
 export const DELETE: RequestHandler = async (event) => {
   const user = await requireUser(event)
 
-  const rows = await sql`SELECT avatar_url FROM users WHERE id = ${user.id}`
-  const avatarUrl = (rows[0] as { avatar_url: string | null })?.avatar_url
+  const avatarUrl = await sql.begin(async (tx) => {
+    const rows = await tx`SELECT avatar_url, status FROM users WHERE id = ${user.id} FOR UPDATE`
+    if (!rows.length || rows[0].status !== 'active') throw new Error('Avatar owner unavailable')
+    await tx`UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = ${user.id}`
+    return rows[0].avatar_url as string | null
+  })
 
   if (avatarUrl) {
-    const key = extractKeyFromUrl(avatarUrl)
+    const key = extractKeyFromUrl(avatarUrl, `avatars/${user.id}/`)
     if (key) {
       try { await deleteFile(key) } catch { /* ignore */ }
     }
   }
-
-  await sql`UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = ${user.id}`
 
   return json({ avatar_url: null })
 }

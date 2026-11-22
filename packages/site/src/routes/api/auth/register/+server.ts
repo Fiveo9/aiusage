@@ -4,8 +4,7 @@ import { sql } from '$lib/server/db/pool.js'
 import { hashPassword, validateUsername, validateEmail, validatePassword } from '$lib/server/auth/password.js'
 import {
   checkVerificationEmailRateLimit,
-  createEmailVerification,
-  recordVerificationEmailAttempt,
+  createEmailVerificationWithPolling,
   sendVerificationEmail
 } from '$lib/server/auth/email-verification.js'
 import { nanoid } from 'nanoid'
@@ -31,7 +30,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   if (rateLimitError) return json({ error: rateLimitError.code }, { status: 429 })
 
   // Check uniqueness
-  const existingUser = await sql`SELECT id FROM users WHERE username = ${username} OR email = ${email}`
+  const existingUser = await sql`SELECT id FROM users WHERE username = ${username} OR LOWER(email) = ${email}`
   if (existingUser[0]) {
     return json({ error: 'username_taken' }, { status: 409 })
   }
@@ -39,26 +38,35 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const userId = nanoid()
   const passwordHash = await hashPassword(password as string)
 
-  await sql.begin(async (tx) => {
+  try {
+  const conflict = await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`username:${username}`}))`
+    const reserved = await tx`SELECT username FROM reserved_usernames WHERE username = ${username} AND reserved_until > clock_timestamp()`
+    if (reserved.length) return true
     await tx`
       INSERT INTO users (id, username, email, email_verified, display_name, password_hash, role, status)
       VALUES (${userId}, ${username}, ${email}, FALSE, ${username}, ${passwordHash}, 'user', 'active')
     `
+    return false
   })
-
-  const verificationUrl = await createEmailVerification(userId, email)
-  try {
-    await sendVerificationEmail(email, username, verificationUrl)
-    await recordVerificationEmailAttempt(ip, email)
+  if (conflict) return json({ error: 'username_reserved' }, { status: 409 })
   } catch (err) {
-    console.error('Failed to send verification email:', err)
-    await sql`DELETE FROM users WHERE id = ${userId}`
-    return json({ error: 'Failed to send verification email' }, { status: 500 })
+    if ((err as { code?: string }).code === '23505') return json({ error: 'username_taken' }, { status: 409 })
+    throw err
+  }
+
+  const verification = await createEmailVerificationWithPolling(userId, email)
+  try {
+    await sendVerificationEmail(email, username, verification.url)
+  } catch (err) {
+    console.error('Failed to send verification email')
+    return json({ error: 'email_delivery_failed', requires_email_verification: true, poll_token: verification.pollToken }, { status: 500 })
   }
 
   return json({
     success: true,
     requires_email_verification: true,
+    poll_token: verification.pollToken,
     message: 'Check your email to verify your account'
   })
 }

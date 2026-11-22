@@ -1,4 +1,5 @@
 <script>
+  import { getSafeRedirect } from '$lib/safe-redirect'
   import { csrfHeaders } from '$lib/csrf'
   import { invalidateAll } from '$app/navigation'
   import { page } from '$app/stores'
@@ -24,11 +25,12 @@
     ? '/login'
     : `/login?redirect=${encodeURIComponent(redirectTo)}`
 
-  function startPolling(checkEmail) {
+  function startPolling(pollToken) {
     stopPolling()
+    if (!pollToken) return
     pollTimer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/auth/check-verified?email=${encodeURIComponent(checkEmail)}`)
+        const res = await fetch(`/api/auth/check-verified?token=${encodeURIComponent(pollToken)}`)
         const data = await res.json()
         if (data.verified) {
           stopPolling()
@@ -74,10 +76,6 @@
     }
   }
 
-  function getSafeRedirect(value) {
-    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/settings'
-    return value
-  }
 
   async function handleRegister() {
     error = ''
@@ -94,12 +92,14 @@
         body: JSON.stringify({ username, email, password })
       })
       const data = await res.json()
-      if (res.ok) {
-        success = zh
+      if (res.ok || data.requires_email_verification) {
+        success = !res.ok
+          ? (zh ? '账号已创建，邮件暂未送达。请稍后重新发送验证邮件。' : 'Account created, but email delivery failed. Please resend verification shortly.')
+          : zh
           ? '验证邮件已发送。请打开邮箱中的链接，验证后将自动跳转到登录页。'
           : 'Verification email sent. Open the link in your inbox — this page will redirect to sign in once verified.'
         sentEmail = email
-        startPolling(email)
+        startPolling(data.poll_token)
         username = ''
         email = ''
         password = ''

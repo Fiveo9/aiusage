@@ -1,5 +1,6 @@
 <script>
   import { csrfHeaders } from '$lib/csrf'
+  import { readApiResponse } from '$lib/api-response'
   import { page } from '$app/stores'
   import { onMount } from 'svelte'
   import { lang } from '$lib/lang'
@@ -7,33 +8,43 @@
   let userCode = ''
   let loading = false
   let error = ''
-  let approved = false
+  let approvedCode = ''
+  $: approved = Boolean(approvedCode) && approvedCode === userCode.trim().toUpperCase()
+  let codeFromUrl
+  $: if (codeFromUrl !== $page.url.searchParams.get('code')) {
+    codeFromUrl = $page.url.searchParams.get('code')
+    userCode = codeFromUrl || ''
+    approvedCode = ''
+    error = ''
+  }
   let notLoggedIn = false
   $: zh = $lang === 'zh'
   $: loginHref = `/login?redirect=${encodeURIComponent(`/cli/authorize?code=${userCode}`)}`
 
   onMount(async () => {
-    userCode = $page.url.searchParams.get('code') || ''
-    const res = await fetch('/api/me')
-    if (res.status === 401) {
-      notLoggedIn = true
-    }
+    try {
+      const res = await fetch('/api/me')
+      notLoggedIn = res.status === 401
+      if (!res.ok && !notLoggedIn) error = (await readApiResponse(res)).error
+    } catch { error = zh ? '网络错误' : 'Network error' }
   })
 
   async function approveDevice() {
-    if (!userCode) return
+    if (!userCode || loading) return
+    const requestedCode = userCode.trim().toUpperCase()
     loading = true
     error = ''
     try {
       const res = await fetch('/api/cli/device/approve-by-code', {
         method: 'POST',
         headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ user_code: userCode })
+        body: JSON.stringify({ user_code: requestedCode })
       })
+      if (requestedCode !== userCode.trim().toUpperCase()) return
       if (res.ok) {
-        approved = true
+        approvedCode = requestedCode
       } else {
-        const data = await res.json().catch(() => null)
+        const data = await readApiResponse(res)
         if (res.status === 401) {
           notLoggedIn = true
           error = ''

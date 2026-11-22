@@ -3,10 +3,11 @@ import type { RequestHandler } from './$types'
 import { sql } from '$lib/server/db/pool.js'
 import { requireUser } from '$lib/server/auth/session.js'
 import { getConfigValue, CFG } from '$lib/server/config.js'
+import { readLimitedJson } from '$lib/server/request-body.js'
 
 export const PUT: RequestHandler = async (event) => {
   const user = await requireUser(event)
-  const body = await event.request.json() as Record<string, unknown>
+  const body = await readLimitedJson(event.request)
 
   const usernameCooldownDays = await getConfigValue(CFG.USERNAME_COOLDOWN_DAYS)
   const usernameMinLength = await getConfigValue(CFG.USERNAME_MIN_LENGTH)
@@ -15,55 +16,24 @@ export const PUT: RequestHandler = async (event) => {
   const displayNameMaxLength = await getConfigValue(CFG.DISPLAY_NAME_MAX_LENGTH)
 
   const updates: Record<string, string> = {}
-  let usernameChanged = false
 
   // username
   if (body.username !== undefined) {
-    const username = String(body.username).trim()
+    if (typeof body.username !== 'string') return json({ error: 'username_format', error_key: 'username_format' }, { status: 400 })
+    const username = body.username.trim()
     if (username.length < usernameMinLength || username.length > usernameMaxLength) {
       return json({ error: 'username_length', error_key: 'username_length' }, { status: 400 })
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
       return json({ error: 'username_format', error_key: 'username_format' }, { status: 400 })
     }
-    if (username !== user.username) {
-      // Check cooldown
-      const userRow = await sql`SELECT username_changed_at FROM users WHERE id = ${user.id}`
-      const lastChanged = (userRow[0] as { username_changed_at: string | null })?.username_changed_at
-      if (lastChanged) {
-        const cooldownEnd = new Date(new Date(lastChanged).getTime() + usernameCooldownDays * 24 * 60 * 60 * 1000)
-        if (cooldownEnd > new Date()) {
-          return json({
-            error: 'username_cooldown',
-            error_key: 'username_cooldown',
-            cooldown_until: cooldownEnd.toISOString()
-          }, { status: 429 })
-        }
-      }
-
-      // Check if taken by another user
-      const existing = await sql`SELECT id FROM users WHERE username = ${username} AND id != ${user.id}`
-      if (existing.length > 0) {
-        return json({ error: 'username_taken', error_key: 'username_taken' }, { status: 409 })
-      }
-
-      // Check if reserved
-      const reserved = await sql`
-        SELECT username FROM reserved_usernames
-        WHERE username = ${username} AND user_id != ${user.id} AND reserved_until > NOW()
-      `
-      if (reserved.length > 0) {
-        return json({ error: 'username_reserved', error_key: 'username_reserved' }, { status: 409 })
-      }
-
-      updates.username = username
-      usernameChanged = true
-    }
+    updates.username = username
   }
 
   // display_name
   if (body.display_name !== undefined) {
-    const displayName = String(body.display_name).trim()
+    if (typeof body.display_name !== 'string') return json({ error: 'display_name_length', error_key: 'display_name_length' }, { status: 400 })
+    const displayName = body.display_name.trim()
     if (displayName.length < displayNameMinLength || displayName.length > displayNameMaxLength) {
       return json({ error: 'display_name_length', error_key: 'display_name_length' }, { status: 400 })
     }
@@ -74,25 +44,35 @@ export const PUT: RequestHandler = async (event) => {
     return json({ message: 'No changes' })
   }
 
-  if (updates.username !== undefined) {
-    await sql`UPDATE users SET username = ${updates.username}, username_changed_at = NOW(), updated_at = NOW() WHERE id = ${user.id}`
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = await tx`SELECT username, username_changed_at, status FROM users WHERE id = ${user.id} FOR UPDATE`
+      const current = rows[0] as { username: string; username_changed_at: string | null; status: string } | undefined
+      if (!current || current.status !== 'active') return json({ error: 'unauthorized' }, { status: 403 })
+      const usernameChanged = updates.username !== undefined && updates.username !== current.username
+      if (usernameChanged) {
+        if (current.username_changed_at) {
+          const cooldownEnd = new Date(new Date(current.username_changed_at).getTime() + usernameCooldownDays * 86_400_000)
+          if (cooldownEnd.getTime() > Date.now()) return json({ error: 'username_cooldown', error_key: 'username_cooldown', cooldown_until: cooldownEnd.toISOString() }, { status: 429 })
+        }
+        await tx`SELECT pg_advisory_xact_lock(hashtext(${`username:${updates.username}`}))`
+        const taken = await tx`SELECT id FROM users WHERE username = ${updates.username} AND id != ${user.id}`
+        if (taken.length) return json({ error: 'username_taken', error_key: 'username_taken' }, { status: 409 })
+        const reserved = await tx`SELECT username FROM reserved_usernames
+          WHERE username = ${updates.username} AND user_id != ${user.id} AND reserved_until > clock_timestamp()`
+        if (reserved.length) return json({ error: 'username_reserved', error_key: 'username_reserved' }, { status: 409 })
+        await tx`UPDATE users SET username = ${updates.username!}, username_changed_at = NOW(), updated_at = NOW() WHERE id = ${user.id}`
+        const reservedUntil = new Date(Date.now() + usernameCooldownDays * 86_400_000)
+        await tx`INSERT INTO reserved_usernames (username, user_id, reserved_until)
+          VALUES (${current.username}, ${user.id}, ${reservedUntil})
+          ON CONFLICT (username) DO UPDATE SET reserved_until = EXCLUDED.reserved_until, user_id = EXCLUDED.user_id`
+      }
+      if (updates.display_name !== undefined) await tx`UPDATE users SET display_name = ${updates.display_name}, updated_at = NOW() WHERE id = ${user.id}`
+      const updated = await tx`SELECT id, username, display_name, username_changed_at FROM users WHERE id = ${user.id}`
+      return json(updated[0])
+    })
+  } catch (err) {
+    if ((err as { code?: string }).code === '23505') return json({ error: 'username_taken', error_key: 'username_taken' }, { status: 409 })
+    throw err
   }
-  if (updates.display_name !== undefined) {
-    await sql`UPDATE users SET display_name = ${updates.display_name}, updated_at = NOW() WHERE id = ${user.id}`
-  }
-  // Reserve old username for 30 days
-  if (usernameChanged) {
-    const reservedUntil = new Date(Date.now() + usernameCooldownDays * 24 * 60 * 60 * 1000)
-    await sql`
-      INSERT INTO reserved_usernames (username, user_id, reserved_until)
-      VALUES (${user.username}, ${user.id}, ${reservedUntil})
-      ON CONFLICT (username) DO UPDATE SET reserved_until = ${reservedUntil}, user_id = ${user.id}
-    `
-  }
-
-  const updated = await sql`
-    SELECT id, username, display_name, username_changed_at FROM users WHERE id = ${user.id}
-  `
-
-  return json(updated[0])
 }

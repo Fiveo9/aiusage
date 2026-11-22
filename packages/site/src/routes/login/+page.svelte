@@ -1,4 +1,5 @@
 <script>
+  import { getSafeRedirect } from '$lib/safe-redirect'
   import { csrfHeaders } from '$lib/csrf'
   import { goto, invalidateAll } from '$app/navigation'
   import { page } from '$app/stores'
@@ -71,10 +72,6 @@
     }
   }
 
-  function getSafeRedirect(value) {
-    if (!value || !value.startsWith('/') || value.startsWith('//')) return '/settings'
-    return value
-  }
 </script>
 
 <svelte:head>

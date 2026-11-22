@@ -6,7 +6,8 @@ function getEncryptionKey(): string | undefined {
 }
 
 function getIpHashSecret(): string {
-  return env.IP_HASH_SECRET || 'default-ip-hash-secret'
+  if (!env.IP_HASH_SECRET) throw new Error('IP_HASH_SECRET is required')
+  return env.IP_HASH_SECRET
 }
 
 export function computeHmac(data: string, secret: string): string {

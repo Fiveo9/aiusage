@@ -4,12 +4,12 @@ import { sql } from '$lib/server/db/pool.js'
 import {
   checkVerificationEmailRateLimit,
   createEmailVerification,
-  recordVerificationEmailAttempt,
   sendVerificationEmail
 } from '$lib/server/auth/email-verification.js'
+import { readLimitedJson, AUTH_BODY_LIMIT } from '$lib/server/request-body.js'
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
-  const body = await request.json()
+  const body = await readLimitedJson(request, AUTH_BODY_LIMIT)
   const email = String(body.email || '').trim().toLowerCase()
 
   if (!email) {
@@ -25,7 +25,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const users = await sql`
     SELECT id, username, email_verified
     FROM users
-    WHERE email = ${email}
+    WHERE LOWER(email) = ${email}
   `
   const user = users[0] as { id: string; username: string; email_verified: boolean } | undefined
 
@@ -34,16 +34,14 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   }
 
   if (user.email_verified) {
-    return json({ error: 'email_already_verified' }, { status: 400 })
+    return json({ success: true, message: 'If an account exists, a verification email has been sent' })
   }
 
-  const verificationUrl = await createEmailVerification(user.id, email)
   try {
+    const verificationUrl = await createEmailVerification(user.id, email)
     await sendVerificationEmail(email, user.username, verificationUrl)
-    await recordVerificationEmailAttempt(ip, email)
   } catch (err) {
-    console.error('Failed to resend verification email:', err)
-    return json({ error: 'Failed to send verification email' }, { status: 500 })
+    console.error('Failed to resend verification email')
   }
 
   return json({ success: true, message: 'If an account exists, a verification email has been sent' })

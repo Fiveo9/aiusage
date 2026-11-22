@@ -29,7 +29,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     const tokenUrl = env.LINUX_DO_TOKEN_URL
     if (!clientId || !clientSecret || !tokenUrl) return new Response('Linux Do OAuth not configured', { status: 500 })
 
-    const siteUrl = env.SITE_URL || 'http://localhost:5173'
+    const siteUrl = (env.SITE_URL || 'http://localhost:5173').replace(/\/+$/, '')
     const redirectUri = `${siteUrl}/api/oauth/linux-do/callback`
 
     const tokenRes = await fetch(tokenUrl, {

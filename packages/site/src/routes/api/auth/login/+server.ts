@@ -25,7 +25,7 @@ export const POST: RequestHandler = async ({ request, cookies, getClientAddress 
   const users = await sql`
     SELECT id, username, email, email_verified, display_name, avatar_url, role, status, password_hash, ban_reason
     FROM users
-    WHERE (username = ${login} OR email = ${login}) AND password_hash IS NOT NULL
+    WHERE (username = ${login.trim()} OR LOWER(email) = ${login.trim().toLowerCase()}) AND password_hash IS NOT NULL
   `
   const user = users[0] as { id: string; username: string; email: string; email_verified: boolean; display_name: string; avatar_url: string | null; role: string; status: string; password_hash: string; ban_reason: string | null } | undefined
 

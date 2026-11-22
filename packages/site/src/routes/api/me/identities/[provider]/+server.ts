@@ -24,6 +24,7 @@ export const DELETE: RequestHandler = async (event) => {
       DELETE FROM user_identities WHERE user_id = ${user.id} AND provider = ${provider} RETURNING provider
     `
     if (deleted.length === 0) return json({ error: 'Identity not found' }, { status: 404 })
+    if (provider === 'github') await tx`UPDATE users SET github_starred = FALSE, github_star_checked_at = NULL WHERE id = ${user.id}`
     return json({ ok: true, provider })
   })
 }

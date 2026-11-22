@@ -1,5 +1,6 @@
 <script>
   import { csrfHeaders } from '$lib/csrf'
+  import { readApiResponse } from '$lib/api-response'
   import { onMount } from 'svelte'
   import { lang } from '$lib/lang'
 
@@ -20,6 +21,7 @@
   let userSearch = ''
   let usersLoading = false
   let userPage = 0
+  let usersRequestId = 0
   const userPageSize = 20
 
   // Pricing
@@ -39,10 +41,12 @@
 
   // Config
   let configs = {}
+  let originalConfigValues = {}
   let configCategories = []
   let configLoading = false
   let configSaving = false
   let configChanged = false
+  $: configChanged = Object.entries(configs).some(([key, entry]) => !Object.is(entry.value, originalConfigValues[key]))
   let configSearch = ''
 
   $: tabList = [
@@ -57,8 +61,12 @@
   })
 
   async function loadStats() {
-    const res = await fetch('/api/admin/stats')
-    if (res.ok) stats = await res.json()
+    try {
+      const res = await fetch('/api/admin/stats')
+      const data = await readApiResponse(res)
+      if (res.ok) stats = data
+      else error = data.error
+    } catch { error = zh ? '加载失败' : 'Failed to load' }
   }
 
   async function loadTab(tab) {
@@ -72,19 +80,21 @@
   }
 
   async function searchUsers(resetPage = true) {
+    const requestId = ++usersRequestId
     usersLoading = true
     if (resetPage) userPage = 0
     const params = new URLSearchParams()
     if (userSearch.trim()) params.set('q', userSearch.trim())
     params.set('limit', String(userPageSize))
     params.set('offset', String(userPage * userPageSize))
-    const res = await fetch(`/api/admin/users?${params}`)
-    if (res.ok) {
-      const data = await res.json()
-      users = data.users || []
-      userTotal = data.total ?? users.length
-    }
-    usersLoading = false
+    try {
+      const res = await fetch(`/api/admin/users?${params}`)
+      const data = await readApiResponse(res)
+      if (requestId !== usersRequestId) return
+      if (res.ok) { users = data.users || []; userTotal = data.total ?? users.length }
+      else error = data.error
+    } catch { if (requestId === usersRequestId) error = zh ? '加载失败' : 'Failed to load' }
+    finally { if (requestId === usersRequestId) usersLoading = false }
   }
 
   $: userTotalPages = Math.max(1, Math.ceil(userTotal / userPageSize))
@@ -96,12 +106,13 @@
 
   async function loadPricing() {
     pricingLoading = true
-    const res = await fetch('/api/admin/pricing')
-    if (res.ok) {
-      priceEntries = (await res.json()).entries || []
-      snapshotPriceEntries()
-    }
-    pricingLoading = false
+    try {
+      const res = await fetch('/api/admin/pricing')
+      const data = await readApiResponse(res)
+      if (res.ok) { priceEntries = data.entries || []; snapshotPriceEntries() }
+      else error = data.error
+    } catch { error = zh ? '加载失败' : 'Failed to load' }
+    finally { pricingLoading = false }
   }
 
   function snapshotPriceEntries() {
@@ -136,8 +147,8 @@
     actionFeedback = ''
     const updates = dirtyEntries.map(e => ({
       id: e.id,
-      input: Number(e.input) || 0,
-      output: Number(e.output) || 0,
+      input: e.input == null ? null : Number(e.input),
+      output: e.output == null ? null : Number(e.output),
       cache_read: e.cache_read != null ? Number(e.cache_read) : null,
       cache_write: e.cache_write != null ? Number(e.cache_write) : null,
     }))
@@ -151,7 +162,7 @@
         actionFeedback = zh ? `已保存 ${updates.length} 条价格` : `Saved ${updates.length} price(s)`
         await loadPricing()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '保存失败' : 'Save failed')
       }
     } catch {
@@ -176,8 +187,9 @@
         newModel = { model_key: '', input: null, output: null, cache_read: null, cache_write: null, currency: 'USD' }
         addingModel = false
         await loadPricing()
+        await loadStats()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '添加失败' : 'Add failed')
       }
     } catch {
@@ -197,8 +209,9 @@
       if (res.ok) {
         priceEntries = priceEntries.filter(e => e.id !== entry.id)
         actionFeedback = zh ? `已删除 ${entry.model_key}` : `Deleted ${entry.model_key}`
+        await loadStats()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '删除失败' : 'Delete failed')
       }
     } catch {
@@ -236,9 +249,13 @@
 
   async function loadAuditLogs() {
     logsLoading = true
-    const res = await fetch('/api/admin/audit-logs')
-    if (res.ok) auditLogs = (await res.json()).logs || []
-    logsLoading = false
+    try {
+      const res = await fetch('/api/admin/audit-logs')
+      const data = await readApiResponse(res)
+      if (res.ok) auditLogs = data.logs || []
+      else error = data.error
+    } catch { error = zh ? '加载失败' : 'Failed to load' }
+    finally { logsLoading = false }
   }
 
   // Group audit log actions into categories
@@ -287,12 +304,12 @@
         headers: csrfHeaders(),
       })
       if (res.ok) {
-        const data = await res.json()
+        const data = await readApiResponse(res)
         actionFeedback = zh ? `已清空 ${data.deleted} 条日志` : `Cleared ${data.deleted} log(s)`
         auditLogs = []
         await loadStats()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '清空失败' : 'Clear failed')
       }
     } catch {
@@ -302,30 +319,32 @@
 
   async function loadConfigs() {
     configLoading = true
-    const res = await fetch('/api/admin/config')
-    if (res.ok) {
-      const data = await res.json()
-      configs = data.configs || {}
-      configCategories = data.categories || []
-    }
-    configLoading = false
-    configChanged = false
+    try {
+      const res = await fetch('/api/admin/config')
+      const data = await readApiResponse(res)
+      if (res.ok) {
+        configs = data.configs || {}
+        originalConfigValues = Object.fromEntries(Object.entries(configs).map(([key, entry]) => [key, entry.value]))
+        configCategories = data.categories || []
+      } else error = data.error
+    } catch { error = zh ? '加载失败' : 'Failed to load' }
+    finally { configLoading = false }
   }
 
   function setConfigValue(key, value) {
     configs = { ...configs, [key]: { ...configs[key], value } }
-    configChanged = true
   }
 
   async function saveConfigs() {
     if (configSaving) return
+    const toSave = {}
+    for (const [key, entry] of Object.entries(configs)) {
+      if (!Object.is(entry.value, originalConfigValues[key])) toSave[key] = entry.value
+    }
+    if (!Object.keys(toSave).length) return
     configSaving = true
     actionError = ''
     actionFeedback = ''
-    const toSave = {}
-    for (const [key, entry] of Object.entries(configs)) {
-      toSave[key] = entry.value
-    }
     try {
       const res = await fetch('/api/admin/config', {
         method: 'PUT',
@@ -334,9 +353,9 @@
       })
       if (res.ok) {
         actionFeedback = zh ? '配置已保存' : 'Config saved'
-        configChanged = false
+        originalConfigValues = { ...originalConfigValues, ...toSave }
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '保存失败' : 'Save failed')
       }
     } catch {
@@ -350,7 +369,6 @@
     const entry = configs[key]
     if (entry) {
       configs = { ...configs, [key]: { ...entry, value: entry.default } }
-      configChanged = true
     }
   }
 
@@ -385,7 +403,7 @@
         actionFeedback = successMsg
         return true
       }
-      const data = await res.json().catch(() => ({}))
+      const data = await readApiResponse(res)
       actionError = data.error || (zh ? '操作失败' : 'Operation failed')
       return false
     } catch {
@@ -433,13 +451,13 @@
         body: JSON.stringify({})
       })
       if (res.ok) {
-        const data = await res.json()
+        const data = await readApiResponse(res)
         actionFeedback = zh
           ? `价格已同步：新增 ${data.added ?? 0}，更新 ${data.updated ?? 0}，保留自定义 ${data.userPreserved ?? 0}`
           : `Prices synced: ${data.added ?? 0} added, ${data.updated ?? 0} updated, ${data.userPreserved ?? 0} custom preserved`
         await loadPricing()
       } else {
-        const data = await res.json().catch(() => ({}))
+        const data = await readApiResponse(res)
         actionError = data.error || (zh ? '同步失败' : 'Sync failed')
       }
     } catch {

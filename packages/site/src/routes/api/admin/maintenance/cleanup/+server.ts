@@ -1,9 +1,8 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { sql } from '$lib/server/db/pool.js'
 import { requireAdmin } from '$lib/server/auth/session.js'
-import { nanoid } from 'nanoid'
-import { getConfigValue, CFG } from '$lib/server/config.js'
+import { runCleanup } from '$lib/server/db/cleanup.js'
+import { readLimitedJson } from '$lib/server/request-body.js'
 
 /**
  * POST /api/admin/maintenance/cleanup
@@ -16,68 +15,9 @@ import { getConfigValue, CFG } from '$lib/server/config.js'
  */
 export const POST: RequestHandler = async (event) => {
   const admin = await requireAdmin(event)
-  const body = await event.request.json().catch(() => ({}))
-
-  const syncBatchDays = await getConfigValue(CFG.RETENTION_SYNC_BATCH_DAYS)
-  const tombstoneDays = await getConfigValue(CFG.RETENTION_TOMBSTONE_DAYS)
-  const nonceRetentionMinutes = await getConfigValue(CFG.NONCE_RETENTION_MINUTES)
-  const now = new Date()
-
-  const results: Record<string, number> = {}
-
-  // 1. Clean expired upload nonces
-  const nonceCleanup = await sql`
-    DELETE FROM upload_nonces WHERE created_at < NOW() - ${`${nonceRetentionMinutes} minutes`}::interval
-  `
-  results.nonces_cleaned = nonceCleanup.count ?? 0
-
-  // 2. Clean stale sync batches
-  const batchCutoff = new Date(now.getTime() - syncBatchDays * 24 * 60 * 60 * 1000)
-  const batchCleanup = await sql`
-    DELETE FROM cloud_sync_batches WHERE created_at < ${batchCutoff}
-  `
-  results.batches_cleaned = batchCleanup.count ?? 0
-
-  // 3. Physically delete cloud_usage_records that have been tombstoned
-  const tombstoneCutoff = new Date(now.getTime() - tombstoneDays * 24 * 60 * 60 * 1000)
-  const tombstoneCleanup = await sql`
-    DELETE FROM cloud_usage_records
-    WHERE deleted_at IS NOT NULL AND deleted_at < ${tombstoneCutoff}
-  `
-  results.tombstoned_records_cleaned = tombstoneCleanup.count ?? 0
-
-  // 4. Clean old generation records (records from generations older than current)
-  // Get all users with resets
-  const resets = await sql`SELECT user_id, sync_generation FROM cloud_sync_resets`
-  let oldGenCleaned = 0
-  for (const reset of resets) {
-    const r = reset as { user_id: string; sync_generation: number }
-    const result = await sql`
-      DELETE FROM cloud_usage_records
-      WHERE user_id = ${r.user_id} AND sync_generation < ${r.sync_generation}
-    `
-    oldGenCleaned += result.count ?? 0
-  }
-  results.old_generation_cleaned = oldGenCleaned
-
-  // 5. Clean expired device auth requests
-  const authCleanup = await sql`
-    DELETE FROM device_auth_requests WHERE expires_at < NOW() AND status = 'pending'
-  `
-  results.expired_auth_requests_cleaned = authCleanup.count ?? 0
-
-  // 6. Clean expired reserved usernames
-  const usernameCleanup = await sql`
-    DELETE FROM reserved_usernames WHERE reserved_until < NOW()
-  `
-  results.expired_reserved_usernames_cleaned = usernameCleanup.count ?? 0
-
-  // Audit log
-  const auditId = nanoid()
-  await sql`
-    INSERT INTO admin_audit_logs (id, admin_user_id, action, target_type, target_id, reason, metadata)
-    VALUES (${auditId}, ${admin.id}, 'maintenance_cleanup', 'system', 'cleanup', ${body.reason || null}, ${JSON.stringify(results)}::jsonb)
-  `
+  const body = event.request.body ? await readLimitedJson(event.request) : {}
+  if (body.reason != null && (typeof body.reason !== 'string' || body.reason.length > 1000)) return json({ error: 'Invalid cleanup reason' }, { status: 400 })
+  const results = await runCleanup(admin.id, body.reason as string | null ?? null)
 
   return json({ status: 'completed', results })
 }

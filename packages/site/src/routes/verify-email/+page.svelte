@@ -1,6 +1,22 @@
 <script>
   import { page } from '$app/stores'
   import { lang } from '$lib/lang'
+  import { csrfHeaders } from '$lib/csrf'
+
+  let verified = false
+  let failed = false
+  let loading = false
+  async function verifyEmail() {
+    if (loading) return
+    loading = true
+    try {
+      const response = await fetch('/api/auth/verify-email', { method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ token: $page.url.searchParams.get('token') }) })
+      verified = response.ok
+      failed = !response.ok
+    } catch { failed = true } finally { loading = false }
+  }
 
   $: zh = $lang === 'zh'
   $: data = $page.data
@@ -12,7 +28,7 @@
 
 <div class="verify-page">
   <div class="verify-card">
-    {#if data.success}
+    {#if data.success || verified}
       <div class="icon success">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -22,6 +38,10 @@
       <h1>{zh ? '邮箱验证成功' : 'Email Verified'}</h1>
       <p class="desc">{zh ? '你的邮箱已验证成功，现在可以登录了。' : 'Your email has been verified. You can now sign in.'}</p>
       <a href="/login" class="btn-primary">{zh ? '前往登录' : 'Sign In'}</a>
+    {:else if data.pending && !failed}
+      <h1>{zh ? '确认验证邮箱' : 'Confirm Email Verification'}</h1>
+      <p class="desc">{zh ? '点击下方按钮完成验证。打开链接本身不会消耗验证令牌。' : 'Click below to verify your email. Opening this link does not consume your verification token.'}</p>
+      <button class="btn-primary" disabled={loading} on:click={verifyEmail}>{loading ? (zh ? '验证中…' : 'Verifying…') : (zh ? '验证邮箱' : 'Verify Email')}</button>
     {:else}
       <div class="icon error">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

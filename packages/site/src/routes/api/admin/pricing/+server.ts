@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit'
+import { isHttpError, json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
 import { requireAdmin } from '$lib/server/auth/session.js'
 import { getPriceEntries, updatePriceEntries, addPriceEntry, deletePriceEntry } from '$lib/server/admin/operations.js'
@@ -23,7 +23,8 @@ export const PUT: RequestHandler = async (event) => {
     await updatePriceEntries(admin.id, body.updates)
     return json({ success: true })
   } catch (err) {
-    return json({ error: (err as Error).message }, { status: 400 })
+    if (isHttpError(err)) return json({ error: err.body.message }, { status: err.status })
+    throw err
   }
 }
 
@@ -49,11 +50,11 @@ export const POST: RequestHandler = async (event) => {
     })
     return json({ id: entryId })
   } catch (err) {
-    const msg = (err as Error).message
-    if (msg.includes('unique') || msg.includes('duplicate')) {
+    if ((err as { code?: string }).code === '23505') {
       return json({ error: 'Model already exists' }, { status: 409 })
     }
-    return json({ error: msg }, { status: 400 })
+    if (isHttpError(err)) return json({ error: err.body.message }, { status: err.status })
+    throw err
   }
 }
 
@@ -69,6 +70,7 @@ export const DELETE: RequestHandler = async (event) => {
     await deletePriceEntry(admin.id, body.entry_id, body.model_key || 'unknown')
     return json({ success: true })
   } catch (err) {
-    return json({ error: (err as Error).message }, { status: 400 })
+    if (isHttpError(err)) return json({ error: err.body.message }, { status: err.status })
+    throw err
   }
 }

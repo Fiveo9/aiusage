@@ -42,8 +42,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   try {
     await ensureInitialized()
-  } catch {
-    console.error('Site initialization failed; request rejected and initialization will be retried.')
+  } catch (initializationError) {
+    console.error('Site initialization failed; request rejected and initialization will be retried.',
+      initializationError instanceof Error ? initializationError.stack : 'Unknown initialization error')
     const response = new Response('Service temporarily unavailable', {
       status: 503,
       headers: { 'Retry-After': '5', 'Cache-Control': 'no-store' },
@@ -109,7 +110,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (event.url.pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'no-store')
   } else {
-    response.headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'")
+    response.headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'")
   }
 
   if (isCliSyncStatus) {

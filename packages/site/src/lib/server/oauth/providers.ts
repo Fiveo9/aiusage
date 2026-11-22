@@ -27,6 +27,7 @@ async function insertIdentity(tx: postgres.TransactionSql, userId: string, profi
     ON CONFLICT DO NOTHING RETURNING id
   `
   if (!rows[0]) throw new OAuthAccountError('already_linked')
+  if (profile.provider === 'github') await tx`UPDATE users SET github_starred = FALSE, github_star_checked_at = NULL WHERE id = ${userId}`
 }
 
 export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?: string): Promise<SessionUser> {
@@ -47,6 +48,7 @@ export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?:
         UPDATE user_identities SET access_token = ${accessToken}
         WHERE provider = ${profile.provider} AND provider_user_id = ${profile.providerUserId}
       `
+      if (accessToken && profile.provider === 'github') await tx`UPDATE users SET github_starred = FALSE, github_star_checked_at = NULL WHERE id = ${user.id}`
       if (email) await maybeGrantAdmin(user.id, email, verified, tx)
       return user
     }

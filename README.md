@@ -68,7 +68,7 @@ The project uses a pnpm workspace. Run development commands from the repository 
 
 For widget development, keep `pnpm dev` running and start `pnpm dev:widget` in another terminal. The widget uses a native SQLite module and resolves this checkout's built CLI first. It never installs a CLI automatically. Independent package targets are `@fiveo9/aiusage` and `@fiveo9/aiusage-widget`; registry publication still requires maintainer credentials and a release.
 
-For account or hosted-service development, run the site separately on port `4000` and set `SITE_URL=http://localhost:4000` in `packages/cli/.env`. Hosted integrations currently fall back to the inherited service address when this setting is absent. An independent deployment needs its own service configuration.
+For account or hosted-service development, run the site separately on port `4000` and set `SITE_URL=http://localhost:4000` in the CLI process environment (or use `AIUSAGE_SITE_URL`). Hosted integrations currently fall back to the inherited service address when this setting is absent. An independent deployment needs its own service configuration.
 
 | Directory | Responsibility |
 |---|---|

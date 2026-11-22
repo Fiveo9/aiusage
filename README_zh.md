@@ -68,7 +68,7 @@ pnpm dev
 
 开发桌面面板时，保持 `pnpm dev` 运行，再在另一个终端执行 `pnpm dev:widget`。小组件依赖原生 SQLite 模块，优先使用本仓库已构建的 CLI，不再自动安装 CLI。独立发行包名为 `@fiveo9/aiusage` 和 `@fiveo9/aiusage-widget`；实际发布仍需维护者配置凭据并执行发行流程。
 
-开发账号或托管服务时，在另一个终端启动站点（端口 `4000`），并在 `packages/cli/.env` 中设置 `SITE_URL=http://localhost:4000`。未设置时，相关集成仍默认连接继承的服务地址。独立部署需要配置自己的服务。
+开发账号或托管服务时，在另一个终端启动站点（端口 `4000`），并在 CLI 进程环境中设置 `SITE_URL=http://localhost:4000`（也可使用 `AIUSAGE_SITE_URL`）。未设置时，相关集成仍默认连接继承的服务地址。独立部署需要配置自己的服务。
 
 | 目录 | 职责 |
 |---|---|

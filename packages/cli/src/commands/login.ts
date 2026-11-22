@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { startDeviceAuth, completeDeviceAuth } from '../device-auth/api.js'
+import { startDeviceAuth, completeDeviceAuth, clampPollingInterval, validateVerificationUrl } from '../device-auth/api.js'
 import { saveCredentials, hasCredentials } from '../device-auth/credentials.js'
 import { base64url, sha256Buffer } from '../device-auth/crypto.js'
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import * as readline from 'node:readline'
 import { getSiteUrl } from '../site-url.js'
 
@@ -23,31 +25,32 @@ function getDeviceName(): string {
   return `${process.platform}-${process.arch}`
 }
 
-function getCliVersion(): string {
+declare const __VERSION__: string
+
+export function getCliVersion(): string {
   try {
-    // Try to read from package.json
-    const { readFileSync } = require('node:fs')
-    const { join } = require('node:path')
-    const pkgPath = join(__dirname, '../../package.json')
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+    if (typeof __VERSION__ === 'string' && __VERSION__) return __VERSION__
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))
     return pkg.version || '0.0.0'
   } catch {
     return '0.0.0'
   }
 }
 
-function openBrowser(url: string): boolean {
+export function openBrowser(url: string): boolean {
   try {
+    const safeUrl = validateVerificationUrl(url)
+    const options = { stdio: 'ignore' as const, shell: false, windowsHide: true, timeout: 10_000 }
     if (process.platform === 'darwin') {
-      execSync(`open "${url}"`, { stdio: 'ignore' })
+      execFileSync('/usr/bin/open', [safeUrl], options)
       return true
     }
     if (process.platform === 'linux') {
-      execSync(`xdg-open "${url}"`, { stdio: 'ignore' })
+      execFileSync('xdg-open', [safeUrl], options)
       return true
     }
     if (process.platform === 'win32') {
-      execSync(`start "" "${url}"`, { stdio: 'ignore' })
+      execFileSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', safeUrl], options)
       return true
     }
   } catch {
@@ -99,12 +102,12 @@ export async function runLogin(): Promise<void> {
     console.log('\nWaiting for authorization...')
 
     // Poll for completion
-    const startTime = Date.now()
     const expiresAt = new Date(startResponse.expires_at).getTime()
-    const interval = startResponse.interval * 1000
+    const interval = clampPollingInterval(startResponse.interval) * 1000
 
     while (Date.now() < expiresAt) {
       await new Promise(resolve => setTimeout(resolve, interval))
+      if (Date.now() >= expiresAt) break
 
       try {
         const completeResponse = await completeDeviceAuth(serverUrl, {
@@ -130,20 +133,24 @@ export async function runLogin(): Promise<void> {
         }
         if (error.code === 'authorization_expired') {
           console.error('\n✗ Authorization expired. Please try again.')
+          process.exitCode = 1
           return
         }
         if (error.code === 'authorization_declined') {
           console.error('\n✗ Authorization was declined.')
+          process.exitCode = 1
           return
         }
         console.error(`\n✗ Authorization failed: ${error instanceof Error ? error.message : error}`)
+        process.exitCode = 1
         return
       }
     }
 
     console.error('\n✗ Authorization timed out. Please try again.')
+    process.exitCode = 1
   } catch (error: any) {
-    console.error(`\n✗ Failed to start authorization: ${error.message}`)
-    process.exit(1)
+    console.error(`\n✗ Failed to start authorization: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    process.exitCode = 1
   }
 }

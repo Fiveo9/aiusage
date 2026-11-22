@@ -35,6 +35,8 @@ beforeEach(async () => {
   await query("INSERT INTO users (id, username, email, display_name) VALUES ('owner', 'owner', 'owner@example.test', 'Owner')")
   vi.clearAllMocks()
   vi.mocked(getSessionUser).mockImplementation(async sid => sid === 'session-1' ? accounts.owner : null)
+  vi.mocked(findOrCreateOAuthUser).mockReset().mockResolvedValue(accounts.oauth)
+  vi.mocked(bindOAuthIdentity).mockReset().mockResolvedValue({})
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'synthetic-value' }), {
     headers: { 'content-type': 'application/json' },
   })))
@@ -111,5 +113,22 @@ for (const provider of providers) describe(`${provider.name} browser and session
     expect(bindOAuthIdentity).not.toHaveBeenCalled()
     expect(findOrCreateOAuthUser).toHaveBeenCalledTimes(1)
     expect(createSession).toHaveBeenCalledWith('oauth-owner')
+  })
+
+  it('refuses a banned OAuth account before creating a session', async () => {
+    const cookies = browser()
+    const { state } = await start(cookies)
+    vi.mocked(findOrCreateOAuthUser).mockResolvedValueOnce({ ...accounts.oauth, status: 'banned' })
+    expect((await callback(cookies, state) as Response).status).toBe(403)
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses a user banned after the binding flow was issued', async () => {
+    const cookies = browser('session-1')
+    const { state } = await start(cookies, '?mode=bind')
+    vi.mocked(getSessionUser).mockResolvedValueOnce({ ...accounts.owner, status: 'banned' })
+    expect((await callback(cookies, state) as Response).status).toBe(403)
+    expect(bindOAuthIdentity).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

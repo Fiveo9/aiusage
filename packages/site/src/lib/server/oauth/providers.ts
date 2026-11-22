@@ -42,6 +42,7 @@ export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?:
     `
     if (existing[0]) {
       const user = existing[0] as SessionUser
+      if (user.status === 'banned') return user
       if (accessToken) await tx`
         UPDATE user_identities SET access_token = ${accessToken}
         WHERE provider = ${profile.provider} AND provider_user_id = ${profile.providerUserId}
@@ -59,6 +60,7 @@ export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?:
       if (matches[0]) {
         const user = matches[0] as SessionUser & { email_verified: boolean }
         if (!verified || user.email_verified !== true) throw new OAuthAccountError('email_not_verified')
+        if (user.status === 'banned') return user
         await insertIdentity(tx, user.id, normalized, accessToken)
         await maybeGrantAdmin(user.id, email, true, tx)
         return user
@@ -95,8 +97,9 @@ export async function maybeGrantAdmin(userId: string, email: string, providerEma
 export async function bindOAuthIdentity(userId: string, profile: OAuthProfile, accessToken?: string): Promise<{ error?: string }> {
   try {
     return await sql.begin(async tx => {
-      const user = await tx`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`
+      const user = await tx`SELECT id, status FROM users WHERE id = ${userId} FOR UPDATE`
       if (!user[0]) return { error: 'user_not_found' }
+      if (user[0].status === 'banned') return { error: 'user_banned' }
       await insertIdentity(tx, userId, profile, accessToken)
       return {}
     })

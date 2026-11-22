@@ -1,14 +1,10 @@
 import { json } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { getSessionUser } from '$lib/server/auth/session.js'
+import { requireUser } from '$lib/server/auth/session.js'
 import { sql } from '$lib/server/db/pool.js'
 
-export const GET: RequestHandler = async ({ cookies }) => {
-  const sid = cookies.get('ai_session')
-  if (!sid) return json({ error: 'Not authenticated' }, { status: 401 })
-
-  const user = await getSessionUser(sid)
-  if (!user) return json({ error: 'Not authenticated' }, { status: 401 })
+export const GET: RequestHandler = async (event) => {
+  const user = await requireUser(event)
 
   const rows = await sql`
     SELECT provider, provider_username AS username, email, created_at

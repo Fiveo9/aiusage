@@ -4,7 +4,10 @@ import { ensureCuratedPricingAliases } from '../pricing/curated-aliases.js'
 import { planLitellmPricing, type LitellmEntry } from '@aiusage/core'
 
 export async function banUser(adminUserId: string, targetUserId: string, reason: string): Promise<void> {
-  await sql`UPDATE users SET status = 'banned', banned_at = NOW(), ban_reason = ${reason}, updated_at = NOW() WHERE id = ${targetUserId}`
+  await sql.begin(async tx => {
+    await tx`UPDATE users SET status = 'banned', banned_at = NOW(), ban_reason = ${reason}, updated_at = NOW() WHERE id = ${targetUserId}`
+    await tx`DELETE FROM sessions WHERE user_id = ${targetUserId}`
+  })
   await logAdminAction(adminUserId, 'ban_user', 'users', targetUserId, reason)
 }
 

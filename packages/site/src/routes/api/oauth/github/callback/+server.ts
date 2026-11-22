@@ -48,6 +48,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   }
 
   const user = await findOrCreateOAuthUser(profile, tokenData.access_token)
+  if (user.status === 'banned') return new Response('User banned', { status: 403 })
   const sid = await createSession(user.id)
   await setSessionCookie(cookies, sid)
 

@@ -1,4 +1,5 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { page } from '$app/stores'
   import { lang } from '$lib/lang'
   import { onMount } from 'svelte'
@@ -70,11 +71,6 @@
 
   ]
 
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
-
   let unbindingProvider = ''
   let unbindError = ''
   async function unbindIdentity(provider) {
@@ -84,7 +80,7 @@
     try {
       const res = await fetch(`/api/me/identities/${provider}`, {
         method: 'DELETE',
-        headers: { 'x-csrf-token': getCsrfToken() }
+        headers: csrfHeaders()
       })
       if (res.ok) {
         identities = identities.filter(i => i.provider !== provider)
@@ -152,7 +148,7 @@
       formData.append('avatar', file)
       const res = await fetch('/api/me/avatar', {
         method: 'POST',
-        headers: { 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders(),
         body: formData
       })
       if (res.ok) {
@@ -191,7 +187,7 @@
     try {
       const res = await fetch('/api/me/avatar', {
         method: 'DELETE',
-        headers: { 'x-csrf-token': getCsrfToken() }
+        headers: csrfHeaders()
       })
       if (res.ok) {
         avatarPreviewSrc = ''
@@ -212,10 +208,7 @@
     try {
       const res = await fetch('/api/me/profile', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           username: editUsername,
           display_name: editDisplayName
@@ -246,10 +239,7 @@
     try {
       const res = await fetch('/api/me/password', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           current_password: me?.has_password ? currentPassword : undefined,
           new_password: newPassword

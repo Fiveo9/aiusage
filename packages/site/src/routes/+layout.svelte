@@ -1,15 +1,11 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { page } from '$app/stores'
   import { goto, invalidateAll } from '$app/navigation'
   import { lang } from '$lib/lang'
 
   function toggleLang() {
     lang.toggle()
-  }
-
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
   }
 
   let menuOpen = false
@@ -32,7 +28,7 @@
     menuOpen = false
     await fetch('/api/auth/logout', {
       method: 'POST',
-      headers: { 'x-csrf-token': getCsrfToken() }
+      headers: csrfHeaders()
     })
     await invalidateAll()
     goto('/login')

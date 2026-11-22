@@ -2,7 +2,7 @@ import type { Handle } from '@sveltejs/kit'
 import { runMigrations } from '$lib/server/db/schema.js'
 import { getUserFromEvent } from '$lib/server/auth/session.js'
 import { startCleanupCron } from '$lib/server/db/cleanup.js'
-import { generateCsrfToken, validateCsrfToken, setCsrfCookie } from '$lib/server/auth/csrf.js'
+import { generateCsrfToken, validateCsrfToken, setCsrfCookie, getCsrfTokenFromCookie, isValidCsrfToken } from '$lib/server/auth/csrf.js'
 
 let initializationPromise: Promise<void> | null = null
 
@@ -93,10 +93,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     applyCliSyncStatusCors(response)
   }
 
-  // Set CSRF cookie for browser requests
-  if (!event.url.pathname.startsWith('/api/')) {
-    const csrfToken = generateCsrfToken()
-    setCsrfCookie(response, csrfToken)
+  const isPrefetch = ['purpose', 'sec-purpose'].some(name =>
+    event.request.headers.get(name)?.toLowerCase().includes('prefetch'))
+  const isHtmlPage = event.request.method === 'GET'
+    && response.headers.get('content-type')?.toLowerCase().includes('text/html')
+    && !event.url.pathname.startsWith('/api/') && !event.url.pathname.startsWith('/_app/')
+    && event.url.pathname !== '/favicon.ico' && !event.isDataRequest && !isPrefetch
+  if (isHtmlPage && !isValidCsrfToken(getCsrfTokenFromCookie(event.request.headers.get('cookie')))) {
+    await setCsrfCookie(response, generateCsrfToken())
   }
 
   return response

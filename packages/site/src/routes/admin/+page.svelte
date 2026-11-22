@@ -1,13 +1,9 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { onMount } from 'svelte'
   import { lang } from '$lib/lang'
 
   $: zh = $lang === 'zh'
-
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
 
   let activeTab = 'users'
   let error = ''
@@ -148,7 +144,7 @@
     try {
       const res = await fetch('/api/admin/pricing', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ updates })
       })
       if (res.ok) {
@@ -172,7 +168,7 @@
     try {
       const res = await fetch('/api/admin/pricing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(newModel)
       })
       if (res.ok) {
@@ -195,7 +191,7 @@
     try {
       const res = await fetch('/api/admin/pricing', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ entry_id: entry.id, model_key: entry.model_key })
       })
       if (res.ok) {
@@ -288,7 +284,7 @@
     try {
       const res = await fetch('/api/admin/audit-logs', {
         method: 'DELETE',
-        headers: { 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders(),
       })
       if (res.ok) {
         const data = await res.json()
@@ -333,7 +329,7 @@
     try {
       const res = await fetch('/api/admin/config', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ configs: toSave })
       })
       if (res.ok) {
@@ -382,7 +378,7 @@
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body)
       })
       if (res.ok) {
@@ -433,7 +429,7 @@
     try {
       const res = await fetch('/api/admin/pricing/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({})
       })
       if (res.ok) {

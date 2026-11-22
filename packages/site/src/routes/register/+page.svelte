@@ -1,4 +1,5 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { invalidateAll } from '$app/navigation'
   import { page } from '$app/stores'
   import { lang } from '$lib/lang'
@@ -73,11 +74,6 @@
     }
   }
 
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
-
   function getSafeRedirect(value) {
     if (!value || !value.startsWith('/') || value.startsWith('//')) return '/settings'
     return value
@@ -94,10 +90,7 @@
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ username, email, password })
       })
       const data = await res.json()
@@ -129,10 +122,7 @@
     try {
       const res = await fetch('/api/auth/resend-verification', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ email: sentEmail })
       })
       const data = await res.json()

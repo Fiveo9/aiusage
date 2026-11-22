@@ -6,7 +6,7 @@ import { getConfigValue, CFG } from '../config.js'
 
 const SESSION_COOKIE = 'ai_session'
 
-async function getSessionDurationMs(): Promise<number> {
+export async function getSessionDurationMs(): Promise<number> {
   const days = await getConfigValue(CFG.SESSION_DURATION_DAYS)
   return days * 24 * 60 * 60 * 1000
 }

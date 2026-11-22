@@ -1,4 +1,5 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { lang } from '$lib/lang'
 
   $: zh = $lang === 'zh'
@@ -7,11 +8,6 @@
   let error = ''
   let success = false
   let loading = false
-
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
 
   function formatError(code) {
     if (zh) {
@@ -36,10 +32,7 @@
     try {
       const res = await fetch('/api/auth/forgot-password', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ email })
       })
       const data = await res.json()

@@ -1,4 +1,5 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { page } from '$app/stores'
   import { onMount } from 'svelte'
   import { lang } from '$lib/lang'
@@ -10,11 +11,6 @@
   let notLoggedIn = false
   $: zh = $lang === 'zh'
   $: loginHref = `/login?redirect=${encodeURIComponent(`/cli/authorize?code=${userCode}`)}`
-
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
 
   onMount(async () => {
     userCode = $page.url.searchParams.get('code') || ''
@@ -31,10 +27,7 @@
     try {
       const res = await fetch('/api/cli/device/approve-by-code', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ user_code: userCode })
       })
       if (res.ok) {

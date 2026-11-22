@@ -1,8 +1,14 @@
 import { randomBytes } from 'node:crypto'
+import { env } from '$env/dynamic/private'
+import { getSessionDurationMs } from './session.js'
 
 const CSRF_TOKEN_LENGTH = 32
 const CSRF_COOKIE_NAME = 'csrf_token'
 const CSRF_HEADER_NAME = 'x-csrf-token'
+
+export function isValidCsrfToken(token: string | null | undefined): token is string {
+  return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token)
+}
 
 export function generateCsrfToken(): string {
   return randomBytes(CSRF_TOKEN_LENGTH).toString('hex')
@@ -47,7 +53,7 @@ export function validateCsrfToken(request: Request): boolean {
   const cookieToken = getCsrfTokenFromCookie(request.headers.get('cookie'))
   const requestToken = getCsrfTokenFromRequest(request)
 
-  if (!cookieToken || !requestToken) {
+  if (!isValidCsrfToken(cookieToken) || !isValidCsrfToken(requestToken)) {
     return false
   }
 
@@ -64,10 +70,12 @@ export function validateCsrfToken(request: Request): boolean {
   return result === 0
 }
 
-export function setCsrfCookie(response: Response, token: string): Response {
-  response.headers.set(
+export async function setCsrfCookie(response: Response, token: string): Promise<Response> {
+  const maxAge = Math.floor(await getSessionDurationMs() / 1000)
+  const secure = (env.SITE_URL || '').toLowerCase().startsWith('https://') ? '; Secure' : ''
+  response.headers.append(
     'Set-Cookie',
-    `${CSRF_COOKIE_NAME}=${token}; Path=/; SameSite=Lax; Max-Age=3600`
+    `${CSRF_COOKIE_NAME}=${token}; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure}`
   )
   return response
 }

@@ -1,4 +1,5 @@
 <script>
+  import { csrfHeaders } from '$lib/csrf'
   import { goto, invalidateAll } from '$app/navigation'
   import { page } from '$app/stores'
   import { lang } from '$lib/lang'
@@ -24,11 +25,6 @@
       ? (zh ? '验证链接无效或已过期。' : 'Verification link is invalid or expired.')
       : ''
 
-  function getCsrfToken() {
-    const match = document.cookie.match(/csrf_token=([^;]+)/)
-    return match ? match[1] : ''
-  }
-
   function formatError(code) {
     if (zh) {
       switch (code) {
@@ -52,10 +48,7 @@
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': getCsrfToken()
-        },
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ login, password })
       })
       const data = await res.json()

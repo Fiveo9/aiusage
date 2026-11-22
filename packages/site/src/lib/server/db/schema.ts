@@ -587,5 +587,29 @@ const migrations = [
     up: async (tx: postgres.TransactionSql) => {
       await tx`ALTER TABLE cloud_usage_records ADD COLUMN IF NOT EXISTS session_title TEXT NOT NULL DEFAULT ''`
     }
+  },
+  {
+    version: 19,
+    name: 'oauth_bound_states_and_unique_provider',
+    up: async (tx: postgres.TransactionSql) => {
+      await tx`DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM user_identities GROUP BY user_id, provider HAVING COUNT(*) > 1) THEN
+          RAISE EXCEPTION 'Duplicate OAuth providers must be resolved before applying migration v19';
+        END IF;
+      END $$`
+      await tx`ALTER TABLE user_identities ADD CONSTRAINT user_identities_user_provider_key UNIQUE (user_id, provider)`
+      await tx`CREATE TABLE oauth_states (
+        state_hash TEXT PRIMARY KEY,
+        browser_nonce_hash TEXT NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('github', 'linux_do')),
+        mode TEXT NOT NULL CHECK (mode IN ('login', 'bind')),
+        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+        session_id_hash TEXT,
+        expires_at TIMESTAMPTZ NOT NULL,
+        CHECK ((mode = 'login' AND user_id IS NULL AND session_id_hash IS NULL)
+          OR (mode = 'bind' AND user_id IS NOT NULL AND session_id_hash IS NOT NULL))
+      )`
+      await tx`CREATE INDEX idx_oauth_states_expiry ON oauth_states(expires_at)`
+    }
   }
 ]

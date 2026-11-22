@@ -448,7 +448,7 @@
 
             {#if !hasGithub}
               <div style="margin-top: 1rem;">
-                <a href="/api/oauth/github/start" class="btn-primary" style="display: inline-block; text-decoration: none;">
+                <a href="/api/oauth/github/start?mode=bind" class="btn-primary" style="display: inline-block; text-decoration: none;">
                   {zh ? '绑定 GitHub' : 'Bind GitHub'}
                 </a>
                 <span class="field-hint" style="margin-top: 0.5rem;">

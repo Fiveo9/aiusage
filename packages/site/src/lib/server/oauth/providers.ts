@@ -2,6 +2,7 @@ import { sql } from '../db/pool.js'
 import { nanoid } from 'nanoid'
 import type { SessionUser } from '../auth/session.js'
 import { env } from '$env/dynamic/private'
+import type postgres from 'postgres'
 
 export interface OAuthProfile {
   provider: string
@@ -13,131 +14,96 @@ export interface OAuthProfile {
   rawProfile: Record<string, unknown>
 }
 
-export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?: string): Promise<SessionUser> {
-  // 1. Check if identity already exists
-  const existing = await sql`
-    SELECT u.id, u.username, u.email, u.display_name, u.avatar_url, u.role, u.status
-    FROM user_identities ui
-    JOIN users u ON u.id = ui.user_id
-    WHERE ui.provider = ${profile.provider} AND ui.provider_user_id = ${profile.providerUserId}
-  `
+export class OAuthAccountError extends Error {
+  constructor(public code: string) { super(code); this.name = 'OAuthAccountError' }
+}
 
-  if (existing[0]) {
-    const user = existing[0] as SessionUser
-    // Update access token on every login
-    if (accessToken) {
-      await sql`
+async function insertIdentity(tx: postgres.TransactionSql, userId: string, profile: OAuthProfile, accessToken?: string): Promise<void> {
+  const bound = await tx`SELECT id FROM user_identities WHERE user_id = ${userId} AND provider = ${profile.provider}`
+  if (bound[0]) throw new OAuthAccountError('provider_already_bound')
+  const rows = await tx`
+    INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_username, email, email_verified, raw_profile, access_token)
+    VALUES (${nanoid()}, ${userId}, ${profile.provider}, ${profile.providerUserId}, ${profile.username}, ${profile.email}, ${profile.emailVerified === true}, ${JSON.stringify(profile.rawProfile)}, ${accessToken || null})
+    ON CONFLICT DO NOTHING RETURNING id
+  `
+  if (!rows[0]) throw new OAuthAccountError('already_linked')
+}
+
+export async function findOrCreateOAuthUser(profile: OAuthProfile, accessToken?: string): Promise<SessionUser> {
+  const email = profile.email?.trim().toLowerCase() || null
+  const verified = profile.emailVerified === true
+  const normalized = { ...profile, email, emailVerified: verified }
+  return sql.begin(async tx => {
+    const existing = await tx`
+      SELECT u.id, u.username, u.email, u.display_name, u.avatar_url, u.role, u.status
+      FROM user_identities ui JOIN users u ON u.id = ui.user_id
+      WHERE ui.provider = ${profile.provider} AND ui.provider_user_id = ${profile.providerUserId}
+      FOR UPDATE OF u
+    `
+    if (existing[0]) {
+      const user = existing[0] as SessionUser
+      if (accessToken) await tx`
         UPDATE user_identities SET access_token = ${accessToken}
         WHERE provider = ${profile.provider} AND provider_user_id = ${profile.providerUserId}
       `
-    }
-    if (profile.email && profile.emailVerified) {
-      await maybeGrantAdmin(user.id, profile.email)
-    }
-    return user
-  }
-
-  // 2. Try auto-merge by verified email
-  if (profile.email && profile.emailVerified) {
-    const emailUser = await sql`
-      SELECT id, username, email, display_name, avatar_url, role, status
-      FROM users
-      WHERE email = ${profile.email} AND email_verified = TRUE
-    `
-    if (emailUser[0]) {
-      const user = emailUser[0] as SessionUser
-      await sql`
-        INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_username, email, email_verified, raw_profile, access_token)
-        VALUES (${nanoid()}, ${user.id}, ${profile.provider}, ${profile.providerUserId}, ${profile.username}, ${profile.email}, ${profile.emailVerified}, ${JSON.stringify(profile.rawProfile)}, ${accessToken || null})
-      `
-      await maybeGrantAdmin(user.id, profile.email)
+      if (email) await maybeGrantAdmin(user.id, email, verified, tx)
       return user
     }
-  }
 
-  // 3. Create new user (or re-link to existing user by email)
-  if (profile.email) {
-    const existingEmail = await sql`
-      SELECT id, username, email, display_name, avatar_url, role, status
-      FROM users WHERE email = ${profile.email}
-    `
-    if (existingEmail[0]) {
-      const user = existingEmail[0] as SessionUser
-      await sql`
-        INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_username, email, email_verified, raw_profile, access_token)
-        VALUES (${nanoid()}, ${user.id}, ${profile.provider}, ${profile.providerUserId}, ${profile.username}, ${profile.email}, ${profile.emailVerified}, ${JSON.stringify(profile.rawProfile)}, ${accessToken || null})
+    if (email) {
+      const matches = await tx`
+        SELECT id, username, email, email_verified, display_name, avatar_url, role, status
+        FROM users WHERE LOWER(email) = ${email} FOR UPDATE
       `
-      await maybeGrantAdmin(user.id, profile.email)
-      return user
+      if (matches.length > 1) throw new OAuthAccountError('email_ambiguous')
+      if (matches[0]) {
+        const user = matches[0] as SessionUser & { email_verified: boolean }
+        if (!verified || user.email_verified !== true) throw new OAuthAccountError('email_not_verified')
+        await insertIdentity(tx, user.id, normalized, accessToken)
+        await maybeGrantAdmin(user.id, email, true, tx)
+        return user
+      }
     }
-  }
 
-  const userId = nanoid()
-  let username = profile.username
-  const existingUsername = await sql`SELECT id FROM users WHERE username = ${username}`
-  if (existingUsername[0]) {
-    username = `${username}-${nanoid(4)}`
-  }
-
-  const displayName = profile.username
-  await sql`
-    INSERT INTO users (id, username, email, email_verified, display_name, avatar_url, role, status)
-    VALUES (${userId}, ${username}, ${profile.email || `${username}@placeholder.local`}, ${profile.emailVerified}, ${displayName}, ${profile.avatarUrl}, 'user', 'active')
-  `
-
-  await sql`
-    INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_username, email, email_verified, raw_profile, access_token)
-    VALUES (${nanoid()}, ${userId}, ${profile.provider}, ${profile.providerUserId}, ${profile.username}, ${profile.email}, ${profile.emailVerified}, ${JSON.stringify(profile.rawProfile)}, ${accessToken || null})
-  `
-
-  // Check admin emails
-  if (profile.email && profile.emailVerified) {
-    await maybeGrantAdmin(userId, profile.email)
-  }
-
-  return {
-    id: userId,
-    username,
-    email: profile.email || `${username}@placeholder.local`,
-    display_name: displayName,
-    avatar_url: profile.avatarUrl,
-    role: 'user',
-    status: 'active'
-  }
+    const userId = nanoid()
+    let username = profile.username
+    const existingUsername = await tx`SELECT id FROM users WHERE username = ${username}`
+    if (existingUsername[0]) username = `${username}-${nanoid(4)}`
+    const userEmail = email || `${username}@placeholder.local`
+    await tx`
+      INSERT INTO users (id, username, email, email_verified, display_name, avatar_url, role, status)
+      VALUES (${userId}, ${username}, ${userEmail}, ${Boolean(email) && verified}, ${profile.username}, ${profile.avatarUrl}, 'user', 'active')
+    `
+    await insertIdentity(tx, userId, normalized, accessToken)
+    if (email) await maybeGrantAdmin(userId, email, verified, tx)
+    return { id: userId, username, email: userEmail, display_name: profile.username,
+      avatar_url: profile.avatarUrl, role: 'user', status: 'active' }
+  })
 }
 
-export async function maybeGrantAdmin(userId: string, email: string): Promise<void> {
-  const adminEmails = (env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean)
-  if (adminEmails.includes(email)) {
-    await sql`UPDATE users SET role = 'admin' WHERE id = ${userId} AND role = 'user'`
-  }
+export async function maybeGrantAdmin(userId: string, email: string, providerEmailVerified = false, db: typeof sql | postgres.TransactionSql = sql): Promise<void> {
+  if (providerEmailVerified !== true) return
+  const normalizedEmail = email.trim().toLowerCase()
+  const adminEmails = (env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+  if (adminEmails.includes(normalizedEmail)) await db`
+    UPDATE users SET role = 'admin'
+    WHERE id = ${userId} AND role = 'user' AND status = 'active'
+      AND email_verified = TRUE AND LOWER(email) = ${normalizedEmail}
+  `
 }
 
 export async function bindOAuthIdentity(userId: string, profile: OAuthProfile, accessToken?: string): Promise<{ error?: string }> {
-  // Check if already bound to another user
-  const existing = await sql`
-    SELECT user_id FROM user_identities
-    WHERE provider = ${profile.provider} AND provider_user_id = ${profile.providerUserId}
-  `
-  if (existing[0]) {
-    if ((existing[0] as { user_id: string }).user_id === userId) {
-      // Already bound — update token if provided
-      if (accessToken) {
-        await sql`
-          UPDATE user_identities SET access_token = ${accessToken}
-          WHERE provider = ${profile.provider} AND provider_user_id = ${profile.providerUserId}
-        `
-      }
+  try {
+    return await sql.begin(async tx => {
+      const user = await tx`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`
+      if (!user[0]) return { error: 'user_not_found' }
+      await insertIdentity(tx, userId, profile, accessToken)
       return {}
-    }
-    return { error: 'already_linked' }
+    })
+  } catch (error) {
+    if (error instanceof OAuthAccountError) return { error: error.code }
+    throw error
   }
-
-  await sql`
-    INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_username, email, email_verified, raw_profile, access_token)
-    VALUES (${nanoid()}, ${userId}, ${profile.provider}, ${profile.providerUserId}, ${profile.username}, ${profile.email}, ${profile.emailVerified}, ${JSON.stringify(profile.rawProfile)}, ${accessToken || null})
-  `
-  return {}
 }
 
 export async function fetchGitHubProfile(accessToken: string): Promise<OAuthProfile> {
@@ -189,7 +155,7 @@ export async function fetchLinuxDoProfile(accessToken: string): Promise<OAuthPro
     providerUserId: String(data.sub || data.id),
     username: (data.username || data.preferred_username || data.name || 'linuxdo-user') as string,
     email: (data.email as string) || null,
-    emailVerified: Boolean(data.email_verified),
+    emailVerified: data.email_verified === true,
     avatarUrl: (data.picture as string) || null,
     rawProfile: data
   }

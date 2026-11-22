@@ -1,8 +1,8 @@
 import { redirect, isRedirect } from '@sveltejs/kit'
 import type { RequestHandler } from './$types'
-import { fetchLinuxDoProfile, findOrCreateOAuthUser, bindOAuthIdentity } from '$lib/server/oauth/providers.js'
+import { fetchLinuxDoProfile, findOrCreateOAuthUser, bindOAuthIdentity, OAuthAccountError } from '$lib/server/oauth/providers.js'
 import { createSession, getSessionUser, setSessionCookie } from '$lib/server/auth/session.js'
-import { consumeOAuthState } from '$lib/server/oauth/state-store.js'
+import { consumeOAuthState, oauthStateCookie } from '$lib/server/oauth/state-store.js'
 import { env } from '$env/dynamic/private'
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
@@ -10,8 +10,18 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     const code = url.searchParams.get('code')
     const state = url.searchParams.get('state')
 
-    if (!code || !state || !consumeOAuthState(state)) {
+    if (!code || !state) {
       return new Response('Invalid OAuth state', { status: 400 })
+    }
+    const existingSid = cookies.get('ai_session')
+    const context = await consumeOAuthState(state, cookies.get(oauthStateCookie('linux_do')), 'linux_do', existingSid)
+    if (!context) return new Response('Invalid OAuth state', { status: 400 })
+    cookies.delete(oauthStateCookie('linux_do'), { path: '/' })
+    let bindingUserId: string | undefined
+    if (context.mode === 'bind') {
+      const user = existingSid ? await getSessionUser(existingSid) : null
+      if (!user || user.id !== context.userId || user.status === 'banned') return new Response('Invalid binding session', { status: 403 })
+      bindingUserId = user.id
     }
 
     const clientId = env.LINUX_DO_CLIENT_ID
@@ -34,23 +44,18 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
       })
     })
     const tokenData = await tokenRes.json() as { access_token?: string; error?: string }
-    if (!tokenData.access_token) {
-      console.error('Linux Do token error:', tokenData)
-      return new Response(`Linux Do OAuth error: ${tokenData.error || 'no access token'}`, { status: 400 })
+    if (!tokenRes.ok || typeof tokenData.access_token !== 'string' || !tokenData.access_token) {
+      return new Response('Linux Do authorization failed', { status: 400 })
     }
 
     const profile = await fetchLinuxDoProfile(tokenData.access_token)
 
-    const existingSid = cookies.get('ai_session')
-    if (existingSid) {
-      const existingUser = await getSessionUser(existingSid)
-      if (existingUser) {
-        const result = await bindOAuthIdentity(existingUser.id, profile)
+    if (bindingUserId) {
+        const result = await bindOAuthIdentity(bindingUserId, profile)
         if (result.error) {
           throw redirect(302, `/settings?error=${encodeURIComponent(result.error)}`)
         }
         throw redirect(302, '/settings?bound=linux_do')
-      }
     }
 
     const user = await findOrCreateOAuthUser(profile)
@@ -60,7 +65,8 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     throw redirect(302, '/settings')
   } catch (e) {
     if (isRedirect(e)) throw e
-    console.error('Linux Do OAuth callback error:', e)
-    return new Response(`OAuth error: ${e instanceof Error ? e.message : 'Unknown error'}`, { status: 500 })
+    if (e instanceof OAuthAccountError) return new Response(e.code, { status: 400 })
+    console.error('Linux Do OAuth callback failed')
+    return new Response('OAuth callback failed', { status: 500 })
   }
 }

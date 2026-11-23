@@ -2,6 +2,7 @@ import type { Parser, ParseContext, ParseResult, StatsRecord, Tool, ToolCallReco
 import { recordIdFor, generateToolCallId } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
+import { parseTimestamp } from '../timestamp.js'
 
 function num(value: unknown): number {
   const n = Number(value)
@@ -9,14 +10,7 @@ function num(value: unknown): number {
 }
 
 function ts(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value
-  if (typeof value === 'string' && value.trim()) {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n
-    const parsed = new Date(value).getTime()
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return fallback
+  return parseTimestamp(value, fallback)
 }
 
 function lastPathSegment(value: unknown): string | null {
@@ -94,6 +88,7 @@ function usageFromAny(parsed: any, tool?: Tool): Usage | null {
   if (!usage || typeof usage !== 'object') return null
 
   const details = usage.prompt_tokens_details ?? usage.input_tokens_details ?? {}
+  const outputDetails = usage.completion_tokens_details ?? usage.output_tokens_details ?? {}
   const cachedFromDetails = num(details.cached_tokens)
   const rawInput =
     usage.input_tokens
@@ -110,10 +105,14 @@ function usageFromAny(parsed: any, tool?: Tool): Usage | null {
     ?? usage.cacheRead
     ?? cachedFromDetails,
   )
+  const thinkingTokens = num(usage.thinking_tokens ?? usage.reasoning_tokens ?? usage.reasoning_output_tokens
+    ?? outputDetails.reasoning_tokens ?? details.reasoning_tokens)
+  const rawOutput = num(usage.output_tokens ?? usage.output ?? usage.completion_tokens ?? usage.tokensOut)
 
   return {
     inputTokens: Math.max(0, num(rawInput) - cachedFromDetails),
-    outputTokens: num(usage.output_tokens ?? usage.output ?? usage.completion_tokens ?? usage.tokensOut),
+    // OpenAI output/completion details describe a subset of total output.
+    outputTokens: num(outputDetails.reasoning_tokens) > 0 ? Math.max(0, rawOutput - thinkingTokens) : rawOutput,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: num(
       usage.cache_creation_input_tokens
@@ -123,12 +122,7 @@ function usageFromAny(parsed: any, tool?: Tool): Usage | null {
       ?? usage.cacheWrites
       ?? usage.cacheWrite,
     ),
-    thinkingTokens: num(
-      usage.thinking_tokens
-      ?? usage.reasoning_tokens
-      ?? usage.reasoning_output_tokens
-      ?? details.reasoning_tokens,
-    ),
+    thinkingTokens,
   }
 }
 
@@ -194,6 +188,7 @@ export class GenericJsonlParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     const normalized = parsed?.type === 'context.append_loop_event' && parsed.event ? { ...parsed.event, time: parsed.time } : parsed
     if (!shouldAccept(this.tool, normalized)) return null
@@ -244,7 +239,8 @@ export class GenericJsonlParser implements Parser {
       thinkingTokens: usage.thinkingTokens,
       cost,
       costSource: hasPrice ? 'pricing' : 'unknown',
-      sessionId: context.sessionId,
+      sessionId: [normalized?.sessionId, normalized?.session_id, normalized?.conversationId, normalized?.conversation_id,
+        normalized?.session?.id, normalized?.payload?.sessionId].find(value => typeof value === 'string' && value.trim())?.trim() || context.sessionId,
       sourceFile: context.sourceFile,
       device: context.device,
       deviceInstanceId: context.deviceInstanceId,

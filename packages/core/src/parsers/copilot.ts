@@ -84,6 +84,7 @@ export class CopilotParser implements Parser {
     const sessionId = extractSessionId(attrs) ?? traceCtx?.sessionId ?? context.sessionId
     const responseId = attrStr(attrs, 'gen_ai.response.id')
     const ts = extractTimestamp(rec) ?? context.now
+    if (!Number.isFinite(ts) || !Number.isFinite(new Date(ts).getTime())) return null
 
     const provider = inferProvider(model)
     const cost = calculateCost(model, {
@@ -115,7 +116,7 @@ export class CopilotParser implements Parser {
     return null
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     // Build per-type trace/response sets for cascading dedup
     const inferTraces = new Set<string>()
     const inferResponses = new Set<string>()
@@ -133,11 +134,15 @@ export class CopilotParser implements Parser {
     }
 
     const results: ParseResult[] = []
+    const replacedRecordIds: string[] = []
     for (const c of this.fallback) {
       if (shouldEmit(c, this.coveredTraces, this.coveredResponses, inferTraces, inferResponses, turnTraces, turnResponses)) {
-        results.push(c.result)
+        if (c.result.record!.lineOffset >= replayCutoff) results.push(c.result)
+      } else if (c.result.record!.lineOffset < replayCutoff) {
+        replacedRecordIds.push(c.result.record!.id)
       }
     }
+    if (replacedRecordIds.length) results.push({ record: null, toolCalls: [], replacedRecordIds })
 
     this.fallback = []
     this.coveredTraces.clear()
@@ -214,7 +219,7 @@ function attrStr(attrs: any, key: string): string | null {
 
 function attrNum(attrs: any, key: string): number {
   const v = attrs[key]
-  if (typeof v === 'number') return v >= 0 ? Math.round(v) : 0
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? Math.round(v) : 0
   if (typeof v === 'string') { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0 }
   return 0
 }

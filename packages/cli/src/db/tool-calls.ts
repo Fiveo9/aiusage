@@ -9,7 +9,7 @@ export function insertToolCall(db: Database.Database, tc: ToolCallRecord): void 
   `).run({
     id: tc.id,
     recordId: tc.recordId ?? null,
-    tool: tc.recordId ? null : (tc as any).tool,
+    tool: tc.recordId ? null : tc.tool ?? null,
     name: tc.name,
     ts: tc.ts,
     callIndex: tc.callIndex,
@@ -136,6 +136,7 @@ function mapRowToToolCall(row: any): ToolCallRecord {
   return {
     id: row.id,
     recordId: row.record_id,
+    ...(row.tool ? { tool: row.tool } : {}),
     name: row.name,
     ts: row.ts,
     callIndex: row.call_index,

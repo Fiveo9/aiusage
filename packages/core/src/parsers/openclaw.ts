@@ -3,6 +3,22 @@ import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
 import { recordIdFor, generateToolCallId, generateOrphanToolCallId } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost } from '../pricing.js'
+import { parseTimestamp } from '../timestamp.js'
+
+function orphanId(block: any, parsed: any, context: ParseContext, ts: number, callIndex: number): string {
+  // A source-supplied block/message id proves adoption across different log
+  // lines. Without one, a missing-time call is identifiable only at its source
+  // position; matching another line merely by its name would retract a stranger.
+  const blockId = typeof block.id === 'string' && block.id ? block.id : undefined
+  const messageId = typeof parsed.message?.id === 'string' && parsed.message.id ? parsed.message.id
+    : typeof parsed.id === 'string' && parsed.id ? parsed.id : undefined
+  if (blockId || messageId) {
+    const identity = blockId ? `block:${blockId}` : `message:${messageId}:${callIndex}`
+    return generateOrphanToolCallId('openclaw', `${recordIdFor(context, context.sourceFile, 0)}:${identity}`, 0, 0)
+  }
+  const hasTimestamp = parsed.message.timestamp != null || parsed.timestamp != null
+  return generateOrphanToolCallId('openclaw', hasTimestamp ? block.name : `${recordIdFor(context, context.sourceFile, context.lineOffset)}:${block.name}`, hasTimestamp ? ts : 0, callIndex)
+}
 
 export class OpenClawParser implements Parser {
   readonly tool: Tool = 'openclaw'
@@ -14,18 +30,21 @@ export class OpenClawParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     if (parsed.message?.role === 'assistant' && Array.isArray(parsed.message.content) && !parsed.message?.usage) {
       const rawTs = parsed.message.timestamp ?? parsed.timestamp ?? context.now
-      const ts = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+      const ts = parseTimestamp(rawTs, NaN, 'ms')
+      if (!Number.isFinite(ts)) return null
       const toolCalls: ToolCallRecord[] = []
       let callIndex = 0
 
       for (const block of parsed.message.content) {
-        if (block.type === 'tool_use' || block.type === 'toolCall') {
+        if ((block?.type === 'tool_use' || block?.type === 'toolCall') && typeof block.name === 'string' && block.name.trim()) {
           toolCalls.push({
-            id: generateOrphanToolCallId(this.tool, block.name, ts, callIndex),
+            id: orphanId(block, parsed, context, ts, callIndex),
             recordId: null,
+            tool: this.tool,
             name: block.name,
             ts,
             callIndex,
@@ -44,9 +63,10 @@ export class OpenClawParser implements Parser {
 
     const usage = parsed.message.usage
     const model = parsed.message.model ?? 'unknown'
-    const rawTs = parsed.message.timestamp ?? context.now
+    const rawTs = parsed.message.timestamp ?? parsed.timestamp ?? context.now
     // Normalize timestamp to Unix milliseconds (parsers must always produce integer ts)
-    const ts = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+    const ts = parseTimestamp(rawTs, NaN, 'ms')
+    if (!Number.isFinite(ts)) return null
 
     const inputTokens = usage.input ?? 0
     const outputTokens = usage.output ?? 0
@@ -111,11 +131,17 @@ export class OpenClawParser implements Parser {
 
     // Extract tool calls from message.content
     const toolCalls: ToolCallRecord[] = []
+    const replacedToolCallIds = new Set<string>()
     if (Array.isArray(parsed.message.content)) {
       let callIndex = 0
       for (const block of parsed.message.content) {
         // openclaw uses 'toolCall' (camelCase); Anthropic API uses 'tool_use'
-        if (block.type === 'tool_use' || block.type === 'toolCall') {
+        if ((block?.type === 'tool_use' || block?.type === 'toolCall') && typeof block.name === 'string' && block.name.trim()) {
+          replacedToolCallIds.add(orphanId(block, parsed, context, ts, callIndex))
+          if (parsed.message.timestamp != null || parsed.timestamp != null) {
+            // Also adopt an exact timestamp-keyed orphan from an earlier release.
+            replacedToolCallIds.add(generateOrphanToolCallId(this.tool, block.name, ts, callIndex))
+          }
           toolCalls.push({
             id: generateToolCallId(record.id, block.name, ts, callIndex),
             recordId: record.id,
@@ -128,6 +154,6 @@ export class OpenClawParser implements Parser {
       }
     }
 
-    return { record, toolCalls }
+    return { record, toolCalls, ...(replacedToolCallIds.size ? { replacedToolCallIds: [...replacedToolCallIds] } : {}) }
   }
 }

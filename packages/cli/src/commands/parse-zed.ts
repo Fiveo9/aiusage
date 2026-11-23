@@ -12,6 +12,8 @@ export interface ZedImportOptions {
   platform?: string
   now: number
   cursor: TimestampIdCursor | null
+  /** Preserve the first stored timestamp when a thread snapshot changes. */
+  storedTime?: (threadId: string) => number | undefined
   exchangeRate?: number
 }
 
@@ -82,9 +84,8 @@ export function runParseZed(db: Database.Database, options: ZedImportOptions): Z
     : db.prepare(`
       SELECT id, ${updatedExpr}, ${createdExpr}, data_type, data
       FROM threads
-      WHERE id > ?
       ORDER BY id
-    `).all(cursor?.lastId ?? '') as any[]
+    `).all() as any[]
 
   for (const row of rows) {
     nextCursor = { lastCreatedAt: String(row.updated_at ?? ''), lastId: String(row.id ?? '') }
@@ -111,7 +112,7 @@ export function runParseZed(db: Database.Database, options: ZedImportOptions): Z
     if (usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens === 0) continue
 
     const cost = model !== 'unknown' ? calculateCost(model, { ...usage, thinkingTokens: 0 }, exchangeRate) : 0
-    const recordTs = parseTs(row.created_at || row.updated_at, now)
+    const recordTs = options.storedTime?.(String(row.id)) ?? parseTs(row.created_at || row.updated_at, 0)
     records.push({
       id: recordIdFor(options, `${dbPath}:${row.id}`, recordTs),
       ts: recordTs,

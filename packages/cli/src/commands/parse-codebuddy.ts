@@ -22,7 +22,7 @@ export interface CodeBuddyImportResult {
 }
 
 function num(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
 }
 
 function toMs(iso: unknown): number {
@@ -101,7 +101,7 @@ function findMessagesDirs(root: string, depth = 0): string[] {
 function readConversation(messagesDir: string): ConversationUsage | null {
   let files: string[]
   try {
-    files = readdirSync(messagesDir).filter((f) => f.endsWith('.json'))
+    files = readdirSync(messagesDir).filter((f) => f.endsWith('.json')).sort()
   } catch {
     return null
   }
@@ -111,7 +111,7 @@ function readConversation(messagesDir: string): ConversationUsage | null {
   for (const file of files) {
     try {
       const data = JSON.parse(readFileSync(join(messagesDir, file), 'utf-8')) as MessageFile
-      if (data && typeof data === 'object') parsed.push(data)
+      if (data && typeof data === 'object' && !Array.isArray(data)) parsed.push(data)
     } catch {
       // Skip unreadable/partial message files.
     }
@@ -139,6 +139,7 @@ function readConversation(messagesDir: string): ConversationUsage | null {
     } catch {
       continue
     }
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) continue
     const hasStats = extra.statsSnapshot != null || extra.lastStepInputTokens != null
     if (!hasStats) continue
     const ts = toMs(msg.createdAt)
@@ -147,7 +148,8 @@ function readConversation(messagesDir: string): ConversationUsage | null {
   if (!latest) return null
 
   const extra = latest.extra
-  const snapshot = (extra.statsSnapshot ?? {}) as Record<string, unknown>
+  const snapshot = extra.statsSnapshot && typeof extra.statsSnapshot === 'object' && !Array.isArray(extra.statsSnapshot)
+    ? extra.statsSnapshot as Record<string, unknown> : {}
 
   // Prefer the cumulative snapshot; fall back to per-step fields when absent.
   const cacheReadTokens = num(snapshot.cachedInputTokens ?? extra.lastStepCachedInputTokens)
@@ -202,10 +204,11 @@ export function runParseCodeBuddy(options: CodeBuddyImportOptions): CodeBuddyImp
       continue
     }
     if (!usage) continue
-    if (usage.inputTokens + usage.outputTokens + usage.cacheReadTokens === 0) continue
+    if (usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.thinkingTokens === 0) continue
 
     // Skip conversations already imported (last activity at or before the cursor).
-    if (cursor && usage.ts <= cursor) continue
+    // Unknown time is stable (0), but cannot prove that the cursor covered it.
+    if (cursor && usage.ts > 0 && usage.ts <= cursor) continue
     if (usage.ts > nextCursor) nextCursor = usage.ts
 
     const provider = inferProvider(usage.model)

@@ -89,6 +89,7 @@ describe('runParse with Grok Build data', () => {
       sources: { grok: sessionsRoot },
     }))
     writeFileSync(join(testDir, '.aiusage', 'watermark.json'), JSON.stringify({
+      grokParserVersion: 1,
       files: {
         grok: {
           [sessionAPath]: {
@@ -107,7 +108,7 @@ describe('runParse with Grok Build data', () => {
 
     const first = await runParse(cacheDb, 'grok')
     expect(first.errors).toEqual([])
-    expect(first.parsedCount).toBe(3)
+    expect(first.parsedCount).toBe(5)
 
     const rows = cacheDb.prepare(`
       SELECT session_id, model, input_tokens, cwd
@@ -116,14 +117,16 @@ describe('runParse with Grok Build data', () => {
       ORDER BY session_id, line_offset
     `).all()
     expect(rows).toEqual([
+      { session_id: 'session-a', model: 'grok-unknown', input_tokens: 100, cwd: 'C:\\workspace\\app' },
       { session_id: 'session-a', model: 'grok-composer-2.5-fast', input_tokens: 200, cwd: 'C:\\workspace\\app' },
       { session_id: 'session-a', model: 'grok-composer-2.5-fast', input_tokens: 150, cwd: 'C:\\workspace\\app' },
+      { session_id: 'session-b', model: 'grok-unknown', input_tokens: 20, cwd: '/workspace/other' },
       { session_id: 'session-b', model: 'grok-3', input_tokens: 50, cwd: '/workspace/other' },
     ])
 
     const second = await runParse(cacheDb, 'grok')
     expect(second.errors).toEqual([])
     expect(second.parsedCount).toBe(0)
-    expect(cacheDb.prepare("SELECT COUNT(*) AS count FROM records WHERE tool = 'grok'").get()).toEqual({ count: 3 })
+    expect(cacheDb.prepare("SELECT COUNT(*) AS count FROM records WHERE tool = 'grok'").get()).toEqual({ count: 5 })
   })
 })

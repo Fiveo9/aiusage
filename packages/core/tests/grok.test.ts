@@ -64,11 +64,12 @@ describe('GrokParser', () => {
       ...parser.finalize(),
     ])
 
-    expect(emitted).toHaveLength(2)
-    expect(emitted.map(result => result.record?.inputTokens)).toEqual([200, 150])
-    expect(emitted.map(result => result.record?.lineOffset)).toEqual([100, 400])
-    expect(emitted.map(result => result.record?.ts)).toEqual([1_700_000_003_000, 1_700_000_005_000])
-    expect(emitted[0].record).toMatchObject({
+    expect(emitted).toHaveLength(3)
+    expect(emitted.map(result => result.record?.inputTokens)).toEqual([100, 200, 150])
+    expect(emitted.reduce((total, result) => total + result.record!.inputTokens, 0)).toBe(450)
+    expect(emitted.map(result => result.record?.lineOffset)).toEqual([0, 100, 400])
+    expect(emitted.map(result => result.record?.ts)).toEqual([1_700_000_000_000, 1_700_000_003_000, 1_700_000_005_000])
+    expect(emitted[1].record).toMatchObject({
       tool: 'grok',
       model: 'grok-composer-2.5-fast',
       provider: 'xai',

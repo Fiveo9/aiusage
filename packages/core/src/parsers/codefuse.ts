@@ -9,6 +9,8 @@ import { parseTimestamp } from '../timestamp.js'
 interface PendingToolCall {
   name: string
   ts: number
+  lineOffset: number
+  orphanId: string
 }
 
 interface UsageParts {
@@ -81,7 +83,8 @@ function storedToolName(block: any): string | null {
     const skillArg = typeof raw === 'string' ? raw.trim() : ''
     return skillArg ? `skill__${skillArg}` : 'skill__unknown'
   }
-  const rawName: string = block?.name ?? block?.toolName ?? ''
+  const rawName = block?.name ?? block?.toolName ?? ''
+  if (typeof rawName !== 'string') return null
   const cleanName = rawName.replace(/[=:"'{\[\s].*$/s, '').replace(/[^a-zA-Z0-9_-]/g, '')
   return cleanName || null
 }
@@ -121,19 +124,25 @@ export class CodeFuseParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     const turnCtx = parsed.type === 'turn_context' ? parsed.payload : undefined
-    if (turnCtx?.model) this.currentModel = turnCtx.model
+    if (typeof turnCtx?.model === 'string' && turnCtx.model) this.currentModel = turnCtx.model
 
     const payload = parsed.event_msg?.payload
       ?? (parsed.type === 'event_msg' || parsed.type === 'response_item' ? parsed.payload : undefined)
 
-    if (payload?.type === 'turn_context' && payload.model) this.currentModel = payload.model
+    if (payload?.type === 'turn_context' && typeof payload.model === 'string' && payload.model) this.currentModel = payload.model
     if (payload?.type === 'function_call') {
-      const rawTs = parsed.event_msg?.timestamp ?? parsed.timestamp ?? context.now
+      const rawTs = parsed.event_msg?.timestamp ?? parsed.timestamp
+      const ts = parseTimestamp(rawTs, rawTs == null ? context.now : NaN)
+      if (!Number.isFinite(ts)) return null
+      const rawName = payload.name ?? payload.function?.name
+      const name = typeof rawName === 'string' && rawName ? rawName : 'unknown'
       this.pendingToolCalls.push({
-        name: payload.name ?? payload.function?.name ?? 'unknown',
-        ts: parseTimestamp(rawTs, context.now),
+        name, ts, lineOffset: context.lineOffset,
+        orphanId: generateOrphanToolCallId(this.tool, rawTs == null ? `${recordIdFor(context, context.sourceFile, context.lineOffset)}:${name}` : name,
+          rawTs == null ? 0 : ts, this.pendingToolCalls.length),
       })
       return null
     }
@@ -173,21 +182,21 @@ export class CodeFuseParser implements Parser {
     return null
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     const pendingToolCalls = this.pendingToolCalls
     this.pendingToolCalls = []
     this.currentModel = null
 
     if (pendingToolCalls.length === 0) return []
     const toolCalls: ToolCallRecord[] = pendingToolCalls.map((tc, callIndex) => ({
-      id: generateOrphanToolCallId(this.tool, tc.name, tc.ts, callIndex),
+      id: tc.orphanId,
       recordId: null,
       tool: this.tool,
       name: tc.name,
       ts: tc.ts,
       callIndex,
-    } as ToolCallRecord & { tool: 'codefuse' }))
-    return [{ record: null, toolCalls }]
+    })).filter((_, index) => pendingToolCalls[index].lineOffset >= replayCutoff)
+    return toolCalls.length ? [{ record: null, toolCalls }] : []
   }
 
   private parseCodexTokenCount(parsed: any, payload: any, context: ParseContext): ParseResult | null {
@@ -213,8 +222,9 @@ export class CodeFuseParser implements Parser {
       ts: tc.ts,
       callIndex,
     }))
+    const replacedToolCallIds = this.pendingToolCalls.map(tc => tc.orphanId)
     this.pendingToolCalls = []
-    return { record: result.record, toolCalls: pendingToolCalls }
+    return { record: result.record, toolCalls: pendingToolCalls, ...(replacedToolCallIds.length ? { replacedToolCallIds } : {}) }
   }
 
   private buildRecord(options: {
@@ -235,7 +245,8 @@ export class CodeFuseParser implements Parser {
     const provider = inferProvider(model)
     const hasPrice = model !== 'unknown' && resolvePrice(model) != null
     const cost = hasPrice ? calculateCost(model, usage, context.exchangeRate) : 0
-    const recordTs = parseTimestamp(options.rawTs, context.now)
+    const recordTs = parseTimestamp(options.rawTs, options.rawTs == null ? context.now : NaN)
+    if (!Number.isFinite(recordTs)) return null
     const recordId = options.idSeed
       ? recordIdFor(context, options.idSeed, 0)
       : recordIdFor(context, context.sourceFile, context.lineOffset)

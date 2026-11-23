@@ -266,14 +266,15 @@ describe('runParse with Claude Code logs (#89)', () => {
     await runParse(db, 'claude-code')
     const [record] = records()
     const [legacyId] = downgradeToolCalls([{ recordId: record.id, name: 'Read', ts: '2026-07-06T08:00:01.000Z' }])
-    // The Read line replaces the old-scheme row, then a line with an
-    // unreadable timestamp yields a tool call that cannot be stored.
+    // The Read line replaces the old-scheme row, then a valid call hits an
+    // actual storage failure. Malformed timestamps are now safely skipped.
     writeLog('session-a.jsonl', [
       threeBlockMessage[1],
-      line('msg_1', toolUse('toolu_grep', 'Grep'), 'not a timestamp'),
+      line('msg_1', toolUse('toolu_grep', 'Grep'), '2026-07-06T08:00:02.000Z'),
       line('msg_1', toolUse('toolu_edit', 'Edit'), '2026-07-06T08:00:03.000Z', 999),
     ])
     resetFileWatermarks()
+    db.exec("CREATE TRIGGER synthetic_call_failure BEFORE INSERT ON tool_calls WHEN NEW.name = 'Grep' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;")
 
     const result = await runParse(db, 'claude-code')
 
@@ -659,9 +660,10 @@ describe('runParse after a log file that could not be written (#89)', () => {
   })
 
   it('does not attach a pending Codex function call of the failed file to the next file', async () => {
-    // The usage line cannot be stored; the function call after it has no usage of its own.
+    // Reject a valid usage line at storage; the following call has no usage.
+    db.exec("CREATE TRIGGER synthetic_file_failure BEFORE INSERT ON records WHEN NEW.source_file LIKE '%rollout-a.jsonl' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;")
     writeFileSync(join(sessionsDir, 'rollout-a.jsonl'), [
-      tokenCount('not a timestamp'),
+      tokenCount('2026-07-06T08:00:00.000Z'),
       functionCall('2026-07-06T08:00:01.000Z'),
     ].join('\n') + '\n')
     writeFileSync(join(sessionsDir, 'rollout-b.jsonl'), tokenCount('2026-07-06T09:00:00.000Z') + '\n')

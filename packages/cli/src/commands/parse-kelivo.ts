@@ -552,7 +552,7 @@ export async function runParseKelivo(options: KelivoImportOptions): Promise<Keli
       const provider = inferredProvider !== 'unknown'
         ? inferredProvider
         : readOptionalString(entry.providerId) || 'unknown'
-      const ts = parseTimestamp(entry.timestamp, now)
+      const ts = parseTimestamp(entry.timestamp, 0)
       const sessionId = readOptionalString(entry.conversationId) || 'unknown'
       const messageId = readOptionalString(entry.id) || `${sessionId}:${ts}:${index}`
       const sourceKey = `kelivo:${sessionId}:${messageId}`

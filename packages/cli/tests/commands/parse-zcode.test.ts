@@ -140,7 +140,7 @@ describe('parse-zcode', () => {
         platform: 'win32',
       })
       expect(r.ts).toBe(1781486799684)
-      expect(result.nextCursor).toEqual({ lastStartedAt: 1781486799684, lastId: 'usage_1' })
+      expect(result.nextCursor).toEqual({ lastStartedAt: 1781486799684, lastId: 'usage_1', pendingIds: [] })
     })
 
     it('lowercases model_id so inferProvider matches the glm- prefix', () => {
@@ -177,7 +177,7 @@ describe('parse-zcode', () => {
 
       const first = runParseZcode(db, { ...baseOpts, cursor: null, toolCursor: null })
       expect(first.records).toHaveLength(2)
-      expect(first.nextCursor).toEqual({ lastStartedAt: 200, lastId: 'new' })
+      expect(first.nextCursor).toEqual({ lastStartedAt: 200, lastId: 'new', pendingIds: [] })
 
       const second = runParseZcode(db, { ...baseOpts, cursor: first.nextCursor, toolCursor: null })
       expect(second.records).toHaveLength(0)
@@ -207,12 +207,12 @@ describe('parse-zcode', () => {
       expect(result.toolCalls.every(tc => tc.recordId === null)).toBe(true)
       // Names preserved
       expect(result.toolCalls.map(tc => tc.name)).toEqual(['Bash', 'Read'])
-      // callIndex increments within the batch
+      // Each database row is an independently identified call, not a batch position.
       expect(result.toolCalls[0].callIndex).toBe(0)
-      expect(result.toolCalls[1].callIndex).toBe(1)
+      expect(result.toolCalls[1].callIndex).toBe(0)
       // IDs are stable hashes
       expect(result.toolCalls[0].id).toHaveLength(16)
-      expect(result.nextToolCursor).toEqual({ lastStartedAt: 600, lastId: 't2' })
+      expect(result.nextToolCursor).toEqual({ lastStartedAt: 600, lastId: 't2', pendingIds: [] })
     })
 
     it('respects tool cursor independently of token cursor', () => {

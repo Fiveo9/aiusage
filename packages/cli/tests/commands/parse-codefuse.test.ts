@@ -285,12 +285,13 @@ describe('runParse with CodeFuse data', () => {
     const snapshot = () => cacheDb.prepare('SELECT input_tokens FROM records WHERE source_file = ?').all(snapshotFile)
     expect(snapshot()).toEqual([{ input_tokens: 5000 }])
 
-    // The session's log appears; its second line has a tool name the parser cannot read.
+    // A valid log appears, but an actual storage failure must preserve the snapshot.
     const usage = { input_tokens: 100, output_tokens: 20 }
     writeJsonl(join(ccDir, 'cc-session.jsonl'), [
       { type: 'assistant', uuid: 'cc-uuid-1', sessionId: 'cc-session', timestamp: '2026-07-06T08:00:00.000Z', message: { model: 'claude-opus-4-6', content: [], usage } },
-      { type: 'assistant', uuid: 'cc-uuid-2', sessionId: 'cc-session', timestamp: '2026-07-06T08:00:01.000Z', message: { model: 'claude-opus-4-6', content: [{ type: 'tool_use', name: 7 }], usage } },
+      { type: 'assistant', uuid: 'cc-uuid-2', sessionId: 'cc-session', timestamp: '2026-07-06T08:00:01.000Z', message: { model: 'claude-opus-4-6', content: [{ type: 'tool_use', name: 'Read' }], usage } },
     ])
+    cacheDb.exec("CREATE TRIGGER synthetic_call_failure BEFORE INSERT ON tool_calls WHEN NEW.name = 'Read' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;")
 
     const result = await runParse(cacheDb, 'codefuse')
 

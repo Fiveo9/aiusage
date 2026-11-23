@@ -1,7 +1,7 @@
 import { basename } from 'node:path'
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, inferProvider, resolvePrice, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
+import { calculateCost, inferProvider, resolvePrice, parseTimestamp, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
 
 export interface AntigravityImportOptions {
   dbPath: string
@@ -86,14 +86,19 @@ interface StepMetadata extends NamedModel {
 const MAX_VARINT_BYTES = 10
 
 function readVarint(data: Buffer, start: number): { value: number; offset: number } {
-  let value = 0
-  let shift = 0
+  let value = 0n
+  let shift = 0n
   let offset = start
   while (offset < data.length && offset - start < MAX_VARINT_BYTES) {
     const byte = data[offset++]
-    value += (byte & 0x7f) * (2 ** shift)
-    if ((byte & 0x80) === 0) return { value, offset }
-    shift += 7
+    if (offset - start === MAX_VARINT_BYTES && byte > 1) throw new Error('invalid protobuf varint')
+    value |= BigInt(byte & 0x7f) << shift
+    if ((byte & 0x80) === 0) {
+      const signed = BigInt.asIntN(64, value)
+      if (signed > BigInt(Number.MAX_SAFE_INTEGER) || signed < BigInt(Number.MIN_SAFE_INTEGER)) throw new Error('unsafe protobuf integer')
+      return { value: Number(signed), offset }
+    }
+    shift += 7n
   }
   throw new Error('invalid protobuf varint')
 }
@@ -119,7 +124,7 @@ function readFields(data: Buffer): ProtoField[] {
     } else if (wireType === 2) {
       const size = readVarint(data, offset)
       const end = size.offset + size.value
-      if (end > data.length) throw new Error('truncated protobuf bytes')
+      if (size.value < 0 || end > data.length) throw new Error('truncated protobuf bytes')
       fields.push({ number, wireType, value: data.subarray(size.offset, end) })
       offset = end
     } else if (wireType === 5) {
@@ -179,8 +184,9 @@ function repeatedVarints(fields: ProtoField[], number: number): number[] {
 function timestampFromFields(fields: ProtoField[]): number | undefined {
   const seconds = firstVarint(fields, 1)
   if (seconds == null || seconds <= 0) return undefined
-  const nanos = Math.min(firstVarint(fields, 2) ?? 0, 999_999_999)
-  return seconds * 1000 + Math.floor(nanos / 1_000_000)
+  const nanos = Math.max(0, Math.min(firstVarint(fields, 2) ?? 0, 999_999_999))
+  const ts = parseTimestamp(seconds * 1000 + Math.floor(nanos / 1_000_000), NaN, 'ms')
+  return Number.isFinite(ts) ? ts : undefined
 }
 
 function generationTimestamp(chatModel: ProtoField[]): number | undefined {
@@ -481,19 +487,19 @@ function modelEnum(chatModel: ProtoField[]): string | undefined {
 }
 
 function parseModelUsage(fields: ProtoField[]): ModelUsage {
-  const totalOutputTokens = firstVarint(fields, 3) ?? 0
-  const thinkingTokens = firstVarint(fields, 9) ?? 0
-  const visibleOutputTokens = firstVarint(fields, 10) ?? 0
+  const totalOutputTokens = Math.max(0, firstVarint(fields, 3) ?? 0)
+  const thinkingTokens = Math.max(0, firstVarint(fields, 9) ?? 0)
+  const visibleOutputTokens = Math.max(0, firstVarint(fields, 10) ?? 0)
   const normalizedTotalOutput = Math.max(totalOutputTokens, visibleOutputTokens + thinkingTokens)
   const responseId = firstString(fields, [11])
   const providerMessageId = firstString(fields, [12])
   const messageId = firstString(fields, [7])
   return {
-    modelId: firstVarint(fields, 1) || undefined,
-    inputTokens: firstVarint(fields, 2) ?? 0,
+    modelId: Math.max(0, firstVarint(fields, 1) ?? 0) || undefined,
+    inputTokens: Math.max(0, firstVarint(fields, 2) ?? 0),
     totalOutputTokens: normalizedTotalOutput,
-    cacheWriteTokens: firstVarint(fields, 4) ?? 0,
-    cacheReadTokens: firstVarint(fields, 5) ?? 0,
+    cacheWriteTokens: Math.max(0, firstVarint(fields, 4) ?? 0),
+    cacheReadTokens: Math.max(0, firstVarint(fields, 5) ?? 0),
     thinkingTokens,
     outputTokens: Math.max(visibleOutputTokens, normalizedTotalOutput - thinkingTokens),
     identities: [

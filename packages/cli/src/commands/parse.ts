@@ -9,7 +9,7 @@ import { insertToolCall, deleteAdoptedToolCall, deletePositionalCounterpart, has
 import { getState } from '../init.js'
 import { loadConfig, AIUSAGE_DIR } from '../config.js'
 import { WatermarkManager } from '../watermark.js'
-import { discoverLogFiles, getDbPath } from '../discovery.js'
+import { discoverLogFiles, getDbPath, getDbPaths } from '../discovery.js'
 import { runParseOpenCode } from './parse-opencode.js'
 import { runParseHermes } from './parse-hermes.js'
 import { runParseQoder } from './parse-qoder.js'
@@ -24,9 +24,9 @@ import { runParseZcode } from './parse-zcode.js'
 import { runParseTrae } from './parse-trae.js'
 import { runParseCodeBuddy } from './parse-codebuddy.js'
 import { runParseAntigravity } from './parse-antigravity.js'
-import { cursorTranscriptComposerId, deleteCursorTranscriptEstimates, hasCursorDatabaseRecord, kiroLogLineId, prefixFingerprint, repairImporterDuplicates, replaceKiroLogLines, replaceSourceRecords, replaceSourceSnapshot } from './importer-duplicates.js'
+import { cursorTranscriptComposerId, deleteCursorTranscriptEstimates, deleteLocalRecords, hasCursorDatabaseRecord, kiroLogLineId, prefixFingerprint, repairImporterDuplicates, replaceKiroLogLines, replaceSourceRecords, replaceSourceSnapshot } from './importer-duplicates.js'
 import type { ProgressInfo } from '../progress.js'
-import { completeJsonlInput } from '../jsonl.js'
+import { completeJsonlEntries } from '../jsonl.js'
 import { backfillSessionTitles } from './session-titles.js'
 
 interface ParseResult {
@@ -479,7 +479,8 @@ function parseKiroSessionFile(options: {
     const model = normalizeKiroModel(turn?.model_id ?? sessionModel)
     const recordTs = parseTimestamp(
       turn?.request_start_timestamp_ms ?? turn?.start_timestamp ?? turn?.end_timestamp,
-      now,
+      0,
+      turn?.request_start_timestamp_ms != null ? 'ms' : 'auto',
     )
     const requestId = turn?.loop_id?.rand != null
       ? `${sessionId}:${turn.loop_id.rand}`
@@ -533,15 +534,14 @@ function parseKiroWorkspaceSession(options: {
   const sessionId = parsed?.sessionId ?? extractSessionId(filePath, 'kiro')
 
   // Try to load dateCreated from sibling sessions.json
-  let sessionTs = now
+  let sessionTs = 0
   try {
     const dir = dirname(filePath)
     const sessionsJson = readFileSync(join(dir, 'sessions.json'), 'utf-8')
     const sessions = JSON.parse(sessionsJson)
-    const match = Array.isArray(sessions) && sessions.find((s: any) => s.sessionId === sessionId)
+    const match = Array.isArray(sessions) && sessions.find((s: any) => s?.sessionId === sessionId)
     if (match?.dateCreated) {
-      const dc = Number(match.dateCreated)
-      if (Number.isFinite(dc) && dc > 0) sessionTs = dc < 1e12 ? dc * 1000 : dc
+      sessionTs = parseTimestamp(match.dateCreated, 0)
     }
   } catch {}
 
@@ -549,7 +549,9 @@ function parseKiroWorkspaceSession(options: {
   const allLogs: Array<{ log: any; index: number }> = []
   let logIndex = 0
   for (const entry of parsed.history ?? []) {
-    for (const pl of entry?.promptLogs ?? []) {
+    if (!Array.isArray(entry?.promptLogs)) continue
+    for (const pl of entry.promptLogs) {
+      if (!pl || typeof pl !== 'object' || Array.isArray(pl)) continue
       allLogs.push({ log: pl, index: logIndex++ })
     }
   }
@@ -663,7 +665,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
       try {
         const stat = statSync(filePath)
         const entry = wm.getEntry(tool, filePath)
-        const offset = entry?.offset ?? 0
+        let offset = entry?.offset ?? 0
 
         if (tool === 'antigravity' && filePath.endsWith('.db')) {
           // Query from the row cursor even when the main file is unchanged because
@@ -707,7 +709,13 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         // is a replacement whatever its time says (a restored copy keeps it).
         const kiroLogChanged = tool === 'kiro' && filePath.endsWith('.jsonl') && !!entry
           && (entry.mtime !== stat.mtimeMs || stat.size < entry.size)
-        const skipUnchangedFile = !(tool === 'kelivo' && isKelivoDatabaseFile(filePath)) && !kiroLogChanged
+        const isSnapshot = filePath.endsWith('.json')
+          || (tool === 'kelivo' && isKelivoSourceFile(filePath))
+          || (tool === 'cursor' && filePath.includes('agent-transcripts'))
+        const snapshotChanged = isSnapshot && !!entry && entry.mtime !== stat.mtimeMs
+        const truncated = stat.size < offset
+        if (truncated) offset = 0
+        const skipUnchangedFile = !(tool === 'kelivo' && isKelivoDatabaseFile(filePath)) && !kiroLogChanged && !snapshotChanged && !truncated
         if (skipUnchangedFile && offset >= stat.size) {
           onProgress({ phase: 'Parsing logs', tool, current: toolIndex, total: toolTotal, records: parsedCount, toolCalls: toolCallCount })
           continue // No new data
@@ -959,14 +967,13 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           continue
         }
 
-        const { lines, nextOffset } = completeJsonlInput(readFileSync(filePath))
-        let byteOffset = 0
+        const { entries, nextOffset } = completeJsonlEntries(readFileSync(filePath))
 
         // Extract cwd from the first line (Claude Code: top-level, Codex: payload.cwd)
         let fileCwd: string | undefined
         let firstData: any
         try {
-          firstData = JSON.parse(lines[0])
+          firstData = JSON.parse(entries[0]?.line ?? '')
           fileCwd = extractCwdFromJson(firstData)
         } catch {}
 
@@ -983,6 +990,20 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         // keeps its updated_at and stays synced.
         const pendingRecords = new Map<string, StatsRecord>()
         const pendingToolCalls: Array<{ tc: ToolCallRecord; lineOffset: number }> = []
+        const replacedRecordIds = new Set<string>()
+        const replacedToolCallIds = new Set<string>()
+        const collectResult = (result: ReturnType<Aggregator['parseLine']>, lineOffset: number): void => {
+          if (!result) return
+          if (result.record) {
+            pendingRecords.set(result.record.id, result.record)
+            parsedCount++
+          }
+          for (const id of result.replacedRecordIds ?? []) replacedRecordIds.add(id)
+          for (const id of result.replacedToolCallIds ?? []) replacedToolCallIds.add(id)
+          for (const tc of result.toolCalls) {
+            pendingToolCalls.push({ tc: tc.recordId ? tc : { ...tc, tool: tc.tool ?? tool }, lineOffset })
+          }
+        }
         // A Claude Code log read from its start writes all of its tool calls
         // again under block-keyed ids, so the row an earlier release stored
         // for each of those calls under a positional id is removed with it.
@@ -993,11 +1014,8 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         // and a re-import that was interrupted finishes file by file.
         const replacesPositionalToolCalls = tool === 'claude-code' && offset === 0
 
-        for (const line of lines) {
-          if (!line.trim()) {
-            byteOffset += Buffer.byteLength(line, 'utf-8') + 1
-            continue
-          }
+        for (const { line, offset: byteOffset } of entries) {
+          if (!line.trim()) continue
 
           if (byteOffset < offset) {
             // Still run through the parser to update stateful fields like currentModel,
@@ -1012,8 +1030,8 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
               recordId,
               platform: devicePlatform,
               exchangeRate,
+              replayCutoff: offset,
             }))
-            byteOffset += Buffer.byteLength(line, 'utf-8') + 1
             continue
           }
 
@@ -1027,23 +1045,15 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             recordId,
             platform: devicePlatform,
             exchangeRate,
+            replayCutoff: offset,
           })
 
-          const result = aggregator.parseLine(line, context)
-          if (result) {
-            if (result.record) {
-              pendingRecords.set(result.record.id, result.record)
-              parsedCount++
-            }
-
-            for (const tc of result.toolCalls) {
-              pendingToolCalls.push({ tc, lineOffset: byteOffset })
-              toolCallCount++
-            }
-          }
-
-          byteOffset += Buffer.byteLength(line, 'utf-8') + 1
+          collectResult(aggregator.parseLine(line, context), byteOffset)
         }
+
+        // Finalization can supersede a previous-poll fallback. Commit its result
+        // and that fallback's retirement together, never in a second transaction.
+        for (const result of aggregator.finalize(offset)) collectResult(result, result.record?.lineOffset ?? nextOffset)
 
         // One transaction: a positional row is deleted only together with
         // the insert of the row that replaces it, and a CodeFuse snapshot
@@ -1068,8 +1078,12 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             // A record stored under another transcript keeps that file's cwd.
             insertRecord(db, fileCwd && !record.cwd && record.sourceFile === filePath ? { ...record, cwd: fileCwd } : record)
           }
+          deleteLocalRecords(db, [...replacedRecordIds].filter(id => !pendingRecords.has(id)))
+          const removeOrphan = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id IS NULL')
+          for (const id of replacedToolCallIds) removeOrphan.run(id)
           const toolCallExists = db.prepare('SELECT 1 FROM tool_calls WHERE id = ?')
           for (const { tc, lineOffset } of pendingToolCalls) {
+            if (!tc.recordId && replacedToolCallIds.has(tc.id)) continue
             if (replacesPositionalToolCalls) {
               // An earlier release kept only the calls of the line its record
               // was last written from, so an old row under another name (see
@@ -1088,21 +1102,9 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             }
             if (tc.recordId) deleteAdoptedToolCall(db, tc, recordIds.copyOf(tc.recordId), filePath, lineOffset)
             insertToolCall(db, tc)
-          }
-        })()
-
-        // Handle finalize (orphan tool calls for Codex, deduped fallback records for Copilot OTEL, etc.)
-        const orphanResults = aggregator.finalize()
-        for (const result of orphanResults) {
-          if (result.record) {
-            insertRecord(db, result.record)
-            parsedCount++
-          }
-          for (const tc of result.toolCalls) {
-            insertToolCall(db, tc)
             toolCallCount++
           }
-        }
+        })()
 
         // Write cwd for all records from this file that don't have it yet.
         // Bump updated_at so a cwd added to already-synced records re-propagates.
@@ -1128,8 +1130,9 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
   }
 
   // OpenCode: SQLite database
-  const openCodeDbPath = options?.openCodeDbPath ?? getDbPath('opencode') ?? ''
-  if ((!filterTool || filterTool === 'opencode') && existsSync(openCodeDbPath)) {
+  const openCodeDbPaths = options?.openCodeDbPath !== undefined ? [options.openCodeDbPath] : getDbPaths('opencode')
+  for (const [openCodeIndex, openCodeDbPath] of openCodeDbPaths.entries()) {
+    if ((filterTool && filterTool !== 'opencode') || !existsSync(openCodeDbPath)) continue
     try {
       const openCodeDb = new Database(openCodeDbPath, { readonly: true })
       try {
@@ -1141,20 +1144,20 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           recordId: ids.recordId,
           platform: devicePlatform,
           now: Date.now(),
-          cursor: wm.getOpenCodeCursor(),
+          cursor: wm.getOpenCodeCursor(openCodeDbPath),
           exchangeRate,
         })
 
         ids.foldCopies(completeRecordIds(result.records, result.incompleteToolCallRecordIds))
         const stored = insertRecordsWithToolCalls(db, result.records, result.toolCalls, result.incompleteToolCallRecordIds)
         if (result.nextCursor) {
-          wm.setOpenCodeCursor(result.nextCursor)
+          wm.setOpenCodeCursor(result.nextCursor, openCodeDbPath)
           wm.save()
         }
         parsedCount += stored.records
         toolCallCount += stored.toolCalls
         errors.push(...result.errors)
-        onProgress({ phase: 'Parsing SQLite', tool: 'opencode', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+        onProgress({ phase: 'Parsing SQLite', tool: 'opencode', current: openCodeIndex + 1, total: openCodeDbPaths.length, records: parsedCount, toolCalls: toolCallCount })
       } finally {
         openCodeDb.close()
       }
@@ -1417,6 +1420,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           platform: devicePlatform,
           now: Date.now(),
           cursor: wm.getZedCursor(),
+          storedTime: storedSessionTime(db, 'zed', deviceInstanceId, zedDbPath),
           exchangeRate,
         })
         for (const record of result.records) insertRecord(db, record)
@@ -1575,7 +1579,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
   // remain unmatched, so rerunning this scan on every refresh would repeatedly parse
   // every historical source file and can block the dashboard for minutes.
   if (wm.getToolCallBackfillVersion() < CURRENT_TOOL_CALL_BACKFILL_VERSION) {
-    await backfillMissingToolCalls(db, exchangeRate)
+    await backfillMissingToolCalls(db, exchangeRate, recordId)
     wm.setToolCallBackfillVersion(CURRENT_TOOL_CALL_BACKFILL_VERSION)
     wm.save()
   }
@@ -1802,15 +1806,13 @@ function backfillCodexModels(db: Database.Database): void {
 
   for (const [sourceFile, fileRows] of byFile) {
     try {
-      const content = readFileSync(sourceFile, 'utf-8')
-      const lines = content.split('\n')
+      const { entries } = completeJsonlEntries(readFileSync(sourceFile))
 
       // Build a map: line_offset → model at that point in the file
       const offsetToModel = new Map<number, string>()
       let currentModel = ''
-      let byteOffset = 0
 
-      for (const line of lines) {
+      for (const { line, offset: byteOffset } of entries) {
         if (line.trim()) {
           try {
             const parsed = JSON.parse(line)
@@ -1824,7 +1826,6 @@ function backfillCodexModels(db: Database.Database): void {
             }
           } catch {}
         }
-        byteOffset += Buffer.byteLength(line, 'utf-8') + 1
       }
 
       for (const row of fileRows) {
@@ -1839,15 +1840,15 @@ function backfillCodexModels(db: Database.Database): void {
   }
 }
 
-async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: number): Promise<void> {
+async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: number, recordId?: RecordIdBuilder): Promise<void> {
   const rows = db.prepare(`
-    SELECT r.id, r.source_file, r.tool, r.line_offset, r.session_id
+    SELECT r.id, r.source_file, r.tool, r.line_offset, r.session_id, r.device, r.device_instance_id
     FROM records r
     LEFT JOIN tool_calls tc ON tc.record_id = r.id
     WHERE r.tool IN ('codex', 'openclaw', 'qoder')
       AND r.${LOCAL_RECORDS_WHERE}
       AND tc.id IS NULL
-  `).all() as { id: string; source_file: string; tool: Tool; line_offset: number; session_id: string }[]
+  `).all() as { id: string; source_file: string; tool: Tool; line_offset: number; session_id: string; device: string; device_instance_id: string }[]
 
   if (rows.length === 0) return
 
@@ -1860,8 +1861,7 @@ async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: nu
 
   for (const [sourceFile, fileRows] of rowsByFile) {
     try {
-      const content = readFileSync(sourceFile, 'utf-8')
-      const lines = content.split('\n')
+      const { entries } = completeJsonlEntries(readFileSync(sourceFile))
       const aggregator = new Aggregator()
       const recordIdByOffset = new Map<number, string>()
       const sessionIdByOffset = new Map<number, string>()
@@ -1873,27 +1873,27 @@ async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: nu
         sessionIdByOffset.set(row.line_offset, row.session_id)
       }
 
-      let byteOffset = 0
-      for (const line of lines) {
-        if (!line.trim()) {
-          byteOffset += Buffer.byteLength(line, 'utf-8') + 1
-          continue
-        }
+      for (const { line, offset: byteOffset } of entries) {
+        if (!line.trim()) continue
 
         const context = aggregator.createContext({
           tool,
           sourceFile,
           lineOffset: byteOffset,
           sessionId: sessionIdByOffset.get(byteOffset) ?? deriveSessionId(tool, sourceFile),
-          device: '',
-          deviceInstanceId: '',
+          device: fileRows[0].device,
+          deviceInstanceId: fileRows[0].device_instance_id,
+          recordId,
           exchangeRate,
         })
         const result = aggregator.parseLine(line, context)
         if (result?.toolCalls?.length) {
-          insertBackfilledToolCalls(db, result.toolCalls, tool, recordIdByOffset.get(byteOffset) ?? null)
+          db.transaction(() => {
+            const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id IS NULL')
+            for (const id of result.replacedToolCallIds ?? []) remove.run(id)
+            insertBackfilledToolCalls(db, result.toolCalls, tool, recordIdByOffset.get(byteOffset) ?? null)
+          })()
         }
-        byteOffset += Buffer.byteLength(line, 'utf-8') + 1
       }
 
       const orphanResults = aggregator.finalize()

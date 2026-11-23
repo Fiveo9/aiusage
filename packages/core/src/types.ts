@@ -65,6 +65,7 @@ export interface StatsRecord {
 }
 
 export interface ToolCallRecord {
+  tool?: Tool                          // Orphan calls have no record from which to derive ownership.
   id: string                           // 关联 record 存在时：sha256(recordId + name + ts + callIndex) 前 16 位 hex
   recordId: string | null              // 关联的 StatsRecord.id；null 表示孤儿工具调用
   name: string                         // 工具名称，如 "Read"、"Bash"、"Edit"
@@ -127,6 +128,7 @@ export interface ParsedLine {
 export type RecordIdBuilder = (seed: string, offset: number) => string
 
 export interface ParseContext {
+  replayCutoff?: number                // Source byte watermark, for completed historical turns.
   sourceFile: string
   lineOffset: number
   sessionId: string
@@ -142,10 +144,12 @@ export interface ParseContext {
 export interface ParseResult {
   record: StatsRecord | null
   toolCalls: ToolCallRecord[]
+  replacedRecordIds?: string[]         // Earlier fallback rows superseded by this complete read.
+  replacedToolCallIds?: string[]       // Orphan rows adopted by the emitted record.
 }
 
 export interface Parser {
   tool: Tool
   parseLine(line: string, context: ParseContext): ParseResult | null
-  finalize?(): ParseResult[]           // For orphan tool calls (Codex)
+  finalize?(replayCutoff?: number): ParseResult[] // Historical input updates state but must not be emitted again.
 }

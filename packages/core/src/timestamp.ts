@@ -8,11 +8,15 @@
  *
  * Falls back to `fallback` when the value cannot be interpreted.
  */
-export function parseTimestamp(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value
+export function parseTimestamp(value: unknown, fallback: number, numericUnit: 'auto' | 'ms' = 'auto'): number {
+  const fromNumber = (number: number) => {
+    const milliseconds = numericUnit === 'auto' && number < 1e12 ? number * 1000 : number
+    return Number.isFinite(milliseconds) && Number.isFinite(new Date(milliseconds).getTime()) ? milliseconds : fallback
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return fromNumber(value)
   if (typeof value === 'string' && value.trim()) {
     const asNumber = Number(value)
-    if (Number.isFinite(asNumber)) return asNumber < 1e12 ? asNumber * 1000 : asNumber
+    if (Number.isFinite(asNumber)) return fromNumber(asNumber)
     const parsed = new Date(value).getTime()
     if (Number.isFinite(parsed)) return parsed
   }

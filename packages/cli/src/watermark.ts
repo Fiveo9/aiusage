@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import type { Tool } from '@aiusage/core'
 
-const CURRENT_GROK_PARSER_VERSION = 1
-const CURRENT_CODEBUDDY_PARSER_VERSION = 1
+const CURRENT_GROK_PARSER_VERSION = 2
+const CURRENT_CODEBUDDY_PARSER_VERSION = 2
+const CURRENT_ZCODE_PARSER_VERSION = 1
 /**
  * v1: model resolution prefers readable model metadata over unknown numeric
  * ids and keeps effort-qualified Gemini Pro names (issues #68, #69). Every
@@ -103,6 +104,7 @@ export interface TimestampIdCursor {
 export interface ZcodeCursor {
   lastStartedAt: number  // Unix timestamp in milliseconds (model_usage.started_at)
   lastId: string         // model_usage.id
+  pendingIds?: string[]  // Earlier running rows that must be re-read after completion.
 }
 
 export type ZcodeToolCursor = ZcodeCursor  // same shape, tracks tool_usage instead
@@ -113,12 +115,14 @@ export interface WatermarkState {
   files: FileWatermarkData
   grokParserVersion?: number
   codebuddyParserVersion?: number
+  zcodeParserVersion?: number
   antigravityParserVersion?: number
   codefuseParserVersion?: number
   claudeCodeParserVersion?: number
   importerDedupVersion?: number
   toolCallBackfillVersion?: number
   opencode?: OpenCodeCursor | null
+  opencodeByPath?: Record<string, OpenCodeCursor>
   hermes?: HermesCursor | null
   qoder?: QoderCursor | null
   cursor?: CursorCursor | null
@@ -143,6 +147,7 @@ function defaultState(): WatermarkState {
     files: defaultFileData(),
     grokParserVersion: CURRENT_GROK_PARSER_VERSION,
     codebuddyParserVersion: CURRENT_CODEBUDDY_PARSER_VERSION,
+    zcodeParserVersion: CURRENT_ZCODE_PARSER_VERSION,
     antigravityParserVersion: CURRENT_ANTIGRAVITY_PARSER_VERSION,
     codefuseParserVersion: CURRENT_CODEFUSE_PARSER_VERSION,
     claudeCodeParserVersion: CURRENT_CLAUDE_CODE_PARSER_VERSION,
@@ -218,12 +223,14 @@ export class WatermarkManager {
           files: { ...defaultFileData(), ...(parsed.files ?? {}) },
           grokParserVersion: parsed.grokParserVersion,
           codebuddyParserVersion: parsed.codebuddyParserVersion,
+          zcodeParserVersion: parsed.zcodeParserVersion,
           antigravityParserVersion: parsed.antigravityParserVersion,
           codefuseParserVersion: parsed.codefuseParserVersion,
           claudeCodeParserVersion: parsed.claudeCodeParserVersion,
           importerDedupVersion: parsed.importerDedupVersion,
           toolCallBackfillVersion: parsed.toolCallBackfillVersion,
           opencode: parsed.opencode ?? null,
+          opencodeByPath: parsed.opencodeByPath ?? {},
           hermes: parsed.hermes ?? null,
           qoder: parsed.qoder ?? null,
           cursor: parsed.cursor ?? null,
@@ -248,7 +255,15 @@ export class WatermarkManager {
         // v1: codebuddy parser now counts usage on function_call lines; reset so
         // historical files are re-parsed and previously dropped usage is backfilled.
         state.files.codebuddy = {}
+        state.codebuddyIde = null
         state.codebuddyParserVersion = CURRENT_CODEBUDDY_PARSER_VERSION
+      }
+      if ((state.zcodeParserVersion ?? 0) < CURRENT_ZCODE_PARSER_VERSION) {
+        // The old cursor could pass still-running rows. Read the source once
+        // to recover them, then track both tables' pending rows independently.
+        state.zcode = null
+        state.zcodeTools = null
+        state.zcodeParserVersion = CURRENT_ZCODE_PARSER_VERSION
       }
       if ((state.antigravityParserVersion ?? 0) < CURRENT_ANTIGRAVITY_PARSER_VERSION) {
         // v1: Antigravity usage was attributed to placeholder ids such as
@@ -277,6 +292,7 @@ export class WatermarkManager {
         // yet, and the Kilo import moved it past OpenCode messages it had
         // never read; import opencode.db from the start once.
         state.opencode = null
+        state.opencodeByPath = {}
         state.opencodeParserVersion = CURRENT_OPENCODE_PARSER_VERSION
       }
       return state
@@ -311,11 +327,16 @@ export class WatermarkManager {
     }
   }
 
-  getOpenCodeCursor(): OpenCodeCursor | null {
+  getOpenCodeCursor(dbPath?: string): OpenCodeCursor | null {
+    if (dbPath !== undefined) return this.data.opencodeByPath?.[dbPath] ?? null
     return this.data.opencode ?? null
   }
 
-  setOpenCodeCursor(cursor: OpenCodeCursor): void {
+  setOpenCodeCursor(cursor: OpenCodeCursor, dbPath?: string): void {
+    if (dbPath !== undefined) {
+      this.data.opencodeByPath ??= {}
+      this.data.opencodeByPath[dbPath] = cursor
+    }
     this.data.opencode = cursor
   }
 

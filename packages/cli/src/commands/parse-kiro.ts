@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
-import { calculateCost, inferProvider, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
+import { calculateCost, inferProvider, parseTimestamp, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
 import type { TimestampIdCursor } from '../watermark.js'
 
 export interface KiroImportOptions {
@@ -33,14 +33,12 @@ function num(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 }
 
-function ts(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value
+function ts(value: unknown, fallback: number, unit: 'auto' | 'ms' = 'auto'): number {
   if (typeof value === 'string' && value.trim()) {
     const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value.trim()) ? `${value.trim()}Z` : value
-    const parsed = new Date(normalized).getTime()
-    if (Number.isFinite(parsed)) return parsed
+    return parseTimestamp(normalized, fallback, unit)
   }
-  return fallback
+  return parseTimestamp(value, fallback, unit)
 }
 
 function normalizeModel(value: unknown): string {
@@ -117,7 +115,7 @@ function parseTokensGenerated(db: Database.Database, options: KiroImportOptions)
     records.push(recordFromParts({
       dbPath,
       sourceId: String(row.id),
-      ts: ts(row.timestamp, now),
+      ts: ts(row.timestamp, 0),
       model,
       provider: typeof row.provider === 'string' ? row.provider : inferProvider(model),
       inputTokens,
@@ -169,7 +167,7 @@ function parseConversationsV2(db: Database.Database, options: KiroImportOptions)
       records.push(recordFromParts({
         dbPath,
         sourceId: String(requestId),
-        ts: ts(request.request_start_timestamp_ms, now),
+        ts: ts(request.request_start_timestamp_ms, 0, 'ms'),
         model,
         provider: inferProvider(model),
         inputTokens,

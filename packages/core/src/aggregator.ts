@@ -10,6 +10,7 @@ import { GenericJsonlParser } from './parsers/generic-jsonl.js'
 import { GrokParser } from './parsers/grok.js'
 
 export interface CreateContextOptions {
+  replayCutoff?: number
   tool: Tool
   sourceFile: string
   lineOffset: number
@@ -62,14 +63,15 @@ export class Aggregator {
       return null
     }
 
-    return this.activeParser.parseLine(line, context)
+    try { return this.activeParser.parseLine(line, context) }
+    catch { return null } // A malformed line must not discard the rest of its file.
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     const results: ParseResult[] = []
     for (const parser of this.parsers.values()) {
       if (parser.finalize) {
-        results.push(...parser.finalize())
+        results.push(...parser.finalize(replayCutoff))
       }
     }
     return results

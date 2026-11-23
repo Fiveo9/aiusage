@@ -137,7 +137,7 @@ describe('WatermarkManager', () => {
 
     wm.save()
     const saved = JSON.parse(readFileSync(watermarkPath, 'utf-8'))
-    expect(saved.grokParserVersion).toBe(1)
+    expect(saved.grokParserVersion).toBe(2)
   })
 
   it('preserves Grok entries written by the current parser version', () => {
@@ -145,7 +145,7 @@ describe('WatermarkManager', () => {
       files: {
         grok: { '/current/updates.jsonl': { offset: 300, size: 300, mtime: 3 } },
       },
-      grokParserVersion: 1,
+      grokParserVersion: 2,
     }), 'utf-8')
 
     const wm = new WatermarkManager(watermarkPath)
@@ -166,7 +166,28 @@ describe('WatermarkManager', () => {
 
     wm.save()
     const saved = JSON.parse(readFileSync(watermarkPath, 'utf-8'))
-    expect(saved.codebuddyParserVersion).toBe(1)
+    expect(saved.codebuddyParserVersion).toBe(2)
+  })
+
+  it('resets the legacy CodeBuddy IDE cursor for newly counted token buckets', () => {
+    writeFileSync(watermarkPath, JSON.stringify({ files: {}, codebuddyParserVersion: 1, codebuddyIde: 9000 }))
+    const wm = new WatermarkManager(watermarkPath)
+    expect(wm.getCodeBuddyIdeCursor()).toBe(0)
+  })
+
+  it('resets legacy ZCode cursors once and then preserves pending rows', () => {
+    const old = { lastStartedAt: 200, lastId: 'later' }
+    writeFileSync(watermarkPath, JSON.stringify({ files: {}, zcode: old, zcodeTools: old }))
+    const wm = new WatermarkManager(watermarkPath)
+    expect(wm.getZcodeCursor()).toBeNull()
+    expect(wm.getZcodeToolCursor()).toBeNull()
+    const cursor = { ...old, pendingIds: ['earlier'] }
+    wm.setZcodeCursor(cursor)
+    wm.setZcodeToolCursor(cursor)
+    wm.save()
+    const reloaded = new WatermarkManager(watermarkPath)
+    expect(reloaded.getZcodeCursor()).toEqual(cursor)
+    expect(reloaded.getZcodeToolCursor()).toEqual(cursor)
   })
 
   it('preserves CodeBuddy entries written by the current parser version', () => {
@@ -174,7 +195,7 @@ describe('WatermarkManager', () => {
       files: {
         codebuddy: { '/cb/current.jsonl': { offset: 500, size: 500, mtime: 5 } },
       },
-      codebuddyParserVersion: 1,
+      codebuddyParserVersion: 2,
     }), 'utf-8')
 
     const wm = new WatermarkManager(watermarkPath)
@@ -187,8 +208,8 @@ describe('WatermarkManager', () => {
         antigravity: { '/ag/conversations/session.db': { offset: 12, size: 4096, mtime: 6 } },
         codex: { '/codex/session.jsonl': { offset: 200, size: 200, mtime: 2 } },
       },
-      grokParserVersion: 1,
-      codebuddyParserVersion: 1,
+      grokParserVersion: 2,
+      codebuddyParserVersion: 2,
     }), 'utf-8')
 
     const wm = new WatermarkManager(watermarkPath)
@@ -198,8 +219,8 @@ describe('WatermarkManager', () => {
     wm.save()
     const saved = JSON.parse(readFileSync(watermarkPath, 'utf-8'))
     expect(saved.antigravityParserVersion).toBe(2)
-    expect(saved.grokParserVersion).toBe(1)
-    expect(saved.codebuddyParserVersion).toBe(1)
+    expect(saved.grokParserVersion).toBe(2)
+    expect(saved.codebuddyParserVersion).toBe(2)
   })
 
   it('clears stale CodeFuse entries when upgrading the CodeFuse parser', () => {

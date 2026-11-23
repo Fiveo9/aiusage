@@ -3,10 +3,13 @@ import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
 import { recordIdFor, generateToolCallId, generateOrphanToolCallId } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost } from '../pricing.js'
+import { parseTimestamp } from '../timestamp.js'
 
 interface PendingToolCall {
   name: string
   ts: number
+  lineOffset: number
+  orphanId: string
 }
 
 export class CodexParser implements Parser {
@@ -21,6 +24,7 @@ export class CodexParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     // Support multiple formats:
     //   { event_msg: { payload: ... } }        — oldest wrapped format
@@ -31,10 +35,10 @@ export class CodexParser implements Parser {
 
     // Track model from turn_context events (top-level or wrapped)
     const turnCtx = parsed.type === 'turn_context' ? parsed.payload : undefined
-    if (turnCtx?.model) {
+    if (typeof turnCtx?.model === 'string' && turnCtx.model) {
       this.currentModel = turnCtx.model
     }
-    if (payload?.type === 'turn_context' && payload.model) {
+    if (payload?.type === 'turn_context' && typeof payload.model === 'string' && payload.model) {
       this.currentModel = payload.model
     }
 
@@ -45,11 +49,16 @@ export class CodexParser implements Parser {
 
     // Store function_call as pending
     if (payload.type === 'function_call') {
-      const rawFcTs = parsed.event_msg?.timestamp ?? parsed.timestamp ?? context.now
+      const rawFcTs = parsed.event_msg?.timestamp ?? parsed.timestamp
+      const ts = parseTimestamp(rawFcTs, rawFcTs == null ? context.now : NaN, 'ms')
+      if (!Number.isFinite(ts)) return null
+      const rawName = payload.name ?? payload.function?.name
+      const name = typeof rawName === 'string' && rawName ? rawName : 'unknown'
       this.pendingToolCalls.push({
         // newer format: payload.name; older format: payload.function.name
-        name: payload.name ?? payload.function?.name ?? 'unknown',
-        ts: typeof rawFcTs === 'number' ? rawFcTs : new Date(rawFcTs).getTime(),
+        name, ts, lineOffset: context.lineOffset,
+        orphanId: generateOrphanToolCallId(this.tool, rawFcTs == null ? `${recordIdFor(context, context.sourceFile, context.lineOffset)}:${name}` : name,
+          rawFcTs == null ? 0 : ts, this.pendingToolCalls.length),
       })
       return null
     }
@@ -60,9 +69,11 @@ export class CodexParser implements Parser {
       return null
     }
 
-    const model = payload.model ?? parsed.model ?? this.currentModel ?? 'unknown'
+    const rawModel = payload.model ?? parsed.model ?? this.currentModel
+    const model = typeof rawModel === 'string' && rawModel ? rawModel : 'unknown'
     const rawTs = parsed.event_msg?.timestamp ?? parsed.timestamp ?? context.now
-    const ts = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+    const ts = parseTimestamp(rawTs, NaN, 'ms')
+    if (!Number.isFinite(ts)) return null
 
     // Codex reports input_tokens inclusive of cached_input_tokens. Store only the
     // uncached part so cached tokens are not counted (and priced) twice.
@@ -121,27 +132,29 @@ export class CodexParser implements Parser {
       callIndex,
     }))
 
+    const replacedToolCallIds = this.pendingToolCalls.map(tc => tc.orphanId)
     // Clear pending queue
     this.pendingToolCalls = []
 
-    return { record, toolCalls }
+    return { record, toolCalls, ...(replacedToolCallIds.length ? { replacedToolCallIds } : {}) }
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     this.currentModel = null
     // Handle orphan tool calls (no subsequent token_count)
     if (this.pendingToolCalls.length === 0) return []
 
     const toolCalls: ToolCallRecord[] = this.pendingToolCalls.map((tc, callIndex) => ({
-      id: generateOrphanToolCallId(this.tool, tc.name, tc.ts, callIndex),
+      id: tc.orphanId,
       recordId: null,
+      tool: this.tool,
       name: tc.name,
       ts: tc.ts,
       callIndex,
-    }))
+    })).filter((_, index) => this.pendingToolCalls[index].lineOffset >= replayCutoff)
 
     this.pendingToolCalls = []
 
-    return [{ record: null, toolCalls }]
+    return toolCalls.length ? [{ record: null, toolCalls }] : []
   }
 }

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
-import { calculateCost, generateOrphanToolCallId, inferProvider, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
+import { calculateCost, generateOrphanToolCallId, inferProvider, parseTimestamp, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
 import type { ZcodeCursor, ZcodeToolCursor } from '../watermark.js'
 
 export type { ZcodeCursor, ZcodeToolCursor }
@@ -30,6 +30,7 @@ interface ZcodeModelUsageRow {
   id: string
   session_id: string
   model_id: string
+  status: string
   started_at: number
   input_tokens: number
   output_tokens: number
@@ -42,6 +43,7 @@ interface ZcodeModelUsageRow {
 interface ZcodeToolUsageRow {
   id: string
   tool_name: string
+  status: string
   started_at: number
 }
 
@@ -58,6 +60,17 @@ function normalizeZcodeModel(value: unknown): string {
   const trimmed = value.trim()
   if (!trimmed) return 'unknown'
   return trimmed.toLowerCase()
+}
+
+function advanceCursor(cursor: ZcodeCursor | null, row: { id: string; started_at: number }): ZcodeCursor {
+  const lastStartedAt = parseTimestamp(row.started_at, 0, 'ms')
+  const lastId = String(row.id)
+  if (cursor && (cursor.lastStartedAt > lastStartedAt || (cursor.lastStartedAt === lastStartedAt && cursor.lastId >= lastId))) return cursor
+  return { lastStartedAt, lastId }
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
 /**
@@ -82,35 +95,42 @@ export function runParseZcode(db: Database.Database, options: ZcodeImportOptions
 
   // --- Token records (model_usage) ---
   const modelRows = db.prepare(`
-    SELECT m.id, m.session_id, m.model_id, m.started_at,
+    SELECT m.id, m.session_id, m.model_id, m.status, m.started_at,
            m.input_tokens, m.output_tokens, m.reasoning_tokens,
            m.cache_creation_input_tokens, m.cache_read_input_tokens,
            s.directory
     FROM model_usage m
     LEFT JOIN session s ON s.id = m.session_id
-    WHERE m.status = 'completed'
-      AND (m.started_at > ? OR (m.started_at = ? AND m.id > ?))
+    WHERE m.status IN ('completed', 'running')
+      AND (m.status = 'running' OR m.started_at > ? OR (m.started_at = ? AND m.id > ?)
+        OR m.id IN (SELECT value FROM json_each(?)))
     ORDER BY m.started_at, m.id
   `).all(
     cursor?.lastStartedAt ?? 0,
     cursor?.lastStartedAt ?? 0,
     cursor?.lastId ?? '',
+    JSON.stringify(cursor?.pendingIds ?? []),
   ) as ZcodeModelUsageRow[]
 
+  const pendingIds: string[] = []
   for (const row of modelRows) {
-    nextCursor = { lastStartedAt: Number(row.started_at), lastId: String(row.id) }
+    nextCursor = advanceCursor(nextCursor ?? cursor, row)
+    if (row.status === 'running') {
+      pendingIds.push(row.id)
+      continue
+    }
 
-    const inputTokens = Number(row.input_tokens) || 0
-    const outputTokens = Number(row.output_tokens) || 0
-    const thinkingTokens = Number(row.reasoning_tokens) || 0
-    const cacheReadTokens = Number(row.cache_read_input_tokens) || 0
-    const cacheWriteTokens = Number(row.cache_creation_input_tokens) || 0
+    const inputTokens = tokenCount(row.input_tokens)
+    const outputTokens = tokenCount(row.output_tokens)
+    const thinkingTokens = tokenCount(row.reasoning_tokens)
+    const cacheReadTokens = tokenCount(row.cache_read_input_tokens)
+    const cacheWriteTokens = tokenCount(row.cache_creation_input_tokens)
 
     if (inputTokens + outputTokens + thinkingTokens + cacheReadTokens + cacheWriteTokens === 0) continue
 
     const model = normalizeZcodeModel(row.model_id)
     const provider = inferProvider(model)
-    const ts = Number(row.started_at) || now
+    const ts = parseTimestamp(row.started_at, 0, 'ms')
     const recordId = recordIdFor(options, `${dbPath}:${row.id}`, ts)
 
     const tokenArgs = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, thinkingTokens }
@@ -143,39 +163,43 @@ export function runParseZcode(db: Database.Database, options: ZcodeImportOptions
 
   // --- Tool calls (tool_usage), emitted as orphans ---
   const toolRows = db.prepare(`
-    SELECT id, tool_name, started_at
+    SELECT id, tool_name, status, started_at
     FROM tool_usage
-    WHERE status = 'completed'
-      AND (started_at > ? OR (started_at = ? AND id > ?))
+    WHERE status IN ('completed', 'running')
+      AND (status = 'running' OR started_at > ? OR (started_at = ? AND id > ?)
+        OR id IN (SELECT value FROM json_each(?)))
     ORDER BY started_at, id
   `).all(
     toolCursor?.lastStartedAt ?? 0,
     toolCursor?.lastStartedAt ?? 0,
     toolCursor?.lastId ?? '',
+    JSON.stringify(toolCursor?.pendingIds ?? []),
   ) as ZcodeToolUsageRow[]
 
-  let callIndex = 0
+  const pendingToolIds: string[] = []
   for (const row of toolRows) {
-    nextToolCursor = { lastStartedAt: Number(row.started_at), lastId: String(row.id) }
+    nextToolCursor = advanceCursor(nextToolCursor ?? toolCursor, row)
+    if (row.status === 'running') {
+      pendingToolIds.push(row.id)
+      continue
+    }
     const name = typeof row.tool_name === 'string' && row.tool_name.trim() ? row.tool_name.trim() : 'unknown'
-    const ts = Number(row.started_at) || now
+    const ts = parseTimestamp(row.started_at, 0, 'ms')
     toolCalls.push({
-      id: generateOrphanToolCallId('zcode', name, ts, callIndex),
+      id: generateOrphanToolCallId('zcode', recordIdFor(options, `${dbPath}:tool:${row.id}`, 0), 0, 0),
       recordId: null,
       name,
       ts,
-      callIndex,
-      // insertToolCall reads (tc as any).tool for orphan calls
+      callIndex: 0,
       tool: 'zcode',
-    } as ToolCallRecord)
-    callIndex++
+    })
   }
 
   return {
     records,
     toolCalls,
-    nextCursor: records.length > 0 ? nextCursor : null,
-    nextToolCursor: toolCalls.length > 0 ? nextToolCursor : null,
+    nextCursor: nextCursor ? { ...nextCursor, pendingIds } : cursor?.pendingIds?.length ? { ...cursor, pendingIds } : null,
+    nextToolCursor: nextToolCursor ? { ...nextToolCursor, pendingIds: pendingToolIds } : toolCursor?.pendingIds?.length ? { ...toolCursor, pendingIds: pendingToolIds } : null,
     errors,
   }
 }

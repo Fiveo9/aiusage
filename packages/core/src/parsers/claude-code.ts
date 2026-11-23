@@ -3,6 +3,7 @@ import type { StatsRecord, ToolCallRecord, Tool } from '../types.js'
 import { recordIdFor, generateBlockToolCallId } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost } from '../pricing.js'
+import { parseTimestamp } from '../timestamp.js'
 
 /**
  * The tool call a `tool_use` block of a Claude Code message is stored as, or
@@ -10,6 +11,7 @@ import { calculateCost } from '../pricing.js'
  * among the `tool_use` blocks of its line.
  */
 export function claudeCodeToolCall(block: any, recordId: string, ts: number, callIndex: number): ToolCallRecord | null {
+  if (!block || typeof block !== 'object') return null
   let storedName: string
   if (block.name === 'Skill') {
     const raw = block.input?.skill ?? block.input?.skillName ?? block.input?.name ?? ''
@@ -17,7 +19,8 @@ export function claudeCodeToolCall(block: any, recordId: string, ts: number, cal
     storedName = skillArg ? `skill__${skillArg}` : 'skill__unknown'
   } else {
     // Clean malformed names (some logs have args/quotes embedded in name)
-    const rawName: string = block.name ?? ''
+    const rawName = block.name ?? ''
+    if (typeof rawName !== 'string') return null
     const cleanName = rawName.replace(/[=:"'{\[\s].*$/s, '').replace(/[^a-zA-Z0-9_-]/g, '')
     if (!cleanName) return null
     storedName = cleanName
@@ -51,6 +54,7 @@ export class ClaudeCodeParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     // Skip lines without message.usage
     if (!parsed.message?.usage) return null
@@ -61,7 +65,8 @@ export class ClaudeCodeParser implements Parser {
     // Skip synthetic messages (Claude Code internal, zero token usage)
     if (model === '<synthetic>') return null
     const rawTs = parsed.message.timestamp ?? parsed.timestamp ?? context.now
-    const ts = typeof rawTs === 'number' ? rawTs : new Date(rawTs).getTime()
+    const ts = parseTimestamp(rawTs, NaN, 'ms')
+    if (!Number.isFinite(ts)) return null
 
     const inputTokens = usage.input_tokens ?? 0
     const outputTokens = usage.output_tokens ?? 0
@@ -112,7 +117,7 @@ export class ClaudeCodeParser implements Parser {
     if (Array.isArray(parsed.message.content)) {
       let callIndex = 0
       for (const block of parsed.message.content) {
-        if (block.type === 'tool_use') {
+        if (block?.type === 'tool_use') {
           const toolCall = claudeCodeToolCall(block, record.id, ts, callIndex)
           if (toolCall) toolCalls.push(toolCall)
           callIndex++

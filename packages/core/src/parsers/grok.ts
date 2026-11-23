@@ -2,6 +2,7 @@ import type { ParseContext, ParseResult, Parser, StatsRecord } from '../types.js
 import { recordIdFor } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
+import { parseTimestamp } from '../timestamp.js'
 
 const UNKNOWN_MODEL = 'grok-unknown'
 
@@ -16,22 +17,14 @@ interface ActiveTurn {
 }
 
 function nonNegativeInteger(value: unknown): number | null {
+  if (value == null) return null
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 0) return null
   return Math.floor(parsed)
 }
 
 function timestamp(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value < 1e12 ? value * 1000 : value
-  }
-  if (typeof value === 'string' && value.trim()) {
-    const numeric = Number(value)
-    if (Number.isFinite(numeric)) return numeric < 1e12 ? numeric * 1000 : numeric
-    const parsed = new Date(value).getTime()
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return fallback
+  return parseTimestamp(value, fallback)
 }
 
 function stringValue(value: unknown): string | null {
@@ -91,7 +84,8 @@ export class GrokParser implements Parser {
 
     let completed: ParseResult | null = null
     if (update?.sessionUpdate === 'user_message_chunk') {
-      if (this.activeTurn) completed = this.buildResult(this.activeTurn)
+      const previous = this.activeTurn ?? this.fallback
+      if (previous && previous.context.lineOffset >= (context.replayCutoff ?? 0)) completed = this.buildResult(previous)
       this.fallback = null
       this.activeTurn = {
         baselineTotal: this.lastTotal ?? 0,
@@ -149,9 +143,9 @@ export class GrokParser implements Parser {
     return completed
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     const turn = this.activeTurn ?? this.fallback
-    const result = turn ? this.buildResult(turn) : null
+    const result = turn && turn.context.lineOffset >= replayCutoff ? this.buildResult(turn) : null
     this.reset()
     return result ? [result] : []
   }

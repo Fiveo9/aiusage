@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
-import { inferProvider, calculateCost, normalizeQoderModel, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
+import { inferProvider, calculateCost, normalizeQoderModel, parseTimestamp, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
 import type { QoderCursor } from '../watermark.js'
 
 export interface QoderImportOptions {
@@ -28,6 +28,10 @@ interface MessageRow {
   gmt_create: number
   token_info: string
   record_extra: string | null
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
 function parseModelKey(recordExtra: string | null): string {
@@ -70,7 +74,12 @@ export function runParseQoder(
     ) as MessageRow[]
 
   for (const row of messages) {
-    lastCursor = { lastGmtCreate: row.gmt_create, lastId: row.id }
+    const ts = parseTimestamp(row.gmt_create, NaN, 'ms')
+    if (!Number.isFinite(ts)) {
+      errors.push(`message ${row.id}: invalid timestamp`)
+      continue
+    }
+    lastCursor = { lastGmtCreate: ts, lastId: row.id }
 
     let tokenInfo: { prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number }
     try {
@@ -80,17 +89,18 @@ export function runParseQoder(
       continue
     }
 
-    const cacheReadTokens = tokenInfo.cached_tokens ?? 0
+    if (!tokenInfo || typeof tokenInfo !== 'object' || Array.isArray(tokenInfo)) continue
+
+    const cacheReadTokens = tokenCount(tokenInfo.cached_tokens)
     // OpenAI API convention: prompt_tokens includes cached_tokens, so subtract
     // to avoid double-counting (unlike Anthropic where input_tokens excludes cache)
-    const inputTokens = Math.max(0, (tokenInfo.prompt_tokens ?? 0) - cacheReadTokens)
-    const outputTokens = tokenInfo.completion_tokens ?? 0
+    const inputTokens = Math.max(0, tokenCount(tokenInfo.prompt_tokens) - cacheReadTokens)
+    const outputTokens = tokenCount(tokenInfo.completion_tokens)
 
     if (inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0) continue
 
     const model = parseModelKey(row.record_extra)
     const provider = inferProvider(model)
-    const ts = row.gmt_create
 
     const tokenArgs = { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens: 0, thinkingTokens: 0 }
     const calculatedCost = calculateCost(model, tokenArgs, exchangeRate)

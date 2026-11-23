@@ -1125,6 +1125,16 @@ export function getDbPath(sourceKey: string, env: NodeJS.ProcessEnv = process.en
   return entry.probe(ctx)
 }
 
+/** Explicit overrides select one DB; the default OpenCode location can hold several. */
+export function getDbPaths(sourceKey: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const config = loadConfig()
+  if (sourceKey === 'opencode' && !envOverride(sourceKey, env) && !env.OPENCODE_DB && !config?.sources?.[sourceKey]) {
+    return existingOpenCodeDbs(env).filter(dbPath => existsSync(dbPath))
+  }
+  const dbPath = getDbPath(sourceKey, env)
+  return dbPath ? [dbPath] : []
+}
+
 /**
  * Returns the tool registry for UI display purposes.
  */

@@ -4,10 +4,13 @@ import { recordIdFor, generateToolCallId, generateOrphanToolCallId } from '../re
 import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { normalizeQoderModel } from '../qoder-model.js'
+import { parseTimestamp } from '../timestamp.js'
 
 interface PendingToolCall {
   name: string
   ts: number
+  lineOffset: number
+  orphanId: string
 }
 
 function toNumber(value: unknown): number {
@@ -17,10 +20,7 @@ function toNumber(value: unknown): number {
 }
 
 function toTimestamp(value: unknown, fallback: number): number {
-  if (typeof value === 'number') return value
-  if (typeof value !== 'string') return fallback
-  const ts = new Date(value).getTime()
-  return Number.isFinite(ts) ? ts : fallback
+  return parseTimestamp(value, value == null ? fallback : NaN, 'ms')
 }
 
 export class QoderParser implements Parser {
@@ -34,6 +34,7 @@ export class QoderParser implements Parser {
     } catch {
       return null
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
     if (parsed.type === 'tool.requested') {
       const loopId = parsed.loop_id ?? parsed.turn_id
@@ -43,9 +44,13 @@ export class QoderParser implements Parser {
       }
 
       const pending = this.pendingToolCallsByLoopId.get(loopId) ?? []
+      const ts = toTimestamp(parsed.ts, context.now)
+      if (!Number.isFinite(ts)) return null
       pending.push({
         name: toolName,
-        ts: toTimestamp(parsed.ts, context.now),
+        ts, lineOffset: context.lineOffset,
+        orphanId: generateOrphanToolCallId(this.tool, parsed.ts == null ? `${recordIdFor(context, context.sourceFile, context.lineOffset)}:${toolName}` : toolName,
+          parsed.ts == null ? 0 : ts, pending.length),
       })
       this.pendingToolCallsByLoopId.set(loopId, pending)
       return null
@@ -57,6 +62,7 @@ export class QoderParser implements Parser {
     if (!data || typeof data !== 'object') return null
 
     const ts = toTimestamp(parsed.ts, context.now)
+    if (!Number.isFinite(ts)) return null
     const rawModel = normalizeQoderModel(String(data.model ?? ''))
     const model = rawModel === 'unknown' ? 'qoder-auto' : rawModel
     const inputTokens = toNumber(data.input_tokens)
@@ -121,17 +127,19 @@ export class QoderParser implements Parser {
       callIndex,
     }))
 
-    return { record, toolCalls }
+    return { record, toolCalls, ...(pendingToolCalls.length ? { replacedToolCallIds: pendingToolCalls.map(tc => tc.orphanId) } : {}) }
   }
 
-  finalize(): ParseResult[] {
+  finalize(replayCutoff = 0): ParseResult[] {
     const toolCalls: ToolCallRecord[] = []
 
     for (const pending of this.pendingToolCallsByLoopId.values()) {
       for (const [callIndex, tc] of pending.entries()) {
+        if (tc.lineOffset < replayCutoff) continue
         toolCalls.push({
-          id: generateOrphanToolCallId(this.tool, tc.name, tc.ts, callIndex),
+          id: tc.orphanId,
           recordId: null,
+          tool: this.tool,
           name: tc.name,
           ts: tc.ts,
           callIndex,

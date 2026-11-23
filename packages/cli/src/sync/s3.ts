@@ -15,8 +15,9 @@ export interface S3Config {
 }
 
 function s3ProxyHandler() {
+  const timeouts = { connectionTimeout: 5_000, socketTimeout: 30_000, requestTimeout: 30_000 }
   const configuredProxy = process.env.AIUSAGE_S3_PROXY
-  if (!configuredProxy?.trim()) return undefined
+  if (!configuredProxy?.trim()) return timeouts
 
   const proxy = configuredProxy.trim()
   if (/[\r\n]/.test(configuredProxy) || !/^https?:\/\//i.test(proxy) || !URL.canParse(proxy)) {
@@ -31,6 +32,7 @@ function s3ProxyHandler() {
   const proxyEnv = { HTTP_PROXY: normalizedProxy, HTTPS_PROXY: normalizedProxy }
   const agentOptions = { keepAlive: true, maxSockets: 50, proxyEnv }
   return {
+    ...timeouts,
     httpAgent: new HttpAgent(agentOptions),
     httpsAgent: new HttpsAgent(agentOptions),
   }

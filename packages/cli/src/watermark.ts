@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import type { Tool } from '@aiusage/core'
+import { writeFileAtomic } from './json-file.js'
 
 const CURRENT_GROK_PARSER_VERSION = 2
 const CURRENT_CODEBUDDY_PARSER_VERSION = 2
@@ -302,7 +303,7 @@ export class WatermarkManager {
   }
 
   save(): void {
-    writeFileSync(this.path, JSON.stringify(this.data, null, 2), 'utf-8')
+    writeFileAtomic(this.path, JSON.stringify(this.data, null, 2))
   }
 
   getEntry(tool: Tool, filePath: string): WatermarkEntry | null {

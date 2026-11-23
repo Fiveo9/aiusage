@@ -53,6 +53,7 @@ describe('discovery path resolution', () => {
 
   it.each(['darwin', 'win32', 'linux'] as NodeJS.Platform[])('uses XDG data path for OpenCode on %s', async (platform) => {
     const home = makeHome()
+    delete process.env.XDG_DATA_HOME // This case tests the default, not an inherited override.
     process.env.APPDATA = join(home, 'AppData', 'Roaming')
     process.env.LOCALAPPDATA = join(home, 'AppData', 'Local')
     const { defaultOpenCodeDbPath } = await loadDiscovery({ home, platform })

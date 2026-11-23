@@ -51,7 +51,7 @@ export class RuntimeSettingsController {
   start(): void {
     if (this.started) return
     this.started = true
-    this.applyConfig()
+    try { this.applyConfig() } catch (error) { this.started = false; throw error }
   }
 
   reload(): void {
@@ -70,6 +70,7 @@ export class RuntimeSettingsController {
   }
 
   private applyConfig(): void {
+    const config = this.loadConfigFn()
     if (this.parseTimer) clearInterval(this.parseTimer)
     if (this.cleanupTimer) clearInterval(this.cleanupTimer)
     if (this.syncTimer) clearInterval(this.syncTimer)
@@ -77,12 +78,13 @@ export class RuntimeSettingsController {
     this.cleanupTimer = null
     this.syncTimer = null
 
-    const config = this.loadConfigFn()
     // The floors PUT /api/config enforces, applied here as well: releases
     // before it saved any value, and a refresh interval of 30 ms parsed back
     // to back.
     const parseInterval = atLeast(Number(config?.refreshInterval ?? config?.parseInterval ?? 0), MIN_PARSE_INTERVAL_MS)
-    const retentionDays = Number(config?.retentionDays ?? 0)
+    const rawRetention = config?.retentionDays
+    const configuredRetention = typeof rawRetention === 'number' || typeof rawRetention === 'string' ? Number(rawRetention) : NaN
+    const retentionDays = Number.isSafeInteger(configuredRetention) && configuredRetention > 0 ? configuredRetention : 0
 
     if (parseInterval > 0) {
       this.parseTimer = setInterval(() => {

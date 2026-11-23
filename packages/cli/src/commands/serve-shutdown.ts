@@ -38,8 +38,8 @@ export function createGracefulShutdownHandler(options: GracefulShutdownOptions):
     shuttingDown = true
 
     log('\nShutting down...')
-    options.cleanup()
     options.stopRuntime()
+    options.cleanup()
 
     forceTimer = setTimeout(() => {
       options.server.closeAllConnections()

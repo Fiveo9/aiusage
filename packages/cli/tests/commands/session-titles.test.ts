@@ -78,7 +78,7 @@ describe('stored session titles', () => {
     insertRecord(db, record())
     runMigrations(db)
     expect(getRecordById(db, 'r1')).toMatchObject({ inputTokens: 100, cost: 1, sessionTitle: undefined })
-    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({ version: 19 })
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({ version: 20 })
   })
 
   it('adds titles to pre-title tables without changing existing records', () => {

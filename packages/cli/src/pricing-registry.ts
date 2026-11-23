@@ -573,11 +573,15 @@ export function ensureCuratedPrices(db: Database.Database): void {
   seed(Date.now())
 }
 
-export async function syncPricingFromLitellm(db: Database.Database): Promise<PricingSyncSummary> {
-  const response = await fetch(LITELLM_PRICING_URL, { headers: { Accept: 'application/json' } })
+export async function fetchLitellmPricing(): Promise<Record<string, LitellmEntry>> {
+  const response = await fetch(LITELLM_PRICING_URL, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) })
   if (!response.ok) throw new Error(`LiteLLM pricing fetch failed: HTTP ${response.status}`)
-  const data = await response.json() as Record<string, LitellmEntry>
+  const data = await response.json()
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('LiteLLM returned an invalid pricing object')
+  return data as Record<string, LitellmEntry>
+}
 
+export function applyLitellmPricing(db: Database.Database, data: Record<string, LitellmEntry>): PricingSyncSummary {
   const now = Date.now()
   const summary: PricingSyncSummary = {
     source: 'litellm', added: 0, updated: 0, unchanged: 0, skipped: 0, aliasesAdded: 0, aliasesUpdated: 0, userPreserved: 0,
@@ -614,9 +618,13 @@ export async function syncPricingFromLitellm(db: Database.Database): Promise<Pri
     }
     summary.aliasesAdded += ensureCuratedPricingAliases(db)
   })
-  tx()
+  tx.immediate()
   summary.dryRun = dryRunLocalModels(db)
   return summary
+}
+
+export async function syncPricingFromLitellm(db: Database.Database): Promise<PricingSyncSummary> {
+  return applyLitellmPricing(db, await fetchLitellmPricing())
 }
 
 function priceTableFromDb(db: Database.Database): Record<string, PriceEntry> {

@@ -24,7 +24,7 @@ describe('serve binding', () => {
   ])('binds host %s explicitly with the configured authentication', (host, password, expected) => {
     vi.stubEnv('AIUSAGE_DASHBOARD_PASSWORD', password)
     const listen = vi.spyOn(http.Server.prototype, 'listen').mockReturnThis()
-    vi.spyOn(process, 'once').mockReturnThis()
+    vi.spyOn(process, 'on').mockReturnThis()
     serve({ port: 3847, host, db: {} as any })
     expect(listen).toHaveBeenCalledWith(3847, expected)
   })

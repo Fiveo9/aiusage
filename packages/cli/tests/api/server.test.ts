@@ -6,6 +6,7 @@ import { CURATED_PRICES } from '@aiusage/core'
 import { initializeDatabase } from '../../src/db/index.js'
 import { mergeSyncedRecordsIntoRecords } from '../../src/db/synced-records.js'
 import { SyncRuntimeController } from '../../src/sync/runtime.js'
+import { AsyncTaskQueue } from '../../src/db/write-queue.js'
 
 function insertTestRecord(db: Database.Database, overrides: Record<string, unknown> = {}) {
   const defaults = {
@@ -322,7 +323,7 @@ describe('API Server', () => {
     expect(start.status).toBe(202)
     const startData = await start.json()
     expect(startData.accepted).toBe(true)
-    expect(startData.status.state).toBe('running')
+    expect(startData.status.state).toBe('queued')
 
     const done = await waitForPricingRecalcDone(baseUrl)
     expect(done.total).toBe(1)
@@ -366,7 +367,7 @@ describe('API Server', () => {
     expect(start.status).toBe(202)
     const startData = await start.json()
     expect(startData.status).toMatchObject({
-      state: 'running',
+      state: 'queued',
       needsRecalc: true,
       needsRecalcSince: updateData.needsRecalcSince,
     })
@@ -387,10 +388,15 @@ describe('API Server', () => {
     })
   })
 
-  it('starts pricing recalculation even when other database writes are queued', async () => {
+  it('accepts pricing recalculation but waits behind an existing database write', async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()))
+    const queue = new AsyncTaskQueue()
+    let release!: () => void
+    const blocked = queue.run(() => new Promise<void>(resolve => { release = resolve }))
+    await new Promise(resolve => setImmediate(resolve))
     server = createApiServer(db, {
-      getDbWriteQueueStatus: () => ({ running: true, pending: 8 }),
+      runDbWrite: task => queue.run(task),
+      getDbWriteQueueStatus: () => queue.getStatus(),
     })
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => {
@@ -409,15 +415,23 @@ describe('API Server', () => {
     })
     insertTestPrice(db, 'claude-sonnet-4-6')
 
-    const start = await fetch(`${baseUrl}/api/pricing/recalc`, { method: 'POST' })
-    expect(start.status).toBe(202)
-    const startData = await start.json()
-    expect(startData.accepted).toBe(true)
-    expect(startData.status).toMatchObject({ state: 'running', queueRunning: false, queuePending: 0 })
-
-    const done = await waitForPricingRecalcDone(baseUrl)
-    expect(done.state).toBe('done')
-    expect(done.updated).toBe(1)
+    try {
+      const start = await fetch(`${baseUrl}/api/pricing/recalc`, { method: 'POST' })
+      expect(start.status).toBe(202)
+      const startData = await start.json()
+      expect(startData.accepted).toBe(true)
+      expect(startData.status).toMatchObject({ state: 'queued', queueRunning: true, queuePending: 1 })
+      expect((db.prepare('SELECT cost FROM records WHERE id = ?').get('local00000001') as { cost: number }).cost).toBe(0)
+      release()
+      await blocked
+      const done = await waitForPricingRecalcDone(baseUrl)
+      expect(done.state).toBe('done')
+      expect(done.updated).toBe(1)
+    } finally {
+      release()
+      await blocked
+      await queue.run(() => {})
+    }
   })
 
   it('applies a recalculated price to the rows another device published (issue #13)', async () => {
@@ -729,7 +743,7 @@ describe('API Server', () => {
     }))
     expect(customizedData.localBindings).toContainEqual(expect.objectContaining({
       model: 'local-sonnet-alias',
-      modelKey: 'claude-sonnet-4-6',
+      modelKey: 'local-sonnet-alias',
       priceOrigin: 'user',
       bindingType: 'custom',
       hasManualBinding: true,

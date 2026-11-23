@@ -166,7 +166,7 @@ describe('local API trust boundary', () => {
     expect(logout.setCookie).toContain('; Secure')
   })
 
-  it('rejects forwarded protocols that disagree with Origin or are ambiguous', async () => {
+  it('uses the first trusted forwarded protocol and rejects a mismatch or unsupported protocol', async () => {
     await start('secret')
     const mismatched = await requestWithHost('/api/auth/login', {
       method: 'POST',
@@ -184,7 +184,12 @@ describe('local API trust boundary', () => {
       forwardedProto: 'https, http',
       body: JSON.stringify({ password: 'secret' }),
     })
-    expect(ambiguous.status).toBe(403)
+    expect(ambiguous.status).toBe(200)
+    const unsupported = await requestWithHost('/api/auth/login', {
+      method: 'POST', host: 'dashboard.example', origin: 'https://dashboard.example',
+      forwardedProto: 'ftp, https', body: JSON.stringify({ password: 'secret' }),
+    })
+    expect(unsupported.status).toBe(403)
   })
 
   it('retains passwordless local quota access', async () => {

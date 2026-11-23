@@ -286,7 +286,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     // Nothing changes on the second open, including updated_at.
     expect(row(db, 'codex-reasoning')).toEqual(first)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(19)
+    expect(schemaVersion(db)).toBe(20)
   })
 
   it('applies after v15 when a database upgrades from v14 in one open', () => {
@@ -312,7 +312,7 @@ describe('migration v16 (Codex output tokens exclude reasoning tokens)', () => {
     })
     expect(r.cost).toBeCloseTo(5.38, 10)
     expect(pending(db)).toEqual([])
-    expect(schemaVersion(db)).toBe(19)
+    expect(schemaVersion(db)).toBe(20)
   })
 
   it('reprices a row v15 queued and the open did not finish repricing', () => {

@@ -31,7 +31,7 @@ function forwardedProtocol(req: http.IncomingMessage): BrowserProtocol | null | 
   const value = req.headers['x-forwarded-proto']
   if (value === undefined) return undefined
   if (typeof value !== 'string') return null
-  const normalized = value.trim().toLowerCase()
+  const normalized = value.split(',')[0].trim().toLowerCase()
   if (normalized === 'http' || normalized === 'https') return `${normalized}:`
   return null
 }
@@ -42,7 +42,9 @@ function directProtocol(req: http.IncomingMessage): BrowserProtocol {
 
 /**
  * Return the browser-facing protocol after the request has passed
- * isTrustedApiRequest. Proxies must preserve Host and set X-Forwarded-Proto.
+ * isTrustedApiRequest. Only a trusted proxy may supply X-Forwarded-Proto:
+ * it must preserve Host, strip any client-supplied value and set its own.
+ * Do not expose a proxied listener directly to untrusted clients.
  */
 export function browserProtocol(req: http.IncomingMessage): BrowserProtocol {
   return forwardedProtocol(req) ?? directProtocol(req)
@@ -55,13 +57,13 @@ export function isTrustedApiRequest(req: http.IncomingMessage, password: string 
     new URL(req.url, 'http://localhost')
     const host = req.headers.host
     if (!host || /[\s/@\\?#]/.test(host)) return false
-    const target = new URL(`http://${host}`)
-    // Prevent DNS rebinding against the passwordless loopback service.
-    if (!password && !isLoopbackHost(target.hostname)) return false
-    if (req.headers['sec-fetch-site'] === 'cross-site') return false
     const forwarded = forwardedProtocol(req)
     if (forwarded === null) return false
     const protocol = forwarded ?? directProtocol(req)
+    const target = new URL(`${protocol}//${host}`)
+    // Prevent DNS rebinding against the passwordless loopback service.
+    if (!password && !isLoopbackHost(target.hostname)) return false
+    if (req.headers['sec-fetch-site'] === 'cross-site') return false
     const origin = req.headers.origin
     if (origin !== undefined) {
       const source = new URL(origin)

@@ -5,6 +5,7 @@ import path from 'node:path'
 const CWD_WORKSPACE_ROOTS = new Set([
   'WebstormProjects', 'Documents', 'Projects', 'workspace', 'Workspace',
   'dev', 'code', 'repos', 'Developer', 'src',
+  'Repositories', 'repositories',
 ])
 
 /**
@@ -23,9 +24,10 @@ export function extractProjectFromCwd(cwd: string): string {
   const normalized = cwd.replace(/\\/g, '/')
   // Strip home-dir prefix: /Users/<name>/, /home/<name>/, /root/, C:/Users/<name>/
   const withoutHome = normalized
-    .replace(/^[A-Za-z]:\/(?:Users|home)\/[^/]+\//, '')
-    .replace(/^\/(Users|home)\/[^/]+\//, '')
+    .replace(/^[A-Za-z]:\/(?:Users|home)\/[^/]+\//i, '')
+    .replace(/^\/(Users|home)\/[^/]+\//i, '')
     .replace(/^\/root\//, '')
+    .replace(/^[A-Za-z]:\//, '')
   const parts = withoutHome.split('/').filter(Boolean)
   for (const part of parts) {
     if (!CWD_WORKSPACE_ROOTS.has(part)) return part

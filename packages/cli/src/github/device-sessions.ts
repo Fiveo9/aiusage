@@ -7,25 +7,31 @@ import { runInit } from '../commands/init.js'
  * the local API boundary. Routes also require dashboard auth and same-origin checks.
  */
 export function createGitHubDeviceSessions() {
-  const sessions = new Map<string, { flow: DeviceAuthorization; expiresAt: number; creds?: GitHubCredentials; login?: string; busy?: boolean }>()
+  const sessions = new Map<string, { flow: DeviceAuthorization; expiresAt: number; creds?: GitHubCredentials; login?: string; busy?: boolean; timer?: ReturnType<typeof setTimeout> }>()
+  const remove = (id: string) => {
+    const session = sessions.get(id)
+    if (session?.timer) clearTimeout(session.timer)
+    sessions.delete(id)
+  }
   return async (action: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    for (const [id, s] of sessions) if (s.expiresAt <= Date.now()) sessions.delete(id)
+    for (const [id, s] of sessions) if (s.expiresAt <= Date.now()) remove(id)
     if (action === 'start') {
       if (sessions.size >= 5) throw new GitHubAuthError('Too many pending GitHub connections. Cancel a connection or retry after it expires.')
       const id = randomUUID()
       // Reserve a slot before the network request.
-      const slot = { flow: null as unknown as DeviceAuthorization, expiresAt: Date.now() + 900_000 }
+      const slot = { flow: null as unknown as DeviceAuthorization, expiresAt: Date.now() + 900_000, timer: undefined as ReturnType<typeof setTimeout> | undefined }
       sessions.set(id, slot)
-      setTimeout(() => sessions.delete(id), 900_000).unref()
+      slot.timer = setTimeout(() => remove(id), 900_000)
+      slot.timer.unref()
       try {
         slot.flow = await startDeviceAuthorization()
         return { sessionId: id, userCode: slot.flow.userCode, verificationUrl: slot.flow.verificationUrl, expiresAt: slot.flow.expiresAt, installUrl: appSettings().installUrl }
-      } catch (error) { sessions.delete(id); throw error }
+      } catch (error) { remove(id); throw error }
     }
     const id = typeof body.sessionId === 'string' ? body.sessionId : ''
     const session = sessions.get(id)
     if (!session?.flow) throw new GitHubAuthError('GitHub connection expired. Connect GitHub again.')
-    if (action === 'cancel') { sessions.delete(id); return { ok: true } }
+    if (action === 'cancel') { remove(id); return { ok: true } }
     if (session.busy) {
       if (action === 'poll') return { status: 'pending' }
       throw new GitHubAuthError('GitHub connection is busy. Retry shortly.')
@@ -54,12 +60,12 @@ export function createGitHubDeviceSessions() {
         connectRepository(session.creds, session.login, choice)
         const result = runInit({ backend: 'github', repo: choice.repo, githubAuth: 'github-app' })
         if (!result.success) throw new GitHubAuthError('Cannot finish GitHub sync configuration. Please reconnect.')
-        sessions.delete(id)
+        remove(id)
         return { ok: true, repo: choice.repo, login: session.login }
       }
       throw new GitHubAuthError('Unknown GitHub connection action.')
     } catch (error) {
-      if (action === 'poll') sessions.delete(id)
+      if (action === 'poll') remove(id)
       throw error
     } finally { session.busy = false }
   }

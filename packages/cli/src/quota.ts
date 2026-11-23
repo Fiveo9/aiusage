@@ -41,6 +41,21 @@ function nowMs(): number {
   return Date.now()
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function discardBody(response: Response): Promise<void> {
+  try { await response.body?.cancel() } catch { /* Best-effort connection release. */ }
+}
+
+function resetTimeIso(value: unknown, seconds = false): string | null {
+  if (value == null || (typeof value !== 'number' && typeof value !== 'string') || value === '') return null
+  const timestamp = seconds ? Number(value) * 1000 : typeof value === 'string' ? Date.parse(value) : value
+  const date = new Date(timestamp)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null
+}
+
 function notFound(tool: string): QuotaResult {
   return { tool, credentialStatus: 'not_found', credentialMessage: null, success: false, tiers: [], error: null, queriedAt: null }
 }
@@ -100,17 +115,18 @@ function parseClaudeCredJson(content: string): ClaudeCredResult {
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(content)
+    if (!isObject(parsed)) throw new Error('Invalid credentials shape')
   } catch {
     return { token: null, status: 'parse_error', message: 'Failed to parse credentials JSON' }
   }
 
   const entry = (parsed['claudeAiOauth'] ?? parsed['claude.ai_oauth']) as Record<string, unknown> | undefined
-  if (!entry) {
+  if (!isObject(entry)) {
     return { token: null, status: 'parse_error', message: 'No OAuth entry found in credentials' }
   }
 
   const accessToken = entry['accessToken'] as string | undefined
-  if (!accessToken) {
+  if (typeof accessToken !== 'string' || !accessToken.trim()) {
     return { token: null, status: 'parse_error', message: 'accessToken is empty or missing' }
   }
 
@@ -161,6 +177,7 @@ function parseCodexCredJson(content: string): CodexCredResult {
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(content)
+    if (!isObject(parsed)) throw new Error('Invalid credentials shape')
   } catch {
     return { token: null, accountId: null, status: 'parse_error', message: 'Failed to parse Codex auth JSON' }
   }
@@ -171,16 +188,17 @@ function parseCodexCredJson(content: string): CodexCredResult {
   }
 
   const tokens = parsed['tokens'] as Record<string, unknown> | undefined
-  if (!tokens) {
+  if (!isObject(tokens)) {
     return { token: null, accountId: null, status: 'parse_error', message: 'No tokens in Codex auth' }
   }
 
   const accessToken = tokens['access_token'] as string | undefined
-  if (!accessToken) {
+  if (typeof accessToken !== 'string' || !accessToken.trim()) {
     return { token: null, accountId: null, status: 'parse_error', message: 'access_token is empty or missing' }
   }
 
-  const accountId = (tokens['account_id'] ?? parsed['account_id']) as string | undefined ?? null
+  const rawAccountId = tokens['account_id'] ?? parsed['account_id']
+  const accountId = typeof rawAccountId === 'string' && rawAccountId ? rawAccountId : null
 
   // Check expiry if available
   const expiresAt = tokens['expires_at'] ?? tokens['expiresAt']
@@ -239,17 +257,19 @@ async function queryClaudeQuota(accessToken: string): Promise<QuotaResult> {
   }
 
   if (resp.status === 401 || resp.status === 403) {
+    await discardBody(resp)
     return expiredError('claude-code', `Authentication failed (HTTP ${resp.status}). Please re-login with Claude CLI.`)
   }
 
   if (!resp.ok) {
-    await resp.body?.cancel()
+    await discardBody(resp)
     return apiError('claude-code', `API error (HTTP ${resp.status})`)
   }
 
   let body: Record<string, unknown>
   try {
     body = await resp.json()
+    if (!isObject(body)) throw new Error('Invalid response shape')
   } catch {
     return apiError('claude-code', 'Failed to parse API response')
   }
@@ -259,13 +279,13 @@ async function queryClaudeQuota(accessToken: string): Promise<QuotaResult> {
   // Parse known tiers first (in defined order)
   for (const name of CLAUDE_KNOWN_TIERS) {
     const window = body[name] as Record<string, unknown> | undefined
-    if (!window) continue
+    if (!isObject(window)) continue
     const utilization = window['utilization'] as number | undefined
-    if (utilization == null) continue
+    if (typeof utilization !== 'number' || !Number.isFinite(utilization)) continue
     tiers.push({
       name,
       utilization,
-      resetsAt: (window['resets_at'] as string | undefined) ?? null,
+      resetsAt: resetTimeIso(window['resets_at']),
     })
   }
 
@@ -273,13 +293,13 @@ async function queryClaudeQuota(accessToken: string): Promise<QuotaResult> {
   for (const [key, value] of Object.entries(body)) {
     if (key === 'extra_usage' || CLAUDE_KNOWN_TIERS.includes(key)) continue
     const window = value as Record<string, unknown> | undefined
-    if (!window || typeof window !== 'object') continue
+    if (!isObject(window)) continue
     const utilization = window['utilization'] as number | undefined
-    if (utilization == null) continue
+    if (typeof utilization !== 'number' || !Number.isFinite(utilization)) continue
     tiers.push({
       name: key,
       utilization,
-      resetsAt: (window['resets_at'] as string | undefined) ?? null,
+      resetsAt: resetTimeIso(window['resets_at']),
     })
   }
 
@@ -323,17 +343,19 @@ async function callCodexQuotaApi(accessToken: string, accountId: string | null):
   }
 
   if (resp.status === 401 || resp.status === 403) {
+    await discardBody(resp)
     return expiredError('codex', `Authentication failed (HTTP ${resp.status}). Please re-login with Codex CLI.`)
   }
 
   if (!resp.ok) {
-    await resp.body?.cancel()
+    await discardBody(resp)
     return apiError('codex', `API error (HTTP ${resp.status})`)
   }
 
   let body: Record<string, unknown>
   try {
     body = await resp.json()
+    if (!isObject(body)) throw new Error('Invalid response shape')
   } catch {
     return apiError('codex', 'Failed to parse API response')
   }
@@ -341,16 +363,16 @@ async function callCodexQuotaApi(accessToken: string, accountId: string | null):
   const tiers: QuotaTier[] = []
   const rateLimit = body['rate_limit'] as Record<string, unknown> | undefined
 
-  if (rateLimit) {
+  if (isObject(rateLimit)) {
     for (const windowKey of ['primary_window', 'secondary_window']) {
       const window = rateLimit[windowKey] as Record<string, unknown> | undefined
-      if (!window) continue
+      if (!isObject(window)) continue
       const usedPercent = window['used_percent'] as number | undefined
-      if (usedPercent == null) continue
+      if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent)) continue
       const windowSecs = window['limit_window_seconds'] as number | undefined
       const name = windowSecs != null ? windowSecondsToTierName(windowSecs) : 'unknown'
       const resetAt = window['reset_at'] as number | null | undefined
-      const resetsAt = resetAt ? new Date(resetAt * 1000).toISOString() : null
+      const resetsAt = resetTimeIso(resetAt, true)
       tiers.push({ name, utilization: usedPercent, resetsAt })
     }
   }
@@ -374,6 +396,9 @@ function readCopilotOauthToken(): string | null {
     join(home, '.config', 'github-copilot', 'apps.json'),
     join(home, '.config', 'github-copilot', 'hosts.json'),
   ]
+  if (platform() === 'win32' && process.env.LOCALAPPDATA) {
+    candidates.unshift(join(process.env.LOCALAPPDATA, 'github-copilot', 'apps.json'), join(process.env.LOCALAPPDATA, 'github-copilot', 'hosts.json'))
+  }
   // Keys are "github.com", "github.com:Iv1.xxx" (app ID), or enterprise hosts.
   // Prefer the public-host token; fall back to whatever's available.
   let fallback: string | null = null
@@ -385,7 +410,7 @@ function readCopilotOauthToken(): string | null {
     } catch {
       continue
     }
-    if (!parsed || typeof parsed !== 'object') continue
+    if (!isObject(parsed)) continue
     for (const [key, value] of Object.entries(parsed)) {
       if (!value || typeof value !== 'object') continue
       const entry = value as Record<string, unknown>
@@ -417,10 +442,10 @@ function buildCopilotTier(
   snapshot: Record<string, unknown> | undefined,
   resetIso: string | null,
 ): QuotaTier | null {
-  if (!snapshot || typeof snapshot !== 'object') return null
-  const entitlement = Number(snapshot.entitlement)
-  const remaining = Number(snapshot.remaining)
-  const percentRemaining = Number(snapshot.percent_remaining)
+  if (!isObject(snapshot)) return null
+  const entitlement = Number(snapshot.entitlement ?? NaN)
+  const remaining = Number(snapshot.remaining ?? NaN)
+  const percentRemaining = Number(snapshot.percent_remaining ?? NaN)
 
   const allZero =
     (!entitlement || entitlement <= 0) &&
@@ -459,17 +484,19 @@ async function callCopilotQuotaApi(token: string): Promise<QuotaResult> {
   }
 
   if (resp.status === 401 || resp.status === 403) {
+    await discardBody(resp)
     return expiredError('copilot', `GitHub Copilot token rejected (HTTP ${resp.status}). Re-authenticate via Copilot extension.`)
   }
 
   if (!resp.ok) {
-    await resp.body?.cancel()
+    await discardBody(resp)
     return apiError('copilot', `GitHub Copilot API error (HTTP ${resp.status})`)
   }
 
   let body: Record<string, unknown>
   try {
     body = await resp.json()
+    if (!isObject(body)) throw new Error('Invalid response shape')
   } catch {
     return apiError('copilot', 'Failed to parse API response')
   }

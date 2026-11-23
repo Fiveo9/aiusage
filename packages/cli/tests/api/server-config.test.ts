@@ -225,10 +225,10 @@ describe('PUT /api/config', () => {
     await fetch(`${baseUrl}/api/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credentials: { GITHUB_TOKEN: 'new-token' } }),
+      body: JSON.stringify({ credentials: { CUSTOM_S3: 'synthetic-only' } }),
     })
     const saved = vi.mocked(saveConfig).mock.calls[0][0] as any
-    expect(saved.credentials.GITHUB_TOKEN).toBe('new-token')
+    expect(saved.credentials.CUSTOM_S3).toBe('synthetic-only')
   })
 
   it('removes sync when backend is empty', async () => {
@@ -265,9 +265,7 @@ describe('PUT /api/config', () => {
           repo: 'user/repo',
           credentialRef: 'github/user/repo/token',
         },
-        credentials: {
-          'github/user/repo/token': 'ghp_test',
-        },
+        syncCredentials: { githubToken: 'synthetic-only' },
       }),
     })
 
@@ -292,7 +290,7 @@ describe('PUT /api/config', () => {
     const res = await fetch(`${baseUrl}/api/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sync: { backend: 'github', repo: 'user/repo' }, credentials: { 'github/user/repo/token': 'ghp_test' } }),
+      body: JSON.stringify({ sync: { backend: 'github', repo: 'user/repo' }, syncCredentials: { githubToken: 'synthetic-only' } }),
     })
 
     expect(res.status).toBe(500)
@@ -428,6 +426,19 @@ describe('PUT /api/config', () => {
 
     expect(vi.mocked(deleteGitHubCredentials)).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111')
     for (const [saved] of vi.mocked(saveConfig).mock.calls) expect(JSON.stringify(saved)).not.toContain('11111111-1111-1111-1111-111111111111')
+  })
+
+  it('retires a replaced keychain reference outside the settings lock', async () => {
+    vi.mocked(loadConfig).mockReturnValue({ sync: { backend: 'github', repo: 'user/repo', githubAuth: { method: 'pat', credentialId: 'old-keychain-reference' } } })
+    vi.mocked(deleteGitHubCredentials).mockClear()
+    let freeDuringRetirement: boolean | undefined
+    vi.mocked(deleteGitHubCredentials).mockImplementationOnce(() => {
+      freeDuringRetirement = lockFreeForAnotherProcess()
+    })
+    const response = await fetch(baseUrl + '/api/config', { method: 'PUT', body: JSON.stringify({ syncCredentials: { githubToken: 'synthetic-only' } }) })
+    expect(response.status).toBe(200)
+    expect(deleteGitHubCredentials).toHaveBeenCalledWith('old-keychain-reference')
+    expect(freeDuringRetirement).toBe(true)
   })
 
   it('returns 400 for invalid JSON', async () => {

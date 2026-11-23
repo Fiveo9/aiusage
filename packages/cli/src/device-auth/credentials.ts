@@ -16,7 +16,7 @@ export interface DeviceCredentials {
 export function saveCredentials(creds: DeviceCredentials): void {
   const dir = dirname(CREDENTIALS_FILE)
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
   const tmpFile = `${CREDENTIALS_FILE}.${randomBytes(4).toString('hex')}.tmp`
   try {
@@ -31,7 +31,12 @@ export function saveCredentials(creds: DeviceCredentials): void {
 export function loadCredentials(): DeviceCredentials | null {
   try {
     const data = readFileSync(CREDENTIALS_FILE, 'utf-8')
-    return JSON.parse(data)
+    const parsed = JSON.parse(data)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || typeof parsed.device_id !== 'string' || !parsed.device_id.trim() || /[\r\n\u0000]/.test(parsed.device_id)
+      || typeof parsed.device_secret !== 'string' || !parsed.device_secret.trim()
+      || typeof parsed.obtained_at !== 'string' || !Number.isFinite(Date.parse(parsed.obtained_at))) return null
+    return parsed as DeviceCredentials
   } catch {
     return null
   }
@@ -48,5 +53,5 @@ export function clearCredentials(): void {
 }
 
 export function hasCredentials(): boolean {
-  return existsSync(CREDENTIALS_FILE)
+  return loadCredentials() !== null
 }

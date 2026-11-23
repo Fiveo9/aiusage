@@ -197,7 +197,7 @@ describe('migration v15 (Codex input tokens exclude cached tokens)', () => {
     expect(row(db, 'codex-cached').input_tokens).toBe(100_000)
     expect(row(db, 'codex-cached').cost).toBeCloseTo(1.38, 10)
     const version = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get() as { version: number }
-    expect(version.version).toBe(19)
+    expect(version.version).toBe(20)
   })
 })
 

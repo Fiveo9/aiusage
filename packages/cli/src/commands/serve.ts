@@ -28,6 +28,13 @@ export interface ServeOptions {
 const MAX_PORT_ATTEMPTS = 10
 const PORT_FILE = join(AIUSAGE_DIR, '.serve-port')
 
+export function parseServePort(value: string | number): number {
+  if (typeof value === 'string' && !/^\d+$/.test(value.trim())) throw new Error('Port must be an integer between 1 and 65535')
+  const port = typeof value === 'number' ? value : Number(value.trim())
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer between 1 and 65535')
+  return port
+}
+
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
   '.js': 'application/javascript',
@@ -42,6 +49,7 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 export function serve(options: ServeOptions): void {
+  const port = parseServePort(options.port)
   const host = dashboardHost(options.host, getDashboardPassword())
   const config = loadConfig()
   const dbWriteQueue = new AsyncTaskQueue()
@@ -173,7 +181,7 @@ export function serve(options: ServeOptions): void {
     res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Web dashboard not found. Reinstall the package: npm install -g @fiveo9/aiusage' } }))
   })
 
-  let currentPort = options.port
+  let currentPort = port
   let started = false
 
   const listenOnPort = (port: number): void => {
@@ -202,7 +210,7 @@ export function serve(options: ServeOptions): void {
   })
 
   server.on('error', (error: NodeJS.ErrnoException) => {
-    if (error.code === 'EADDRINUSE' && !started && currentPort < options.port + MAX_PORT_ATTEMPTS - 1) {
+    if (error.code === 'EADDRINUSE' && !started && currentPort < Math.min(65535, port + MAX_PORT_ATTEMPTS - 1)) {
       const nextPort = currentPort + 1
       console.warn(`Port ${currentPort} is already in use, trying ${nextPort}...`)
       server.close(() => {
@@ -215,11 +223,12 @@ export function serve(options: ServeOptions): void {
     throw error
   })
 
-  listenOnPort(options.port)
+  listenOnPort(port)
 
   // Graceful shutdown
   const cleanup = () => {
     try { unlinkSync(PORT_FILE) } catch {}
+    if (options.db.open) options.db.close()
   }
 
   const shutdown = createGracefulShutdownHandler({
@@ -227,6 +236,6 @@ export function serve(options: ServeOptions): void {
     cleanup,
     stopRuntime: () => runtimeSettings.stop(),
   })
-  process.once('SIGINT', shutdown)
-  process.once('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }

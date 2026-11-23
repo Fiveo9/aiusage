@@ -195,4 +195,39 @@ describe('RuntimeSettingsController', () => {
 
     expect(runParse).not.toHaveBeenCalled()
   })
+
+  it('retains the old schedule when config reading fails on reload', async () => {
+    const loadConfig = vi.fn(() => ({ refreshInterval: 1000 }))
+    const runParse = vi.fn(async () => {})
+    const controller = new RuntimeSettingsController({ db: {} as any, loadConfig, runParse, runCleanup: vi.fn() })
+    controller.start()
+    loadConfig.mockImplementationOnce(() => { throw new Error('synthetic read failure') })
+    expect(() => controller.reload()).toThrow('synthetic read failure')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(runParse).toHaveBeenCalledOnce()
+    controller.stop()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('can start again after an initial config reading failure', async () => {
+    const loadConfig = vi.fn(() => ({ refreshInterval: 1000 }))
+    loadConfig.mockImplementationOnce(() => { throw new Error('synthetic read failure') })
+    const runParse = vi.fn(async () => {})
+    const controller = new RuntimeSettingsController({ db: {} as any, loadConfig, runParse, runCleanup: vi.fn() })
+    expect(() => controller.start()).toThrow()
+    controller.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(runParse).toHaveBeenCalledOnce()
+    controller.stop()
+  })
+
+  it.each([-1, 0.01, 1.5, NaN, Infinity, true])('does not clean from an invalid legacy retention value %j', async retentionDays => {
+    const runCleanup = vi.fn()
+    const controller = new RuntimeSettingsController({ db: {} as any, loadConfig: () => ({ retentionDays } as any),
+      runParse: vi.fn(async () => {}), runCleanup, cleanupIntervalMs: 50 })
+    controller.start()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(runCleanup).not.toHaveBeenCalled()
+    controller.stop()
+  })
 })

@@ -5,12 +5,14 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('cloud sync device authorization', () => {
   it('starts authorization at the shared device endpoint', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ device_request_id: 'request', interval: 5 }))
+    const fetchMock = vi.fn(async () => Response.json({ device_request_id: 'request', interval: 5,
+      user_code: 'ABCD-EFGH', verification_url: 'https://sync.test/auth/device',
+      expires_at: new Date(Date.now() + 600000).toISOString() }))
     vi.stubGlobal('fetch', fetchMock)
     const request = { device_name: 'test-device', cli_version: 'test', device_challenge: 'test-challenge' }
     await expect(startDeviceAuth('https://sync.test', request)).resolves.toHaveProperty('device_request_id', 'request')
     expect(fetchMock).toHaveBeenCalledWith('https://sync.test/api/cli/device/start', expect.objectContaining({
-      method: 'POST', body: JSON.stringify(request),
+      method: 'POST', body: JSON.stringify(request), signal: expect.any(AbortSignal),
     }))
   })
 

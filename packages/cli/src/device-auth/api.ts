@@ -77,6 +77,7 @@ export async function startDeviceAuth(
   const response = await fetch(new URL(DEVICE_START_PATH, validateVerificationUrl(serverUrl)).href, {
     method: 'POST',
     redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })
@@ -114,6 +115,7 @@ export async function completeDeviceAuth(
   const response = await fetch(new URL(DEVICE_COMPLETE_PATH, validateVerificationUrl(serverUrl)).href, {
     method: 'POST',
     redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })

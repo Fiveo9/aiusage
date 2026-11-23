@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
-import { serve } from './commands/serve.js'
+import { parseServePort, serve } from './commands/serve.js'
 import { runInit } from './commands/init.js'
 import { runGitHubLogin } from './commands/github-login.js'
 import { safeGitHubError } from './github/auth.js'
@@ -397,8 +397,9 @@ program
   .option('-p, --port <port>', 'Port number', '3847')
   .option('--host <host>', 'Bind address (non-loopback requires AIUSAGE_DASHBOARD_PASSWORD)', '127.0.0.1')
   .action((options) => {
+    const port = parseServePort(options.port)
     const db = createDatabase(DB_PATH)
-    serve({ port: parseInt(options.port), host: options.host, db })
+    serve({ port, host: options.host, db })
   })
 
 // init command

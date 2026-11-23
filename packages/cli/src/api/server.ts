@@ -36,7 +36,7 @@ import { isKelivoSourceFile, runParseKelivo } from '../commands/parse-kelivo.js'
 import { recalcPricing } from '../commands/recalc.js'
 import { insertChangedRecords, LOCAL_RECORDS_WHERE, recordIdsForReread } from '../db/records.js'
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
-import { getPricingRegistrySummary, getUserAliasBindings, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias, syncPricingFromLitellm } from '../pricing-registry.js'
+import { applyLitellmPricing, fetchLitellmPricing, getPricingRegistrySummary, getUserAliasBindings, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias } from '../pricing-registry.js'
 import type { DetectedTool } from '../discovery.js'
 import { BodyTooLargeError, readJsonBody, readBodyBuffer } from './request-body.js'
 
@@ -112,12 +112,15 @@ function emptyPricingRecalcStatus(): PricingRecalcStatus {
   }
 }
 
-/** Calendar components of a YYYY-MM-DD string (falls back to Date parsing for other formats). */
+/** Strict calendar components: Date's normalisation must not accept invalid days. */
 function parseCalendarDate(value: string): { year: number; month: number; day: number } {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (m) return { year: Number(m[1]), month: Number(m[2]) - 1, day: Number(m[3]) }
-  const d = new Date(value)
-  return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() }
+  if (!m) throw new Error('Dates must use YYYY-MM-DD')
+  const date = { year: Number(m[1]), month: Number(m[2]) - 1, day: Number(m[3]) }
+  const check = new Date(0)
+  check.setUTCFullYear(date.year, date.month, date.day)
+  if (check.getUTCFullYear() !== date.year || check.getUTCMonth() !== date.month || check.getUTCDate() !== date.day) throw new Error('Invalid calendar date')
+  return date
 }
 
 /**
@@ -126,7 +129,10 @@ function parseCalendarDate(value: string): { year: number; month: number; day: n
  * result is always the true start of that day even when DST skips midnight.
  */
 function localMidnightMs(date: { year: number; month: number; day: number }, dayOffset = 0): number {
-  return new Date(date.year, date.month, date.day + dayOffset).getTime()
+  const value = new Date(0)
+  value.setFullYear(date.year, date.month, date.day + dayOffset)
+  value.setHours(0, 0, 0, 0)
+  return value.getTime()
 }
 
 /** Format a ms timestamp as its local calendar date (YYYY-MM-DD). */
@@ -154,7 +160,8 @@ function registerLocalDayFunction(db: Database.Database): void {
  * options use it too, so they count the same local days as the dashboard.
  */
 export function getDateRangeBounds(range: string | null, from: string | null, to: string | null, weekStart: 0 | 1 = 1): { start?: number; end?: number } {
-  if (from && to) {
+  if (range !== null && !SUMMARY_RANGES.includes(range)) throw new Error('Invalid range')
+  if (from !== null || to !== null) {
     // Custom ranges come from a date picker as local calendar dates (YYYY-MM-DD).
     // Preset ranges use local-time boundaries, so custom ranges must too: start at
     // local midnight of `from`, end (exclusive) at local midnight of the day after `to`.
@@ -162,9 +169,10 @@ export function getDateRangeBounds(range: string | null, from: string | null, to
     // Both boundaries are built from calendar components rather than by mutating a parsed
     // Date: where DST skips midnight (e.g. America/Santiago), the parsed start of `to` is
     // 01:00, and adding a day to that would leak an hour of the following day into the range.
-    const startMs = localMidnightMs(parseCalendarDate(from))
-    const endMs = localMidnightMs(parseCalendarDate(to), 1)
-    return { start: startMs, end: endMs }
+    const start = from === null ? undefined : localMidnightMs(parseCalendarDate(from))
+    const end = to === null ? undefined : localMidnightMs(parseCalendarDate(to), 1)
+    if (start !== undefined && end !== undefined && start >= end) throw new Error('from must not be after to')
+    return { ...(start === undefined ? {} : { start }), ...(end === undefined ? {} : { end }) }
   }
 
   const now = new Date()
@@ -196,7 +204,7 @@ export function getDateRangeBounds(range: string | null, from: string | null, to
 function getDateRangeFilter(range: string | null, from: string | null, to: string | null, prefix = '', weekStart: 0 | 1 = 1): { where: string; params: Record<string, unknown> } {
   const ts = prefix ? `${prefix}.ts` : 'ts'
   const { start, end } = getDateRangeBounds(range, from, to, weekStart)
-  if (start === undefined) return { where: '', params: {} }
+  if (start === undefined) return end === undefined ? { where: '', params: {} } : { where: `AND ${ts} < @end`, params: { end } }
   if (end === undefined) return { where: `AND ${ts} >= @start`, params: { start } }
   return { where: `AND ${ts} >= @start AND ${ts} < @end`, params: { start, end } }
 }
@@ -272,11 +280,11 @@ function isKelivoBackupFilename(filename: string): boolean {
 }
 
 async function proxyCloudSyncStatus(res: http.ServerResponse): Promise<void> {
-  const upstream = new URL('/api/cli/sync/status', getSiteUrl())
-
   try {
+    const upstream = new URL('/api/cli/sync/status', getSiteUrl())
     const response = await fetch(upstream, {
       headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
     })
     const contentType = response.headers.get('content-type') || ''
     if (!response.ok || !contentType.includes('application/json')) {
@@ -311,6 +319,8 @@ interface DeviceFilter {
   useUnion: boolean
   /** True when querying records table should exclude merged synced records */
   localOnly: boolean
+  /** Only a known current identity can select the remote-only table. */
+  remoteOnly?: boolean
 }
 
 function getToolFilter(tool: string | null, prefix = ''): { where: string; params: Record<string, unknown> } {
@@ -372,7 +382,8 @@ function getDeviceFilter(
 ): DeviceFilter {
   if (!currentDeviceInstanceId) {
     // No device instance ID available — query only records (legacy behavior)
-    return { where: '', params: {}, useUnion: false, localOnly: false }
+    return { where: device ? 'AND (device_instance_id = @deviceId OR device = @deviceId)' : '',
+      params: device ? { deviceId: device } : {}, useUnion: false, localOnly: false }
   }
 
   if (!device) {
@@ -397,6 +408,7 @@ function getDeviceFilter(
     params: { deviceId: device },
     useUnion: false,
     localOnly: false,
+    remoteOnly: true,
   }
 }
 
@@ -469,7 +481,7 @@ function querySummaryTotals(
         GROUP BY tool
       ) GROUP BY tool ORDER BY cost DESC
     `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
-  } else if (df.where) {
+  } else if (df.remoteOnly) {
     // Specific other device: query synced_records only
     totals = db.prepare(`
       SELECT
@@ -505,16 +517,16 @@ function querySummaryTotals(
         COALESCE(SUM(cost), 0) AS totalCost,
         COUNT(DISTINCT local_day(ts)) AS activeDays,
         COUNT(DISTINCT session_id) AS totalSessions
-      FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
-    `).get({ ...dr.params, ...tf.params }) as any
+      FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+    `).get({ ...df.params, ...dr.params, ...tf.params }) as any
 
     if (includeByTool) byToolRows = db.prepare(`
       SELECT tool,
              SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
              SUM(cost) AS cost
-      FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+      FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
       GROUP BY tool ORDER BY cost DESC
-    `).all({ ...dr.params, ...tf.params }) as any[]
+    `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
   }
   return { totals, byToolRows }
 }
@@ -573,21 +585,29 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
     }
 
     const startedAt = Date.now()
-    const startedGeneration = pricingRecalcGeneration
 
     pricingRecalcStatus = {
       ...emptyPricingRecalcStatus(),
-      state: 'running',
+      state: 'queued',
       startedAt,
     }
 
+    const failRecalc = (error: unknown) => {
+      pricingRecalcStatus = {
+        ...pricingRecalcStatus,
+        state: 'error',
+        finishedAt: Date.now(),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
     const runRecalc = async () => {
+      const startedGeneration = pricingRecalcGeneration
       pricingRecalcStatus = {
         ...pricingRecalcStatus,
         state: 'running',
         queueRunning: false,
         queuePending: 0,
-        startedAt: pricingRecalcStatus.startedAt ?? Date.now(),
+        startedAt: Date.now(),
       }
       try {
         await recalcPricing(db, {
@@ -616,25 +636,11 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           error: null,
         }
       } catch (error) {
-        pricingRecalcStatus = {
-          ...pricingRecalcStatus,
-          state: 'error',
-          finishedAt: Date.now(),
-          error: error instanceof Error ? error.message : String(error),
-        }
+        failRecalc(error)
       }
     }
 
-    setImmediate(() => {
-      void runRecalc().catch((error) => {
-        pricingRecalcStatus = {
-          ...pricingRecalcStatus,
-          state: 'error',
-          finishedAt: Date.now(),
-          error: error instanceof Error ? error.message : String(error),
-        }
-      })
-    })
+    try { void runDbWrite(runRecalc).catch(failRecalc) } catch (error) { failRecalc(error) }
 
     return { accepted: true, status: currentPricingRecalcStatus() }
   }
@@ -732,6 +738,10 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
     const range = url.searchParams.get('range')
     const from = url.searchParams.get('from')
     const to = url.searchParams.get('to')
+    try { getDateRangeBounds(range, from, to, weekStart) } catch {
+      json(res, { error: { code: 'INVALID_PARAM', message: 'Invalid range, from or to' } }, 400)
+      return
+    }
 
     // Validate tool parameter early — same style as range validation
     const toolParam = url.searchParams.get('tool')
@@ -752,7 +762,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           return
         }
         const df = getDeviceFilter(null, options?.currentDeviceInstanceId)
-        const dr = getDateRangeFilter(range, null, null, '', weekStart)
+        const dr = getDateRangeFilter(range, from, to, '', weekStart)
         const { totals } = querySummaryTotals(db, df, dr, getToolFilter(null), false)
         json(res, summaryTotalsPayload(totals))
         return
@@ -845,7 +855,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             )
             GROUP BY date ORDER BY date`
           params = { ...dr.params, currentDeviceId: df.params.currentDeviceId, ...tf.params }
-        } else if (device && device !== options?.currentDeviceInstanceId) {
+        } else if (df.remoteOnly) {
           sql = `
             SELECT local_day(ts) AS date,
                    SUM(input_tokens) AS inputTokens,
@@ -864,9 +874,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(cache_read_tokens) AS cacheReadTokens,
                    SUM(cache_write_tokens) AS cacheWriteTokens,
                    SUM(thinking_tokens) AS thinkingTokens
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY date ORDER BY date`
-          params = { ...dr.params, ...tf.params }
+          params = { ...df.params, ...dr.params, ...tf.params }
         }
 
         const rows = db.prepare(sql).all(params) as any[]
@@ -913,7 +923,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
               SELECT model, SUM(cost) AS cost FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where} GROUP BY model
             ) GROUP BY model ORDER BY cost DESC
           `).all({ ...dr.params, currentDeviceId: df.params.currentDeviceId, ...tf.params }) as any[]
-        } else if (device && device !== options?.currentDeviceInstanceId) {
+        } else if (df.remoteOnly) {
           daily = db.prepare(`
             SELECT local_day(ts) AS date,
                    SUM(cost) AS cost
@@ -936,21 +946,21 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           daily = db.prepare(`
             SELECT local_day(ts) AS date,
                    SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY date ORDER BY date
-          `).all({ ...dr.params, ...tf.params }) as any[]
+          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
 
           byToolRows = db.prepare(`
             SELECT tool, SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY tool ORDER BY cost DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
+          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
 
           byModelRows = db.prepare(`
             SELECT model, SUM(cost) AS cost
-            FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY model ORDER BY cost DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
+          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
         }
 
         const byTool: Record<string, number> = {}
@@ -964,9 +974,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         const provenanceSql = df.useUnion
           ? `SELECT ${provenanceColumns} FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
              UNION ALL SELECT ${provenanceColumns} FROM synced_records WHERE device_instance_id != @currentDeviceId ${dr.where} ${tf.where}`
-          : device && device !== options?.currentDeviceInstanceId
+          : df.remoteOnly
             ? `SELECT ${provenanceColumns} FROM synced_records WHERE 1=1 ${df.where} ${dr.where} ${tf.where}`
-            : `SELECT ${provenanceColumns} FROM records WHERE 1=1 ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
+            : `SELECT ${provenanceColumns} FROM records WHERE 1=1 ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}`
         const provenanceParams = { ...df.params, ...dr.params, ...tf.params }
         const sourceRows = db.prepare(`WITH filtered AS (${provenanceSql})
           SELECT CASE WHEN cost_source IN ('log', 'pricing') THEN cost_source ELSE 'unknown' END AS source,
@@ -1044,7 +1054,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           `).all({ ...dr.params, ...df.params, ...tf.params }) as any[]
           totalTokensAcrossModels = mergedRows.reduce((sum, row) => sum + row.totalTokens, 0)
           rows = mergedRows
-        } else if (device && device !== options?.currentDeviceInstanceId) {
+        } else if (df.remoteOnly) {
           rows = db.prepare(`
             SELECT model, provider,
                    COUNT(*) AS callCount,
@@ -1070,9 +1080,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                    SUM(thinking_tokens) AS thinkingTokens,
                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS totalTokens,
                    SUM(cost) AS totalCost
-            FROM records WHERE 1=1 AND model != 'unknown' ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
+            FROM records WHERE 1=1 AND model != 'unknown' ${df.where} ${dr.where} ${df.localOnly ? LOCAL_ONLY_FILTER : ''} ${tf.where}
             GROUP BY model, provider ORDER BY totalTokens DESC
-          `).all({ ...dr.params, ...tf.params }) as any[]
+          `).all({ ...df.params, ...dr.params, ...tf.params }) as any[]
           totalTokensAcrossModels = rows.reduce((sum, row) => sum + row.totalTokens, 0)
         }
 
@@ -1413,14 +1423,14 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
         type ProjectSession = { sessionId: string; deviceInstanceId: string; ts: number; tokens: number; cost: number }
         const projectMap = new Map<string, { sessions: Map<string, ProjectSession>; tokens: number; cost: number; fullPath: string }>()
         for (const row of rows) {
-          if (!row.source_file) continue
+          if (!row.cwd && !row.source_file) continue
           let effectiveCwd: string = row.cwd || ''
-          if (!effectiveCwd) {
+          if (!effectiveCwd && row.source_file) {
             const m = (row.source_file as string).replace(/\\/g, '/').match(/\.claude\/projects\/([^/]+)/)
             if (m) effectiveCwd = cwdByEncodedDir.get(JSON.stringify([row.deviceInstanceId, m[1]])) || ''
           }
           const fromCwd = effectiveCwd ? extractProjectFromCwd(effectiveCwd) : null
-          const project = (fromCwd && fromCwd !== 'unknown') ? fromCwd : extractProject(row.source_file)
+          const project = (fromCwd && fromCwd !== 'unknown') ? fromCwd : extractProject(row.source_file || '')
           const group = projectMap.get(project) ?? { sessions: new Map<string, ProjectSession>(), tokens: 0, cost: 0, fullPath: effectiveCwd || row.source_file }
           const key = JSON.stringify([row.deviceInstanceId, row.sessionId])
           const session = group.sessions.get(key) ?? { sessionId: row.sessionId, deviceInstanceId: row.deviceInstanceId, ts: row.ts, tokens: 0, cost: 0 }
@@ -1481,15 +1491,17 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
             return
           }
-          if (!data.model || typeof data.input !== 'number' || typeof data.output !== 'number') {
-            json(res, { error: { code: 'INVALID_PARAM', message: 'model, input, output required' } }, 400)
+          const validRate = (rate: unknown): rate is number => typeof rate === 'number' && Number.isFinite(rate) && rate >= 0
+          if (typeof data.model !== 'string' || !data.model.trim() || !validRate(data.input) || !validRate(data.output)
+            || (data.cacheRead != null && !validRate(data.cacheRead)) || (data.cacheWrite != null && !validRate(data.cacheWrite))) {
+            json(res, { error: { code: 'INVALID_PARAM', message: 'A nonempty model and finite nonnegative rates are required' } }, 400)
             return
           }
           const entry: PriceEntry = {
             input: data.input,
             output: data.output,
-            cacheRead: data.cacheRead as number | undefined,
-            cacheWrite: data.cacheWrite as number | undefined,
+            cacheRead: data.cacheRead == null ? undefined : data.cacheRead as number,
+            cacheWrite: data.cacheWrite == null ? undefined : data.cacheWrite as number,
           }
           if (data.currency === 'CNY') {
             entry.currency = 'CNY'
@@ -1589,8 +1601,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
       if (url.pathname === '/api/pricing/sync' && req.method === 'POST') {
         try {
-          const summary = await runDbWrite(async () => {
-            const summary = await syncPricingFromLitellm(db)
+          const prices = await fetchLitellmPricing()
+          const summary = await runDbWrite(() => {
+            const summary = applyLitellmPricing(db, prices)
             loadPricingRuntime(db, loadConfig())
             return summary
           })
@@ -1838,6 +1851,27 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             json(res, { error: { code: 'INVALID_JSON', message: 'Invalid JSON body' } }, 400)
             return
           }
+          for (const field of ['credentials', 'syncCredentials'] as const) {
+            const values = update[field]
+            if (values == null) continue
+            if (typeof values !== 'object' || Array.isArray(values)
+              || Object.values(values).some(value => value != null && typeof value !== 'string')) {
+              json(res, { error: { code: 'INVALID_CREDENTIALS', message: `${field} must be an object of string values` } }, 400)
+              return
+            }
+          }
+          let retentionDays: number | undefined
+          if ('retentionDays' in update) {
+            const raw = update.retentionDays
+            if (!(raw == null || raw === false || raw === '' || raw === 0 || raw === '0')) {
+              const value = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
+              if (!Number.isSafeInteger(value) || value <= 0) {
+                json(res, { error: { code: 'INVALID_RETENTION_DAYS', message: 'retentionDays must be a positive safe integer or explicitly disabled' } }, 400)
+                return
+              }
+              retentionDays = value
+            }
+          }
           // Set once config.json is written: a failure after that point (the
           // consent in state.json) must not be reported as nothing saved.
           let configSaved = false
@@ -1850,6 +1884,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
           // config refers to it.
           let storedTokenId: string | undefined
           let storedTokenKept = false
+          let retiredTokenId: string | undefined
           try {
             const githubToken = syncCredentials?.githubToken
             if (typeof githubToken === 'string' && githubToken) {
@@ -1860,6 +1895,17 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             // sync) is not written over with the copy read here.
             const saved = withSettingsLock(AIUSAGE_DIR, (): boolean => {
               const existing: Config = loadConfig() ?? {}
+              const oldTokenId = existing.sync?.githubAuth?.credentialId
+              const requestedSync = update.sync && typeof update.sync === 'object' ? update.sync as Record<string, unknown> : undefined
+              const githubRef = requestedSync?.backend === 'github'
+                ? requestedSync.credentialRef ?? existing.sync?.credentialRef
+                : existing.sync?.backend === 'github' ? existing.sync.credentialRef : undefined
+              if (update.credentials && Object.entries(update.credentials).some(([key, value]) => typeof value === 'string' && value
+                && (/^(?:AIUSAGE_)?GITHUB_?TOKEN$/i.test(key) || /^github\/.+\/token$/i.test(key)
+                  || key === githubRef || /^(?:gh[pousr]_|github_pat_)/.test(value)))) {
+                json(res, { error: { code: 'INVALID_CREDENTIALS', message: 'Use write-only syncCredentials.githubToken for GitHub credentials' } }, 400)
+                return false
+              }
 
               if ('device' in update) {
                 if (!update.device) delete existing.device
@@ -1869,7 +1915,6 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                 const ws = Number(update.weekStart)
                 if (ws === 0 || ws === 1) {
                   existing.weekStart = ws as 0 | 1
-                  weekStart = ws as 0 | 1
                 } else {
                   delete existing.weekStart
                 }
@@ -1904,8 +1949,6 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                 if (raw == null || raw === false || raw === '' || raw === 0 || raw === '0') continue
                 const value = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
                 if (!Number.isFinite(value) || value < min || value > max) {
-                  // Nothing is saved, so undo the week start this request may have applied above.
-                  weekStart = (loadConfig()?.weekStart ?? 1) as 0 | 1
                   json(res, { error: { code: 'INVALID_INTERVAL', message: `${field} must be a number of milliseconds between ${min} and ${max}` } }, 400)
                   return false
                 }
@@ -1923,8 +1966,8 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                 delete existing.parseInterval
               }
               if ('retentionDays' in update) {
-                if (!update.retentionDays) delete existing.retentionDays
-                else existing.retentionDays = Number(update.retentionDays)
+                if (retentionDays == null) delete existing.retentionDays
+                else existing.retentionDays = retentionDays
               }
               if ('syncInterval' in update) {
                 const si = intervals.syncInterval
@@ -1948,7 +1991,10 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
                   // Merge with existing sync config to preserve fields from other backends
                   const newSync: SyncConfig = { ...existing.sync, backend: backendVal as 'github' | 's3' | 'cloud' }
                   for (const f of ['repo', 'bucket', 'prefix', 'endpoint', 'region', 'credentialRef'] as const) {
-                    if (syncUpdate[f] != null && syncUpdate[f] !== '') (newSync as any)[f] = String(syncUpdate[f])
+                    if (syncUpdate[f] === '' && ['prefix', 'endpoint', 'region', 'credentialRef'].includes(f)) {
+                      if (f === 'prefix') newSync.prefix = '' // Explicit root, not the default aiusage/ prefix.
+                      else delete newSync[f]
+                    } else if (syncUpdate[f] != null && syncUpdate[f] !== '') (newSync as any)[f] = String(syncUpdate[f])
                   }
                   if (newSync.repo !== existing.sync?.repo) {
                     delete newSync.githubAuth
@@ -1970,10 +2016,10 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
               if (update.credentials && typeof update.credentials === 'object') {
                 const creds = update.credentials as Record<string, unknown>
-                const c: Record<string, string> = existing.credentials ?? {}
+                const c: Record<string, string> = { ...existing.credentials }
                 for (const [key, val] of Object.entries(creds)) {
-                  if (val !== '' && val !== null && val !== undefined) {
-                    c[key] = String(val)
+                  if (typeof val === 'string' && val !== '') {
+                    c[key] = val
                   }
                 }
                 if (Object.keys(c).length) existing.credentials = c
@@ -1984,7 +2030,9 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
 
               saveConfig(existing)
               configSaved = true
+              weekStart = (existing.weekStart ?? 1) as 0 | 1
               storedTokenKept = storedTokenId !== undefined && existing.sync?.githubAuth?.credentialId === storedTokenId
+              if (oldTokenId && oldTokenId !== existing.sync?.githubAuth?.credentialId) retiredTokenId = oldTokenId
               const consentConfig = buildConsentConfig(existing)
               const syncTarget = getSyncTarget(existing.sync)
               if (consentConfig && syncTarget) {
@@ -2010,6 +2058,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
             return
           } finally {
             if (storedTokenId && !storedTokenKept) deleteGitHubCredentials(storedTokenId)
+            if (retiredTokenId) deleteGitHubCredentials(retiredTokenId)
           }
           options?.onConfigUpdated?.()
           json(res, { ok: true })
@@ -2109,6 +2158,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       json(res, { error: { code: 'NOT_FOUND', message: 'Endpoint not found' } }, 404)
     } catch (error) {
       if (error instanceof BodyTooLargeError) { bodyTooLarge(res); return }
+      if (error instanceof URIError) { json(res, { error: { code: 'INVALID_PARAM', message: 'Invalid encoded path' } }, 400); return }
       console.error('API error:', error)
       json(res, { error: { code: 'INTERNAL', message: 'Internal server error' } }, 500)
     }

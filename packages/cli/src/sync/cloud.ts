@@ -119,7 +119,7 @@ export async function cloudPush(
   })
 
   const headers = buildHeaders('POST', SYNC_PUSH_PATH, body)
-  const response = await fetch(`${serverUrl}${SYNC_PUSH_PATH}`, { method: 'POST', headers, body, redirect: 'error' })
+  const response = await fetch(`${serverUrl}${SYNC_PUSH_PATH}`, { method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(30_000) })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {
@@ -172,7 +172,7 @@ export async function cloudPull(
 
   // For GET requests, body is empty
   const headers = buildHeaders('GET', SYNC_PULL_PATH, '')
-  const response = await fetch(`${serverUrl}${path}`, { method: 'GET', headers, redirect: 'error' })
+  const response = await fetch(`${serverUrl}${path}`, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(30_000) })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {
@@ -233,7 +233,7 @@ export async function cloudClear(): Promise<{ syncGeneration: number }> {
   const SYNC_CLEAR_PATH = '/api/cli/sync/clear'
   const body = '{}'
   const headers = buildHeaders('POST', SYNC_CLEAR_PATH, body)
-  const response = await fetch(`${serverUrl}${SYNC_CLEAR_PATH}`, { method: 'POST', headers, body, redirect: 'error' })
+  const response = await fetch(`${serverUrl}${SYNC_CLEAR_PATH}`, { method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(30_000) })
   const data = await readJsonOrNull(response)
 
   if (!response.ok) {

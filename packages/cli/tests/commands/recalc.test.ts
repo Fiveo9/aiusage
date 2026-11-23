@@ -296,10 +296,10 @@ describe('Recalc Command — pulled rows', () => {
 
     const result = await recalcPricing(db, { currentDeviceInstanceId: OWN })
 
-    expect(result.updatedCount).toBe(1)
+    expect(result.updatedCount).toBe(0)
+    expect(result.skippedCount).toBe(1)
     expect(result.syncedUpdatedCount).toBe(0)
-    expect(mirroredRow().cost).toBe(0)
-    expect(mirroredRow().cost_source).toBe('unknown')
+    expect(mirroredRow()).toMatchObject({ cost: 4, cost_source: 'pricing' })
     expect(mirrorRow()).toMatchObject({ cost: 4, cost_source: 'pricing' })
   })
 
@@ -307,19 +307,18 @@ describe('Recalc Command — pulled rows', () => {
     insertSyncedRecord(db, synced({ model: 'remote-logged-model', cost: 10, costSource: 'log' }))
     mergeSyncedRecordsIntoRecords(db, OWN)
 
-    // The user sets a manual price and recalculates: the local copy takes it,
-    // the owner's logged cost keeps standing on the dashboard.
+    // A local manual price does not replace the owner's authoritative log
+    // in either matching copy. It still applies to locally parsed records.
     setUserPrice(db, 'remote-logged-model', { input: 5, output: 0 })
     await recalcPricing(db, { currentDeviceInstanceId: OWN })
-    expect(mirroredRow().cost).toBeCloseTo(5)
+    expect(mirroredRow()).toMatchObject({ cost: 10, cost_source: 'log' })
     expect(mirrorRow()).toMatchObject({ cost: 10, cost_source: 'log' })
 
-    // Removing the manual price leaves nothing to compute from; the mirror
-    // must not fall to $0 as well — the owner's unversioned row would never
-    // restore it.
+    // Removing the manual price must not clear either copy to $0: an owner
+    // whose version did not change would not restore a damaged local copy.
     removeUserPrice(db, 'remote-logged-model')
     await recalcPricing(db, { currentDeviceInstanceId: OWN })
-    expect(mirroredRow()).toMatchObject({ cost: 0, cost_source: 'unknown' })
+    expect(mirroredRow()).toMatchObject({ cost: 10, cost_source: 'log' })
     expect(mirrorRow()).toMatchObject({ cost: 10, cost_source: 'log' })
   })
 

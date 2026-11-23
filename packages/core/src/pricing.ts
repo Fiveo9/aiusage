@@ -12,6 +12,9 @@ export interface PriceEntry {
 // their pricing registry database instead of relying on package-bundled data.
 let basePriceTable: Record<string, PriceEntry> = {}
 let userOverrides: Record<string, PriceEntry> = {}
+let basePrefixPriceTable: Record<string, PriceEntry> = {}
+let prefixUserOverrides: Record<string, PriceEntry> = {}
+let prefixPriceTable: Record<string, PriceEntry> = {}
 const resolvedPriceCache = new Map<string, PriceEntry | undefined>()
 
 export const DEFAULT_PRICE_TABLE: Record<string, PriceEntry> = {}
@@ -24,14 +27,23 @@ export function getPriceTable(): Record<string, PriceEntry> {
 
 export function setBasePriceTable(table: Record<string, PriceEntry>): void {
   basePriceTable = { ...table }
+  basePrefixPriceTable = { ...table }
   PRICE_TABLE = { ...basePriceTable, ...userOverrides }
+  prefixPriceTable = { ...basePrefixPriceTable, ...prefixUserOverrides }
   resolvedPriceCache.clear()
 }
 
-export function setRuntimePriceTable(base: Record<string, PriceEntry>, overrides: Record<string, PriceEntry> = {}): void {
+export function setRuntimePriceTable(
+  base: Record<string, PriceEntry>,
+  overrides: Record<string, PriceEntry> = {},
+  prefixTables?: { base: Record<string, PriceEntry>; overrides: Record<string, PriceEntry> },
+): void {
   basePriceTable = { ...base }
   userOverrides = { ...overrides }
+  basePrefixPriceTable = { ...(prefixTables?.base ?? base) }
+  prefixUserOverrides = { ...(prefixTables?.overrides ?? overrides) }
   PRICE_TABLE = { ...basePriceTable, ...userOverrides }
+  prefixPriceTable = { ...basePrefixPriceTable, ...prefixUserOverrides }
   resolvedPriceCache.clear()
 }
 
@@ -41,14 +53,19 @@ export function getBasePriceTable(): Record<string, PriceEntry> {
 
 export function setPriceOverride(model: string, entry: PriceEntry): void {
   userOverrides = { ...userOverrides, [model]: entry }
+  prefixUserOverrides = { ...prefixUserOverrides, [model]: entry }
   PRICE_TABLE = { ...basePriceTable, ...userOverrides }
+  prefixPriceTable = { ...basePrefixPriceTable, ...prefixUserOverrides }
   resolvedPriceCache.clear()
 }
 
 export function removePriceOverride(model: string): void {
   const { [model]: _, ...rest } = userOverrides
+  const { [model]: _prefix, ...prefixRest } = prefixUserOverrides
   userOverrides = rest
+  prefixUserOverrides = prefixRest
   PRICE_TABLE = { ...basePriceTable, ...userOverrides }
+  prefixPriceTable = { ...basePrefixPriceTable, ...prefixUserOverrides }
   resolvedPriceCache.clear()
 }
 
@@ -135,44 +152,55 @@ const PROVIDER_PREFIXES = [
  */
 export function resolvePrice(model: string): PriceEntry | undefined {
   if (resolvedPriceCache.has(model)) return resolvedPriceCache.get(model)
-  const price = resolvePriceFromTable(model, PRICE_TABLE)
+  const price = resolvePriceFromTable(model, PRICE_TABLE, prefixPriceTable)
   resolvedPriceCache.set(model, price)
   return price
 }
 
 export { resolvePriceFromTable }
 
-function resolvePriceFromTable(model: string, table: Record<string, PriceEntry>): PriceEntry | undefined {
-  // Exact match
-  if (table[model]) return table[model]
-
-  // Strip provider prefix and try again
+/** Shared key selection for price values and registry/UI metadata. */
+export function resolveModelPriceMatch<T>(
+  model: string,
+  exactTable: Readonly<Record<string, T>>,
+  prefixTable: Readonly<Record<string, T>> = exactTable,
+): { key: string; entry: T; matchType: 'exact' | 'prefix' } | undefined {
   let stripped = model
   for (const prefix of PROVIDER_PREFIXES) {
-    if (stripped.startsWith(prefix)) {
+    if (stripped.toLowerCase().startsWith(prefix)) {
       stripped = stripped.slice(prefix.length)
       break
     }
   }
-  if (stripped !== model) {
-    const lc = stripped.toLowerCase()
-    if (table[lc]) return table[lc]
-    if (table[stripped]) return table[stripped]
+  const candidates = [...new Set([model, model.toLowerCase(), stripped, stripped.toLowerCase()])]
+  for (const key of candidates) {
+    if (Object.hasOwn(exactTable, key)) return { key, entry: exactTable[key], matchType: 'exact' }
+  }
+  // Stable tie order makes runtime and DB snapshots agree even if their
+  // rows were loaded in a different order. Exact spelling still wins above.
+  const exactKeys = Object.keys(exactTable).sort()
+  for (const candidate of candidates) {
+    const key = exactKeys.find(key => key.toLowerCase() === candidate.toLowerCase())
+    if (key !== undefined) return { key, entry: exactTable[key], matchType: 'exact' }
   }
 
-  // Prefix match (longest prefix wins) — try original, stripped, and lowercase variants
-  let bestPrefix = ''
-  let bestEntry: PriceEntry | undefined
-  const candidates = [model, stripped, stripped.toLowerCase()]
-  for (const c of candidates) {
-    for (const [prefix, entry] of Object.entries(table)) {
-      if (c.startsWith(prefix) && prefix.length > bestPrefix.length) {
-        bestPrefix = prefix
-        bestEntry = entry
+  let best: string | undefined
+  for (const key of Object.keys(prefixTable).sort()) {
+    for (const candidate of candidates) {
+      if (candidate.toLowerCase().startsWith(key.toLowerCase()) && (best === undefined || key.length > best.length)) {
+        best = key
       }
     }
   }
-  return bestEntry
+  return best === undefined ? undefined : { key: best, entry: prefixTable[best], matchType: 'prefix' }
+}
+
+function resolvePriceFromTable(
+  model: string,
+  table: Record<string, PriceEntry>,
+  prefixTable: Record<string, PriceEntry> = table,
+): PriceEntry | undefined {
+  return resolveModelPriceMatch(model, table, prefixTable)?.entry
 }
 
 function calculateCostWithResolver(

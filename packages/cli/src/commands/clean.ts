@@ -39,36 +39,56 @@ export interface CleanPropagationResult {
 
 export function cleanOldData(db: Database.Database, days: number): CleanResult {
   const cutoff = Date.now() - days * 86400000
-
-  const recordsResult = db.prepare('DELETE FROM records WHERE ts < ?').run(cutoff)
-  const deletedCount = recordsResult.changes
-
-  const syncedResult = db.prepare('DELETE FROM synced_records WHERE ts < ?').run(cutoff)
-  const deletedSyncedCount = syncedResult.changes
-  dropDanglingClaims(db)
-
-  const orphanResult = db.prepare('DELETE FROM tool_calls WHERE record_id IS NULL AND ts < ?').run(cutoff)
-  const deletedOrphanToolCalls = orphanResult.changes
-
-  return {
-    deletedCount,
-    deletedSyncedCount,
-    deletedOrphanToolCalls,
-  }
+  return db.transaction(() => {
+    const recordsResult = db.prepare('DELETE FROM records WHERE ts < ?').run(cutoff)
+    const syncedResult = db.prepare('DELETE FROM synced_records WHERE ts < ?').run(cutoff)
+    dropDanglingClaims(db)
+    const orphanResult = db.prepare('DELETE FROM tool_calls WHERE record_id IS NULL AND ts < ?').run(cutoff)
+    // Linked calls follow their retained parent, just as local calls do via
+    // the records FK. Orphan calls use their own timestamp; other owners'
+    // records must not accidentally keep a dangling call alive.
+    db.prepare(`DELETE FROM synced_tool_calls
+      WHERE (record_id IS NULL AND ts < ?)
+        OR (record_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM records r WHERE r.id = synced_tool_calls.record_id AND r.device_instance_id = synced_tool_calls.owner)
+          AND NOT EXISTS (SELECT 1 FROM synced_records r WHERE r.id = synced_tool_calls.record_id AND r.device_instance_id = synced_tool_calls.owner))
+    `).run(cutoff)
+    db.prepare('DELETE FROM pending_cost_recalc WHERE NOT EXISTS (SELECT 1 FROM records r WHERE r.id = pending_cost_recalc.record_id)').run()
+    // Cached signatures may describe sessions removed above. Invalidate the
+    // derived cache without changing any retained record's stored title.
+    db.prepare('DELETE FROM session_title_sources').run()
+    return {
+      deletedCount: recordsResult.changes,
+      deletedSyncedCount: syncedResult.changes,
+      deletedOrphanToolCalls: orphanResult.changes,
+    }
+  }).immediate()
 }
 
 export function cleanAll(db: Database.Database): CleanAllResult {
-  const recordsResult = db.prepare('DELETE FROM records').run()
-  const toolCallsResult = db.prepare('DELETE FROM tool_calls').run()
-  const syncedResult = db.prepare('DELETE FROM synced_records').run()
-  const syncStateResult = db.prepare('DELETE FROM sync_record_state').run()
-  const tombstonesResult = db.prepare('DELETE FROM sync_tombstones').run()
-  db.prepare('DELETE FROM sync_record_claims').run()
-  db.prepare('DELETE FROM sync_namespace_verdicts').run()
-  // A full wipe leaves no sync bookkeeping behind at all: the retirements
-  // pending for the cloud backend describe records that no longer exist here
-  // (the cloud is cleared alongside, or `--local-only` was chosen knowingly).
-  const retiredResult = db.prepare('DELETE FROM sync_retired_wire_ids').run()
+  const result = db.transaction(() => {
+    const recordsResult = db.prepare('DELETE FROM records').run()
+    const toolCallsResult = db.prepare('DELETE FROM tool_calls').run()
+    const syncedResult = db.prepare('DELETE FROM synced_records').run()
+    db.prepare('DELETE FROM synced_tool_calls').run()
+    db.prepare('DELETE FROM session_title_sources').run()
+    db.prepare('DELETE FROM pending_cost_recalc').run()
+    const syncStateResult = db.prepare('DELETE FROM sync_record_state').run()
+    const tombstonesResult = db.prepare('DELETE FROM sync_tombstones').run()
+    db.prepare('DELETE FROM sync_record_claims').run()
+    db.prepare('DELETE FROM sync_namespace_verdicts').run()
+    // A full wipe leaves no sync bookkeeping behind at all, including queued
+    // cloud retirements (or --local-only was chosen knowingly).
+    const retiredResult = db.prepare('DELETE FROM sync_retired_wire_ids').run()
+    return {
+      deletedRecords: recordsResult.changes,
+      deletedToolCalls: toolCallsResult.changes,
+      deletedSyncedRecords: syncedResult.changes,
+      deletedSyncRecordState: syncStateResult.changes,
+      deletedTombstones: tombstonesResult.changes,
+      deletedRetiredWireIds: retiredResult.changes,
+    }
+  }).immediate()
 
   const watermarkPath = join(AIUSAGE_DIR, 'watermark.json')
   let watermarkRemoved = false
@@ -78,12 +98,7 @@ export function cleanAll(db: Database.Database): CleanAllResult {
   }
 
   return {
-    deletedRecords: recordsResult.changes,
-    deletedToolCalls: toolCallsResult.changes,
-    deletedSyncedRecords: syncedResult.changes,
-    deletedSyncRecordState: syncStateResult.changes,
-    deletedTombstones: tombstonesResult.changes,
-    deletedRetiredWireIds: retiredResult.changes,
+    ...result,
     watermarkRemoved,
   }
 }
@@ -286,7 +301,7 @@ export async function propagateClean(options: {
         status: 'ok',
         detail: `cleared ${fileCount} files`,
       })
-    } else if (options.beforeDays) {
+    } else if (options.beforeDays !== undefined) {
       const cutoff = Date.now() - options.beforeDays * 86400000
       const { removedRecords, modifiedFiles, skippedNamespaces } = await cleanRemoteBefore(backend, cutoff, options.deviceInstanceId)
       await backend.flush?.()

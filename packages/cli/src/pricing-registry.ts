@@ -4,7 +4,7 @@ import {
   CURATED_PRICES,
   setRuntimePriceTable,
   setPriceOverride,
-  resolvePriceFromTable,
+  resolveModelPriceMatch,
   planLitellmPricing,
   type LitellmEntry,
   type PriceEntry,
@@ -175,24 +175,30 @@ function loadAliasRows(db: Database.Database): AliasRow[] {
 }
 
 export function loadPricingRuntime(db: Database.Database, config?: Config | null): void {
-  const builtin: Record<string, PriceEntry> = {}
+  const builtin: Record<string, PriceEntry> = Object.create(null)
   for (const row of loadBuiltinRows(db)) builtin[row.model_key] = rowToPrice(row)
+  const prefixBuiltin: Record<string, PriceEntry> = Object.assign(Object.create(null), builtin)
 
-  const overrides: Record<string, PriceEntry> = {}
+  const overrides: Record<string, PriceEntry> = Object.create(null)
+  const prefixOverrides: Record<string, PriceEntry> = Object.create(null)
   const userRows = loadUserRows(db)
   const configOverrides = config?.priceOverrides ?? {}
 
   const activePrices = priceTableFromDb(db)
   for (const alias of loadAliasRows(db)) {
-    const price = activePrices[alias.model_key]
+    const price = Object.hasOwn(activePrices, alias.model_key) ? activePrices[alias.model_key] : undefined
     if (!price) continue
     if (alias.origin === 'user') overrides[alias.alias] = price
     else builtin[alias.alias] = price
+    if (alias.match_type === 'prefix') {
+      if (alias.origin === 'user') prefixOverrides[alias.alias] = price
+      else prefixBuiltin[alias.alias] = price
+    }
   }
 
-  for (const row of userRows) overrides[row.model_key] = rowToPrice(row)
-  for (const [model, entry] of Object.entries(configOverrides)) overrides[model] = entry
-  setRuntimePriceTable(builtin, overrides)
+  for (const row of userRows) overrides[row.model_key] = prefixOverrides[row.model_key] = rowToPrice(row)
+  for (const [model, entry] of Object.entries(configOverrides)) overrides[model] = prefixOverrides[model] = entry
+  setRuntimePriceTable(builtin, overrides, { base: prefixBuiltin, overrides: prefixOverrides })
 }
 
 /**
@@ -614,7 +620,7 @@ export async function syncPricingFromLitellm(db: Database.Database): Promise<Pri
 }
 
 function priceTableFromDb(db: Database.Database): Record<string, PriceEntry> {
-  const table: Record<string, PriceEntry> = {}
+  const table: Record<string, PriceEntry> = Object.create(null)
   const rows = db.prepare(`
     SELECT model_key, input, output, cache_read, cache_write, currency
     FROM model_prices WHERE status = 'active'
@@ -623,14 +629,52 @@ function priceTableFromDb(db: Database.Database): Record<string, PriceEntry> {
   return table
 }
 
+interface RegistryMatch {
+  price: PriceEntry
+  row: ModelPriceRow
+  alias?: AliasRow
+}
+
+interface RegistryMatchTables {
+  exact: Record<string, RegistryMatch>
+  prefix: Record<string, RegistryMatch>
+  aliases: Map<string, AliasRow>
+}
+
+/** Same two tables as runtime: aliases are exact unless explicitly prefix. */
+function loadRegistryMatchTables(db: Database.Database): RegistryMatchTables {
+  const rows = db.prepare(`
+    SELECT model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
+           source_url, origin, status, last_synced_at, updated_at
+    FROM model_prices WHERE status = 'active'
+  `).all() as ModelPriceRow[]
+  const exact: Record<string, RegistryMatch> = Object.create(null)
+  const prefix: Record<string, RegistryMatch> = Object.create(null)
+  const byKey = new Map(rows.map(row => [row.model_key, row]))
+  for (const row of rows) exact[row.model_key] = prefix[row.model_key] = { row, price: rowToPrice(row) }
+  const aliases = new Map<string, AliasRow>()
+  for (const alias of loadAliasRows(db)) {
+    const row = byKey.get(alias.model_key)
+    if (!row) continue
+    aliases.set(alias.alias, alias)
+    // A direct manual price wins over even a manual alias, as runtime and
+    // the existing exact-user lookup both promise.
+    if (byKey.get(alias.alias)?.origin === 'user') continue
+    const entry = { row, price: rowToPrice(row), alias }
+    exact[alias.alias] = entry
+    if (alias.match_type === 'prefix') prefix[alias.alias] = entry
+  }
+  return { exact, prefix, aliases }
+}
+
 export function resolvePriceFromRegistry(db: Database.Database, model: string): PriceEntry | undefined {
   return createRegistryPriceLookup(db).price(model)
 }
 
 export interface RegistryPriceLookup {
   /**
-   * The model's price: its direct user price, else the price of its exact
-   * alias, else a match in the full price table (`resolvePriceFromTable`).
+   * The model's price: its direct user price, else its exact alias, else the
+   * shared case/provider/longest-prefix matcher, including prefix aliases.
    */
   price(model: string): PriceEntry | undefined
   /**
@@ -664,7 +708,7 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
   `)
   const userPrices = new Map<string, PriceEntry | null>()
   const prices = new Map<string, PriceEntry | null>()
-  let table: Record<string, PriceEntry> | undefined
+  let tables: RegistryMatchTables | undefined
 
   const userPrice = (model: string): PriceEntry | null => {
     let entry = userPrices.get(model)
@@ -681,8 +725,8 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
     if (direct) return direct
     const alias = exactAlias.get(model) as PriceColumns | undefined
     if (alias) return rowToPrice(alias)
-    table ??= priceTableFromDb(db)
-    return resolvePriceFromTable(model, table)
+    tables ??= loadRegistryMatchTables(db)
+    return resolveModelPriceMatch(model, tables.exact, tables.prefix)?.entry.price
   }
 
   return {
@@ -699,41 +743,12 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
 }
 
 function findMatch(db: Database.Database, model: string): { price: PriceEntry; row: ModelPriceRow; matchedBy: string | null } | null {
-  const directUserMatch = db.prepare(`
-    SELECT model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
-           source_url, origin, status, last_synced_at, updated_at
-    FROM model_prices
-    WHERE model_key = ? AND origin = 'user' AND status = 'active'
-  `).get(model) as (ModelPriceRow | undefined)
-  if (directUserMatch) return { price: rowToPrice(directUserMatch), row: directUserMatch, matchedBy: null }
-
-  const aliasMatch = db.prepare(`
-    SELECT p.model_key, p.provider, p.input, p.output, p.cache_read, p.cache_write, p.currency, p.source,
-           p.source_model_id, p.source_url, p.origin, p.status, p.last_synced_at, p.updated_at, a.alias
-    FROM model_price_aliases a
-    JOIN model_prices p ON p.model_key = a.model_key
-    WHERE a.alias = ? AND a.enabled = 1 AND p.status = 'active'
-    ORDER BY a.priority DESC LIMIT 1
-  `).get(model) as (ModelPriceRow & { alias: string } | undefined)
-  if (aliasMatch) {
-    const matchedBy = aliasMatch.alias === model
-      ? (aliasMatch.model_key === model ? null : aliasMatch.model_key)
-      : aliasMatch.alias
-    return { price: rowToPrice(aliasMatch), row: aliasMatch, matchedBy }
-  }
-
-  const rows = db.prepare(`
-    SELECT model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
-           source_url, origin, status, last_synced_at, updated_at
-    FROM model_prices WHERE status = 'active'
-  `).all() as ModelPriceRow[]
-  let best: ModelPriceRow | null = null
-  for (const row of rows) {
-    if (model === row.model_key) { best = row; break }
-    if (model.startsWith(row.model_key) && (!best || row.model_key.length > best.model_key.length)) best = row
-  }
-  if (!best) return null
-  return { price: rowToPrice(best), row: best, matchedBy: best.model_key === model ? null : best.model_key }
+  const tables = loadRegistryMatchTables(db)
+  const match = resolveModelPriceMatch(model, tables.exact, tables.prefix)
+  if (!match) return null
+  const { price, row, alias } = match.entry
+  const matchedBy = match.key === model ? (alias && row.model_key !== model ? row.model_key : null) : match.key
+  return { price, row, matchedBy }
 }
 
 export function listPricingModels(db: Database.Database): PricingModelView[] {
@@ -830,82 +845,23 @@ export function listPricingAliasTargets(db: Database.Database): PricingAliasTarg
 
 export function listLocalModelBindings(db: Database.Database): PricingLocalModelBinding[] {
   const rows = db.prepare("SELECT DISTINCT model FROM records WHERE model != 'unknown' ORDER BY model ASC").all() as Array<{ model: string }>
-  const priceRows = db.prepare(`
-    SELECT model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
-           source_url, origin, status, last_synced_at, updated_at
-    FROM model_prices WHERE status = 'active'
-  `).all() as ModelPriceRow[]
-
-  return rows.map(({ model }) => {
-    const directUserPrice = db.prepare(`
-      SELECT model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id,
-             source_url, origin, status, last_synced_at, updated_at
-      FROM model_prices
-      WHERE model_key = ? AND origin = 'user' AND status = 'active'
-    `).get(model) as (ModelPriceRow | undefined)
-    const aliasMatch = db.prepare(`
-      SELECT a.alias, a.model_key AS modelKey, a.origin, a.source, p.origin AS priceOrigin
-      FROM model_price_aliases a
-      JOIN model_prices p ON p.model_key = a.model_key
-      WHERE a.alias = ? AND a.enabled = 1 AND p.status = 'active'
-      ORDER BY a.priority DESC LIMIT 1
-    `).get(model) as ({ alias: string; modelKey: string; origin: 'builtin' | 'user'; source: string; priceOrigin: 'builtin' | 'user' } | undefined)
-
-    if (directUserPrice) {
-      const hasManualBinding = Boolean(aliasMatch && aliasMatch.origin === 'user' && !(aliasMatch.alias === model && aliasMatch.modelKey === model))
-      return {
-        model,
-        modelKey: hasManualBinding ? aliasMatch!.modelKey : directUserPrice.model_key,
-        origin: hasManualBinding ? aliasMatch!.origin : directUserPrice.origin,
-        priceOrigin: directUserPrice.origin,
-        source: directUserPrice.source,
-        matchType: 'exact',
-        bindingType: 'custom',
-        hasManualBinding,
-        hasPrice: true,
-      }
-    }
-
-    if (aliasMatch) {
-      const selfAlias = aliasMatch.alias === model && aliasMatch.modelKey === model
-      const hasManualBinding = aliasMatch.origin === 'user' && !selfAlias
-      return {
-        model,
-        modelKey: aliasMatch.modelKey,
-        origin: aliasMatch.origin,
-        priceOrigin: aliasMatch.priceOrigin,
-        source: aliasMatch.source,
-        matchType: selfAlias ? 'exact' : 'alias',
-        bindingType: aliasMatch.priceOrigin === 'user' ? 'custom' : hasManualBinding ? 'manual' : 'automatic',
-        hasManualBinding,
-        hasPrice: true,
-      }
-    }
-
-    let best: ModelPriceRow | null = null
-    let matchType: 'exact' | 'prefix' | null = null
-    for (const row of priceRows) {
-      if (model === row.model_key) {
-        best = row
-        matchType = 'exact'
-        break
-      }
-      if (model.startsWith(row.model_key) && (!best || row.model_key.length > best.model_key.length)) {
-        best = row
-        matchType = 'prefix'
-      }
-    }
-
+  const tables = loadRegistryMatchTables(db)
+  return rows.map(({ model }): PricingLocalModelBinding => {
+    const match = resolveModelPriceMatch(model, tables.exact, tables.prefix)
+    if (!match) return { model, modelKey: null, origin: null, priceOrigin: null, source: null, matchType: null, bindingType: 'none', hasManualBinding: false, hasPrice: false }
+    const { row, alias } = match.entry
+    const configuredAlias = alias ?? (match.matchType === 'exact' ? tables.aliases.get(match.key) : undefined)
+    const hasManualBinding = !!configuredAlias && configuredAlias.origin === 'user' && configuredAlias.alias !== configuredAlias.model_key
     return {
       model,
-      modelKey: best?.model_key ?? null,
-      origin: best?.origin ?? null,
-      priceOrigin: best?.origin ?? null,
-      source: best?.source ?? null,
-      matchType,
-      bindingType: best?.origin === 'user' ? 'custom' : best ? 'automatic' : 'none',
-      hasManualBinding: false,
-      hasPrice: Boolean(best),
+      modelKey: row.model_key,
+      origin: alias?.origin ?? row.origin,
+      priceOrigin: row.origin,
+      source: alias?.source ?? row.source,
+      matchType: alias && alias.alias !== alias.model_key ? 'alias' : match.matchType,
+      bindingType: row.origin === 'user' ? 'custom' : hasManualBinding ? 'manual' : 'automatic',
+      hasManualBinding,
+      hasPrice: true,
     }
   })
 }

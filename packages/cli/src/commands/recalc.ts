@@ -3,6 +3,7 @@ import { calculateCostForPrice, inferProvider, normalizeQoderModel, resolveExcha
 import { loadConfig } from '../config.js'
 import { applyPricingToSyncedRecords, type SyncedRecordPricing } from '../db/synced-records.js'
 import { createRegistryPriceLookup } from '../pricing-registry.js'
+import { NEXT_UPDATED_AT } from '../db/record-version.js'
 
 export interface RecalcResult {
   updatedCount: number
@@ -53,6 +54,7 @@ interface RecalcRow {
   thinking_tokens: number
   cost: number
   cost_source: string
+  origin: 'local' | 'synced'
 }
 
 const BATCH_SIZE = 1000
@@ -84,7 +86,7 @@ export async function recalcPricing(db: Database.Database, options: RecalcOption
   const prices = createRegistryPriceLookup(db)
 
   const selectBatch = db.prepare(
-    'SELECT id, tool, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, cost_source FROM records WHERE id > @lastId ORDER BY id LIMIT @limit'
+    'SELECT id, tool, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, cost_source, origin FROM records WHERE id > @lastId ORDER BY id LIMIT @limit'
   )
 
   // A pulled row's updated_at is the version of the remote record it mirrors:
@@ -93,7 +95,7 @@ export async function recalcPricing(db: Database.Database, options: RecalcOption
   const updateStmt = db.prepare(`
     UPDATE records
     SET model = ?, provider = ?, cost = ?, cost_source = ?,
-        updated_at = CASE WHEN origin = 'local' THEN ? ELSE updated_at END
+        updated_at = CASE WHEN origin = 'local' THEN ${NEXT_UPDATED_AT} ELSE updated_at END
     WHERE id = ?
   `)
 
@@ -116,13 +118,19 @@ export async function recalcPricing(db: Database.Database, options: RecalcOption
       // logged cost is non-positive (custom gateways report 0 for models they don't
       // price) or when the user has explicitly set a manual price for this model. In
       // both cases the logged value must not block pricing/recalc (issue #13).
-      if (record.cost_source === 'log' && record.cost > 0 && !prices.hasUserPrice(model)) {
+      if (record.cost_source === 'log' && record.cost > 0 && (record.origin === 'synced' || !prices.hasUserPrice(model))) {
         skippedCount++
         continue
       }
 
       const provider = model !== record.model ? inferProvider(model) : record.provider
       const price = prices.price(model)
+      // applyPricingToSyncedRecords preserves a positive remote cost when
+      // there is no local price; its records copy must make the same decision.
+      if (record.origin === 'synced' && !price && record.cost > 0) {
+        skippedCount++
+        continue
+      }
       const newCost = price ? calculateCostForPrice(price, {
         inputTokens: record.input_tokens,
         outputTokens: record.output_tokens,

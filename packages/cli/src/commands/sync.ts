@@ -13,6 +13,7 @@ import type { SyncProgress } from '../sync/runtime.js'
 import { adoptLegacySyncTarget, getLegacySyncTarget, getSyncTarget, knownSyncTargets, otherSyncTargets } from '../sync/target.js'
 import { forgetSyncTarget, repairSyncContamination, type ForgetTargetReport, type RepairReport } from '../sync/repair.js'
 import { githubToken } from '../github/auth.js'
+import { acquireFileSyncLock } from '../lock.js'
 
 export { knownSyncTargets } from '../sync/target.js'
 
@@ -102,13 +103,15 @@ export type RunSyncResult = (SyncResult | CloudSyncResult) & {
   lingeringLegacyTarget?: string
 }
 
+export interface RunSyncOptions {
+  onProgress?: (progress: SyncProgress) => void
+  /** Told the target key this run syncs, once the configuration has been read. */
+  onTarget?: (target: string) => void
+}
+
 export async function runSync(
   db: Database.Database,
-  options?: {
-    onProgress?: (progress: SyncProgress) => void
-    /** Told the target key this run syncs, once the configuration has been read. */
-    onTarget?: (target: string) => void
-  },
+  options?: RunSyncOptions,
 ): Promise<RunSyncResult> {
   const configFile = readConfigFile()
   if (configFile.status === 'invalid') {
@@ -124,6 +127,16 @@ export async function runSync(
     return failedResult('Invalid sync configuration.')
   }
   options?.onTarget?.(target)
+  if (config.sync.backend === 'cloud') return runConfiguredSync(db, config, target, options)
+  let release: (() => void) | null
+  try { release = acquireFileSyncLock(AIUSAGE_DIR) } catch { return failedResult('Could not acquire the file sync lock; no remote data was touched.') }
+  if (!release) return failedResult('Another file sync, repair or remote clean is running on this device. Retry shortly.')
+  try { return await runConfiguredSync(db, config, target, options) } finally { release() }
+}
+
+async function runConfiguredSync(db: Database.Database, config: import('../config.js').Config,
+  target: string, options?: RunSyncOptions): Promise<RunSyncResult> {
+  if (!config.sync) return failedResult('Sync not configured.')
   // Syncing needs this device's identity, and nothing here may invent one: a
   // new id next to an existing database makes the device's own history look
   // like another device's.
@@ -276,6 +289,16 @@ export async function runSyncRepair(
   if (!target) {
     return { status: 'failed', error: 'Invalid sync configuration.' }
   }
+  if (config.sync.backend === 'cloud') return runConfiguredSyncRepair(db, config, target, options)
+  let release: (() => void) | null
+  try { release = acquireFileSyncLock(AIUSAGE_DIR) } catch { return { status: 'failed', error: 'Could not acquire the file sync lock; no remote data was touched.' } }
+  if (!release) return { status: 'failed', error: 'Another file sync, repair or remote clean is running on this device. Retry shortly.' }
+  try { return await runConfiguredSyncRepair(db, config, target, options) } finally { release() }
+}
+
+async function runConfiguredSyncRepair(db: Database.Database, config: import('../config.js').Config,
+  target: string, options: SyncRepairOptions): Promise<SyncRepairResult> {
+  if (!config.sync) return { status: 'failed', error: 'Sync not configured.' }
   adoptLegacySyncTarget(AIUSAGE_DIR, db, config.sync)
   const state = getState(AIUSAGE_DIR)
   if (!state?.deviceInstanceId) {
@@ -387,6 +410,7 @@ export function formatForgetTargetReport(report: ForgetTargetReport): string {
   lines.push('')
   lines.push('Local database:')
   lines.push(`  ${verb} ${b.claimRows} claim(s), ${b.verdictRows} namespace verdict(s), ${b.syncStateRows} publish bookkeeping row(s) and ${b.retiredWireIdRows} retired wire id(s) recorded under this key`)
+  lines.push(`  ${verb} ${b.toolCallRows} mirrored tool call(s) recorded under this key`)
   lines.push(`  ${b.lastClaimRows} pulled record(s) ${report.applied ? 'lost' : 'would lose'} their last claim and ${report.applied ? 'became' : 'would become'} unresolved${report.tick !== undefined ? ` (sync tick ${report.tick})` : ''}; none ${report.applied ? 'was' : 'would be'} deleted`)
   lines.push('')
   lines.push('state.json:')

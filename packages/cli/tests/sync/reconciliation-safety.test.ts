@@ -163,7 +163,7 @@ describe('destructive reconciliation fails closed', () => {
     expect(syncedIds(dbB, A)).toHaveLength(3)
   })
 
-  it('aborts the sync when one file of a multi-file namespace cannot be read', async () => {
+  it('isolates an unreadable multi-file namespace without pruning it and imports healthy peers', async () => {
     // A now spans two day files; B has both mirrored.
     insertRecord(dbA, local(A, 9, { ts: DAY7 }))
     await sync(dbA, backend, A)
@@ -174,12 +174,15 @@ describe('destructive reconciliation fails closed', () => {
     dbA.prepare(`DELETE FROM records WHERE id = ?`).run(local(A, 0).id)
     await sync(dbA, backend, A)
 
+    insertRecord(dbC, local(C, 9, { ts: DAY7 }))
+    await sync(dbC, backend, C)
     backend.readErrors.set(`${A}/2026/09/07.ndjson`, new Error('EACCES'))
     const b = await sync(dbB, backend, B)
-    expect(b.status).toBe('failed')
-    expect(b.error).toBe('EACCES')
+    expect(b.status).toBe('ok')
+    expect(b.skippedNamespaces).toBe(1)
     expect(syncedIds(dbB, A)).toHaveLength(4)
     expect(mergedCount(dbB, A)).toBe(4)
+    expect(syncedIds(dbB, C)).toHaveLength(3)
 
     // Once the file is readable again the sync converges normally.
     backend.readErrors.clear()

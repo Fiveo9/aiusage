@@ -1,4 +1,5 @@
 import type { SyncRecord } from '@aiusage/core'
+import { isSafeDeviceInstanceId } from './safe-path.js'
 
 /**
  * Wire shape of a record on the cloud sync API, and the only place that
@@ -26,7 +27,7 @@ export function toCloudRecord(record: SyncRecord): CloudWireRecord {
 }
 
 const WIRE_INTEGER_FIELDS = ['ts', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'updatedAt'] as const
-const WIRE_TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sessionTitle', 'sourceFile', 'cwd', 'deviceName', 'platform'] as const
+const WIRE_TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sessionKey', 'sessionTitle', 'sourceFile', 'cwd', 'deviceName', 'platform', 'deviceInstanceId'] as const
 
 /**
  * Why the cloud would not store `record`, or null when it would: the checks
@@ -37,6 +38,7 @@ const WIRE_TEXT_FIELDS = ['id', 'tool', 'model', 'provider', 'costSource', 'sess
  */
 export function cloudRecordProblem(record: CloudWireRecord): 'missing_field' | 'invalid_value' | null {
   if (!record.id || !record.tool || !record.model) return 'missing_field'
+  if (!isSafeDeviceInstanceId(record.deviceInstanceId)) return 'invalid_value'
   const fields = record as unknown as Record<string, unknown>
   for (const field of WIRE_TEXT_FIELDS) {
     const value = fields[field]
@@ -104,7 +106,7 @@ export function fromCloudRecord(raw: unknown): SyncRecord | null {
   const model = str(r.model)
   const ts = num(r.ts)
   const updatedAt = num(r.updatedAt)
-  if (!id || !deviceInstanceId || !tool || !model || ts === undefined || updatedAt === undefined) return null
+  if (!id || !isSafeDeviceInstanceId(deviceInstanceId) || !tool || !model || ts === undefined || updatedAt === undefined) return null
   const costSource = r.costSource === null ? 'unknown' : str(r.costSource)
   const provider = str(r.provider)
   const sessionKey = str(r.sessionKey)

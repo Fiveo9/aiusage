@@ -600,17 +600,10 @@ describe('I4/I6 — an unresolved row seen again in an unverifiable snapshot', (
 
 describe('I4/I7 — a sync that fails after reading a namespace', () => {
   it("withdraws the target's earlier verdict on it, so another target cannot settle the rows that were seen", async () => {
-    class FailingBackend extends FakeSyncBackend {
-      failOn: string | null = null
-      override async readFile(path: string): Promise<string | null> {
-        if (path === this.failOn) throw new Error('simulated I/O failure')
-        return super.readFile(path)
-      }
-    }
     const dbX = newDb()
     const dbY = newDb()
     const dbMe = newDb()
-    const targetA = new FailingBackend()
+    const targetA = new FakeSyncBackend()
     const targetB = new FakeSyncBackend()
     const Y = 'device-y'
     const r1 = mapStatsRecordToSyncRecord(local(X, 1))
@@ -624,17 +617,19 @@ describe('I4/I7 — a sync that fails after reading a namespace', () => {
     expect(await sync(dbMe, targetA, ME, T_A)).toMatchObject({ status: 'ok', prunedCount: 0 })
     expect(getNamespaceVerdicts(dbMe, X).has(T_A)).toBe(true)
 
-    // X publishes r1 to A; ME reads X's namespace, then the read of Y's fails.
+    // X publishes r1 to A; ME reads X, then a local SQL write of Y fails.
+    // A peer read error is isolated; a database failure must still abort the pull.
     insertRecord(dbX, local(X, 1))
     await sync(dbX, targetA, X, T_A)
-    targetA.failOn = dayFilesOf(targetA, Y)[0]
+    dbMe.exec(`CREATE TRIGGER synthetic_pull_failure BEFORE INSERT ON synced_records
+      WHEN NEW.device_instance_id = '${Y}' BEGIN SELECT RAISE(ABORT, 'simulated I/O failure'); END`)
     expect(await sync(dbMe, targetA, ME, T_A)).toMatchObject({ status: 'failed', error: 'simulated I/O failure' })
     expect(getNamespaceVerdicts(dbMe, X).has(T_A)).toBe(false)
 
     expect(await sync(dbMe, targetB, ME, T_B)).toMatchObject({ status: 'ok', prunedCount: 0 })
     expect(syncedIds(dbMe, X)).toContain(r1.id)
 
-    targetA.failOn = null
+    dbMe.exec('DROP TRIGGER synthetic_pull_failure')
     expect(await sync(dbMe, targetA, ME, T_A)).toMatchObject({ status: 'ok', prunedCount: 0 })
     expect(getClaimingTargets(dbMe, r1.id)).toEqual([T_A])
   })

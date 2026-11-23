@@ -193,7 +193,7 @@ export function clearRetiredWireIds(db: Database.Database, target: string, wireI
   const del = db.prepare(`DELETE FROM sync_retired_wire_ids WHERE target = ? AND wire_id = ?`)
   db.transaction(() => {
     for (const id of wireIds) del.run(target, id)
-  })()
+  }).immediate()
 }
 
 /**
@@ -208,6 +208,7 @@ export interface SyncTargetBookkeeping {
   syncStateRows: number
   retiredWireIdRows: number
   lastClaimRows: number
+  toolCallRows: number
 }
 
 const TARGET_KEYED_TABLES: Array<{ table: string; key: Exclude<keyof SyncTargetBookkeeping, 'lastClaimRows'> }> = [
@@ -215,6 +216,7 @@ const TARGET_KEYED_TABLES: Array<{ table: string; key: Exclude<keyof SyncTargetB
   { table: 'sync_namespace_verdicts', key: 'verdictRows' },
   { table: 'sync_record_state', key: 'syncStateRows' },
   { table: 'sync_retired_wire_ids', key: 'retiredWireIdRows' },
+  { table: 'synced_tool_calls', key: 'toolCallRows' },
 ]
 
 /**
@@ -242,7 +244,7 @@ export function getBookkeepingTargets(db: Database.Database): string[] {
 
 /** What `forgetSyncTargetBookkeeping(db, target)` would remove or stamp; all zero for a key the database has never seen. */
 export function countSyncTargetBookkeeping(db: Database.Database, target: string): SyncTargetBookkeeping {
-  const counts: SyncTargetBookkeeping = { claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0 }
+  const counts: SyncTargetBookkeeping = { claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0, toolCallRows: 0 }
   for (const { table, key } of TARGET_KEYED_TABLES) {
     counts[key] = (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE target = ?`).get(target) as { n: number }).n
   }
@@ -277,12 +279,11 @@ export function forgetSyncTargetBookkeeping(db: Database.Database, target: strin
     // Identified while the claims still exist; identical to "no claim left
     // after the delete" because only `target`'s claims go.
     const lastClaimRows = db.prepare(`UPDATE synced_records SET unclaimed_since = @tick WHERE ${LAST_CLAIM_WHERE}`).run({ target, tick }).changes
-    db.prepare('DELETE FROM synced_tool_calls WHERE target = ?').run(target)
-    const counts: SyncTargetBookkeeping & { tick: number } = { claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows, tick }
+    const counts: SyncTargetBookkeeping & { tick: number } = { claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows, toolCallRows: 0, tick }
     for (const { table, key } of TARGET_KEYED_TABLES) {
       counts[key] = db.prepare(`DELETE FROM ${table} WHERE target = ?`).run(target).changes
     }
     return counts
-  })()
+  }).immediate()
 }
 

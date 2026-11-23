@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3'
 import type { SyncConfig } from '../config.js'
 import { getBookkeepingTargets } from '../db/sync-claims.js'
 import { getState, updateState, type State } from '../init.js'
+import { DEFAULT_S3_PREFIX, normalizeS3Prefix, normalizeS3Endpoint } from './s3-location.js'
+export { DEFAULT_S3_PREFIX, normalizeS3Prefix, normalizeS3Endpoint } from './s3-location.js'
 
 /**
  * Sync target identity.
@@ -27,18 +29,6 @@ import { getState, updateState, type State } from '../init.js'
  */
 
 export const DEFAULT_GITHUB_BRANCH = 'main'
-export const DEFAULT_S3_PREFIX = 'aiusage/'
-const DEFAULT_S3_ENDPOINTS = new Set(['', 'https://s3.amazonaws.com'])
-
-/** The prefix exactly as the S3 backend applies it: no leading slash, one trailing slash. */
-export function normalizeS3Prefix(prefix: string | undefined): string {
-  return (prefix ?? DEFAULT_S3_PREFIX).replace(/^\/+/, '').replace(/\/?$/, '/')
-}
-
-function normalizeS3Endpoint(endpoint: string | undefined): string {
-  const trimmed = (endpoint ?? '').trim().replace(/\/+$/, '')
-  return DEFAULT_S3_ENDPOINTS.has(trimmed) ? '' : trimmed
-}
 
 export function getSyncTarget(sync: SyncConfig | undefined): string | null {
   if (!sync) return null
@@ -144,7 +134,7 @@ export function adoptLegacySyncTarget(aiusageDir: string, db: Database.Database,
         SELECT @target, ${cols} FROM ${table} WHERE target = @legacy
       `).run({ target, legacy }).changes
     }
-  })()
+  }).immediate()
 
   return { target, legacy, stateCopied, ...copied }
 }

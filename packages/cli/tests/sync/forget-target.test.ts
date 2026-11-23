@@ -155,7 +155,7 @@ describe('sync --repair --forget-target', () => {
     const report = forgetSyncTarget(dbMe, { aiusageDir: dir, target: OLD, currentTarget: NEW, apply: true })
     expect(report.applied).toBe(true)
     expect(report.tick).toBe(tick)
-    expect(report.bookkeeping).toEqual({ claimRows: 4, verdictRows: 1, syncStateRows: 1, retiredWireIdRows: 1, lastClaimRows: 2 })
+    expect(report.bookkeeping).toEqual({ claimRows: 4, verdictRows: 1, syncStateRows: 1, retiredWireIdRows: 1, lastClaimRows: 2, toolCallRows: 0 })
     expect(report.remainingTargets).toEqual([NEW])
 
     // The forget itself deletes nothing.
@@ -164,7 +164,7 @@ describe('sync --repair --forget-target', () => {
     expect(unclaimedSince(dbMe, r0)).toBe(tick)
     expect(unclaimedSince(dbMe, oldA5)).toBe(tick)
     expect(getClaimingTargets(dbMe, r0)).toEqual([])
-    expect(countSyncTargetBookkeeping(dbMe, OLD)).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0 })
+    expect(countSyncTargetBookkeeping(dbMe, OLD)).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0, toolCallRows: 0 })
     expect(getNamespaceVerdicts(dbMe, X).has(OLD)).toBe(false)
 
     // The current target is now the only known target; its next sync judges
@@ -210,7 +210,7 @@ describe('sync --repair --forget-target', () => {
     const report = forgetSyncTarget(dbMe, { aiusageDir: dir, target: OLD, currentTarget: NEW })
     expect(report).toEqual({
       target: OLD,
-      bookkeeping: { claimRows: 4, verdictRows: 1, syncStateRows: 1, retiredWireIdRows: 1, lastClaimRows: 2 },
+      bookkeeping: { claimRows: 4, verdictRows: 1, syncStateRows: 1, retiredWireIdRows: 1, lastClaimRows: 2, toolCallRows: 0 },
       inState: true,
       applied: false,
       remainingTargets: [NEW],
@@ -249,7 +249,7 @@ describe('sync --repair --forget-target', () => {
     const tick = nextSyncTick(dbMe)
     expect(() => forgetSyncTarget(dbMe, { aiusageDir: dir, target: OLD, currentTarget: NEW, apply: true })).toThrow(/re-run/i)
     const afterDb = dump(dbMe)
-    expect(countSyncTargetBookkeeping(dbMe, OLD)).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0 })
+    expect(countSyncTargetBookkeeping(dbMe, OLD)).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0, toolCallRows: 0 })
     expect(unclaimedSince(dbMe, r0)).toBe(tick)
     expect(state().syncConsents?.[OLD]).toBeDefined()
     expect(knownSyncTargets(state(), NEW)).toEqual([OLD, NEW].sort())
@@ -265,7 +265,7 @@ describe('sync --repair --forget-target', () => {
     const afterSync = dump(dbMe)
     const again = forgetSyncTarget(dbMe, { aiusageDir: dir, target: OLD, currentTarget: NEW, apply: true })
     expect(again.applied).toBe(true)
-    expect(again.bookkeeping).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0 })
+    expect(again.bookkeeping).toEqual({ claimRows: 0, verdictRows: 0, syncStateRows: 0, retiredWireIdRows: 0, lastClaimRows: 0, toolCallRows: 0 })
     expect(dump(dbMe)).toEqual(afterSync)
     expect(afterSync.claims).toEqual(afterDb.claims)
     const s = state()

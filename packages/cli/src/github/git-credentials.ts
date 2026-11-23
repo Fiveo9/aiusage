@@ -22,8 +22,12 @@ export function emptyGitConfigPath(dir = AIUSAGE_DIR): string {
       if ((error as { code?: string } | null)?.code !== 'EEXIST') throw error
     }
     stats = lstatSync(path)
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+      throw new GitIsolationError('The empty Git config file in the aiusage directory must be a regular file with no links.')
+    }
     if (stats.isFile() && stats.size > 0) writeFileSync(path, '', { mode: 0o600 })
   } catch (error) {
+    if (error instanceof GitIsolationError) throw error
     const code = (error as { code?: string } | null)?.code ?? 'unknown error'
     throw new GitIsolationError(`Cannot prepare the empty Git config file in the aiusage directory (${code}).`)
   }
@@ -36,6 +40,9 @@ export function emptyGitConfigPath(dir = AIUSAGE_DIR): string {
  * ignores store/erase so another credential helper cannot persist the token.
  */
 export function gitCredentialOptions(repo: string, token?: string) {
+  if (token !== undefined && (typeof token !== 'string' || /[\r\n\u0000]/.test(token))) {
+    throw new GitIsolationError('Invalid GitHub token: control characters are not allowed.')
+  }
   const env = { ...process.env }
   for (const key of Object.keys(env)) {
     if (/^GIT_/i.test(key) || /^(SSH_ASKPASS|AIUSAGE_GITHUB_TOKEN|AIUSAGE_GIT_CREDENTIAL)$/i.test(key)) delete env[key]
@@ -46,7 +53,7 @@ export function gitCredentialOptions(repo: string, token?: string) {
   // core.hooksPath=/dev/null still disables hooks on Git for Windows 2.56: it is not resolved
   // against the current drive root, so a hook planted under `<drive>:\dev\null\` does not run.
   const args = ['-c', 'credential.helper=', '-c', 'credential.useHttpPath=true',
-    '-c', 'http.extraHeader=', '-c', 'http.followRedirects=false', '-c', 'core.hooksPath=/dev/null',
+    '-c', 'http.extraHeader=', '-c', 'http.followRedirects=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.symlinks=false',
     '-c', 'user.name=AIUsage', '-c', 'user.email=aiusage@localhost', '-c', 'commit.gpgSign=false']
   if (token) {
     env.AIUSAGE_GIT_CREDENTIAL = token
@@ -66,7 +73,7 @@ const NETWORK_FAILURES: [RegExp, string][] = [
   [/unable to access '(?![a-z][a-z0-9+.-]*:\/\/)/i, 'cannot read a Git config file'],
   [/Could not resolve host/i, 'could not resolve host'],
   [/Failed to connect|Couldn't connect|Connection (?:timed out|refused|reset)|Operation timed out/i, 'could not connect to GitHub'],
-  [/\bSSL|\bTLS\b|certificate|schannel/, 'TLS error'],
+  [/\bSSL|\bTLS\b|certificate|schannel/i, 'TLS error'],
   [/Authentication failed|could not read (?:Username|Password)|terminal prompts disabled/i, 'authentication failed'],
   [/Repository not found|repository '[^']*' not found/i, 'repository not found'],
   [/couldn't find remote ref|Remote branch \S+ not found/i, 'remote branch not found'],

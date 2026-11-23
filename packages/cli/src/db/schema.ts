@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 
 export function applyPragmas(db: Database.Database): void {
+  db.pragma('busy_timeout = 30000')
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
-  db.pragma('busy_timeout = 30000')
 }
 
 export function createReadonlyViews(db: Database.Database): void {

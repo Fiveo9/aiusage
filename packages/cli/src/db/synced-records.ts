@@ -238,7 +238,7 @@ function everyKnownTargetHasJudged(db: Database.Database, target: string, owner:
  * rows deleted.
  */
 export function settleReleasedSyncedRecords(db: Database.Database, target: string, ids: Iterable<string>, knownTargets: Iterable<string> = [target]): number {
-  return db.transaction(() => settleReleasedRows(db, target, ids, knownTargets))()
+  return db.transaction(() => settleReleasedRows(db, target, ids, knownTargets)).immediate()
 }
 
 function settleReleasedRows(db: Database.Database, target: string, ids: Iterable<string>, knownTargets: Iterable<string>): number {
@@ -302,7 +302,7 @@ export function deleteSyncedRecord(
     if (!hasClaim(db, target, id, options.owner)) return false
     if (!releaseClaim(db, target, id, options.owner)) return false
     return settleReleasedRows(db, target, [id], knownTargets) > 0
-  })()
+  }).immediate()
 }
 
 function fillRemoteIds(db: Database.Database, ids: Iterable<string>): void {
@@ -414,7 +414,7 @@ export function reconcileSyncedNamespace(
     db.exec(`DELETE FROM sync_released_ids`)
     db.exec(`DELETE FROM sync_remote_ids`)
     return pruned
-  })()
+  }).immediate()
 }
 
 /**
@@ -499,7 +499,7 @@ export function pruneUnresolvedSyncedRecords(db: Database.Database, knownTargets
       }
     }
     return pruned
-  })()
+  }).immediate()
 }
 
 /**
@@ -520,6 +520,10 @@ export function pruneUnresolvedSyncedRecords(db: Database.Database, knownTargets
  * Returns the number of newly inserted records.
  */
 export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDeviceInstanceId?: string): number {
+  return db.transaction(() => mergeSyncedRecordsInTransaction(db, currentDeviceInstanceId)).immediate()
+}
+
+function mergeSyncedRecordsInTransaction(db: Database.Database, currentDeviceInstanceId?: string): number {
   const now = Date.now()
   const ownFilter = currentDeviceInstanceId !== undefined ? 'AND sr.device_instance_id != @currentDeviceInstanceId' : ''
   const params = currentDeviceInstanceId !== undefined ? { currentDeviceInstanceId } : {}
@@ -586,12 +590,13 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
     )
   `)
 
+  let insertedCount = 0
   const tx = db.transaction((rows: Record<string, unknown>[]) => {
     for (const row of rows) {
       const sourceFile = (typeof row.source_file === 'string' && row.source_file)
         ? row.source_file
         : `synced/${row.device_instance_id}`
-      insertStmt.run({
+      insertedCount += insertStmt.run({
         id: row.id,
         ts: row.ts,
         ingestedAt: now,
@@ -614,12 +619,12 @@ export function mergeSyncedRecordsIntoRecords(db: Database.Database, currentDevi
         device: row.device,
         deviceInstanceId: row.device_instance_id,
         platform: (typeof row.platform === 'string' ? row.platform : '') || '',
-      })
+      }).changes
     }
   })
 
-  tx(newRows)
-  return newRows.length
+  tx.immediate(newRows)
+  return insertedCount
 }
 
 function mapRowToSyncRecord(row: Record<string, unknown>): SyncRecord {

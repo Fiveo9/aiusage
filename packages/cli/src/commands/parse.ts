@@ -275,7 +275,7 @@ function insertRecordsWithToolCalls(
       if (!replaced.has(tc.id)) added++
     }
     return { records: written, toolCalls: added }
-  })()
+  }).immediate()
 }
 
 /**
@@ -1104,7 +1104,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
             insertToolCall(db, tc)
             toolCallCount++
           }
-        })()
+        }).immediate()
 
         // Write cwd for all records from this file that don't have it yet.
         // Bump updated_at so a cwd added to already-synced records re-propagates.
@@ -1892,7 +1892,7 @@ async function backfillMissingToolCalls(db: Database.Database, exchangeRate?: nu
             const remove = db.prepare('DELETE FROM tool_calls WHERE id = ? AND record_id IS NULL')
             for (const id of result.replacedToolCallIds ?? []) remove.run(id)
             insertBackfilledToolCalls(db, result.toolCalls, tool, recordIdByOffset.get(byteOffset) ?? null)
-          })()
+          }).immediate()
         }
       }
 

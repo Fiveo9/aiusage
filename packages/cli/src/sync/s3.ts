@@ -1,8 +1,9 @@
 import { Agent as HttpAgent } from 'node:http'
 import { Agent as HttpsAgent } from 'node:https'
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3'
-import { normalizeS3Prefix } from './target.js'
+import { normalizeS3Prefix, normalizeS3Endpoint } from './s3-location.js'
 import { isToolCallPath } from './tool-call-snapshot.js'
+import { isSafeSyncPath } from './safe-path.js'
 
 export interface S3Config {
   bucket: string
@@ -46,10 +47,11 @@ export class S3SyncBackend {
     // Ensure prefix ends with / and doesn't start with / (the same
     // normalisation the sync target key applies, so both name the same store).
     this.prefix = normalizeS3Prefix(config.prefix)
+    const endpoint = normalizeS3Endpoint(config.endpoint)
     const requestHandler = s3ProxyHandler()
     this.client = new S3Client({
       region: config.region ?? 'auto',
-      ...(config.endpoint ? { endpoint: config.endpoint, forcePathStyle: true } : {}),
+      ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
       ...(requestHandler ? { requestHandler } : {}),
       credentials: {
         accessKeyId: config.accessKeyId,
@@ -59,6 +61,7 @@ export class S3SyncBackend {
   }
 
   getObjectKey(path: string): string {
+    if (!isSafeSyncPath(path)) throw new Error('Invalid S3 sync relative path')
     return `${this.prefix}${path}`
   }
 
@@ -94,7 +97,10 @@ export class S3SyncBackend {
   async listFiles(): Promise<string[]> {
     const files: string[] = []
     for (const entry of await this.listEntries()) {
-      if (entry.path.endsWith('.ndjson') || isToolCallPath(entry.path) || /^[^/]+\/manifest\.json$/.test(entry.path)) files.push(entry.path)
+      if (entry.path.endsWith('.ndjson') || /^[^/]+\/(manifest\.json|tool-calls\.v1\.json)$/.test(entry.path)) {
+        if (!isSafeSyncPath(entry.path)) throw new Error('S3 returned an unsafe sync path in its listing.')
+        files.push(entry.path)
+      }
     }
     return files.sort()
   }
@@ -109,6 +115,7 @@ export class S3SyncBackend {
     const digests = new Map<string, string>()
     for (const entry of await this.listEntries()) {
       if (!entry.path.endsWith('.ndjson') && !isToolCallPath(entry.path)) continue
+      if (!isSafeSyncPath(entry.path)) throw new Error('S3 returned an unsafe sync path in its listing.')
       const etag = entry.etag?.replace(/^"|"$/g, '')
       if (etag && /^[0-9a-f]{32}$/i.test(etag)) digests.set(entry.path, etag.toLowerCase())
     }

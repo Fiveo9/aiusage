@@ -10,6 +10,8 @@ vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn(),
   readdir: vi.fn().mockResolvedValue([]),
   stat: vi.fn().mockResolvedValue({}),
+  lstat: vi.fn(),
+  rename: vi.fn(),
 }))
 
 // Keep the Windows empty global config out of the real ~/.aiusage.
@@ -44,7 +46,21 @@ function gitRejects(message: string, stderr?: string) {
 }
 
 describe('GitSyncBackend.flush', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockExecFile.mockReset().mockImplementation((...args: any[]) => {
+      const cb = args[args.length - 1]
+      if (typeof cb === 'function') cb(null, { stdout: '' })
+      return {} as any
+    })
+    const { lstat } = await import('node:fs/promises')
+    vi.mocked(lstat).mockReset().mockImplementation(async path => {
+      const normalized = String(path).replace(/\\/g, '/')
+      if (/\/rebase-(merge|apply)$/.test(normalized)) throw Object.assign(new Error('synthetic missing state'), { code: 'ENOENT' })
+      const file = /\.(ndjson|json)$|\/config$/.test(normalized)
+      return { isFile: () => file, isDirectory: () => !file, isSymbolicLink: () => false, nlink: 1 } as any
+    })
+  })
 
   it('retries push after pull --rebase when rejected', async () => {
     const { GitSyncBackend } = await import('../../src/sync/git.js')
@@ -53,7 +69,7 @@ describe('GitSyncBackend.flush', () => {
     gitResolves('M data/x.ndjson') // status
     gitResolves()                    // add
     gitResolves()                    // commit
-    gitRejects('rejected')           // push 1 → fail
+    gitRejects('rejected', ' ! [rejected] main -> main (non-fast-forward)') // push 1 → fail
     gitResolves()                    // pull --rebase
     gitResolves()                    // push 2 → ok
 
@@ -73,11 +89,11 @@ describe('GitSyncBackend.flush', () => {
     gitResolves('M data/x.ndjson') // status
     gitResolves()                    // add
     gitResolves()                    // commit
-    gitRejects('rejected')           // push 1
+    gitRejects('rejected', ' ! [rejected] main -> main (fetch first)') // push 1
     gitResolves()                    // pull --rebase 1
-    gitRejects('rejected')           // push 2
+    gitRejects('rejected', ' ! [rejected] main -> main (non-fast-forward)') // push 2
     gitResolves()                    // pull --rebase 2
-    gitRejects('rejected')           // push 3
+    gitRejects('rejected', ' ! [rejected] main -> main (non-fast-forward)') // push 3
 
     await expect(backend.flush()).rejects.toThrow('rejected')
   })
@@ -98,6 +114,16 @@ describe('GitSyncBackend.flush', () => {
       Array.isArray(c[1]) && c[1].includes('pull')
     )
     expect(pullCall).toBeUndefined()
+  })
+
+  it.each(['Authentication failed', 'ssl certificate error', 'Operation timed out',
+    'remote: ! [rejected] main -> main (non-fast-forward)', ' ! [remote rejected] main -> main (permission denied)'])
+  ('never rebases on a non-retryable failure: %s', async stderr => {
+    const { GitSyncBackend } = await import('../../src/sync/git.js')
+    const backend = new GitSyncBackend({ repo: 'u/r', token: 'synthetic', cacheDir: '/tmp/s' })
+    gitResolves('M data/x.ndjson'); gitResolves(); gitResolves(); gitRejects('synthetic failure', stderr)
+    await expect(backend.flush()).rejects.toThrow('GitHub Git operation')
+    expect(mockExecFile.mock.calls.some((call: any) => call[1].includes('pull'))).toBe(false)
   })
 
   it('returns false when no changes', async () => {

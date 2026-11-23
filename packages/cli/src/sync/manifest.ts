@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { SyncRecord } from '@aiusage/core'
+import { isSafeDeviceInstanceId, isSafeSyncPath } from './safe-path.js'
 
 /**
  * Per-namespace manifest for the file-based sync backends.
@@ -65,19 +66,34 @@ export function isManifestPath(path: string): boolean {
  * file component, which the backends rightly refuse to read through).
  */
 export function isDayFilePath(path: string): boolean {
-  return path.endsWith('.ndjson') && path.indexOf('/') > 0
+  return isSafeSyncPath(path) && path.endsWith('.ndjson') && path.indexOf('/') > 0
 }
 
 /** Parse a single ndjson line, normalising string timestamps. Returns null on bad input. */
 export function parseSyncRecordLine(line: string): SyncRecord | null {
   try {
-    const record: SyncRecord = JSON.parse(line)
-    if (!record || typeof record !== 'object' || typeof record.id !== 'string') return null
+    const record = JSON.parse(line)
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return null
+    for (const field of ['id', 'tool', 'model', 'provider', 'sessionKey', 'device']) {
+      if (typeof record[field] !== 'string' || record[field].includes('\u0000')) return null
+    }
+    if (!record.id || !record.tool || !record.model || !isSafeDeviceInstanceId(record.deviceInstanceId)) return null
+    if (!['log', 'pricing', 'unknown'].includes(record.costSource)) return null
+    for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens']) {
+      if (!Number.isSafeInteger(record[field]) || record[field] < 0) return null
+    }
+    if (typeof record.cost !== 'number' || !Number.isFinite(record.cost)) return null
+    for (const field of ['platform', 'sourceFile', 'cwd', 'sessionTitle']) {
+      if (record[field] != null && typeof record[field] !== 'string') return null
+    }
     if (typeof record.ts === 'string') {
       (record as any).ts = new Date(record.ts).getTime()
     }
     if (typeof record.updatedAt === 'string') {
       (record as any).updatedAt = new Date(record.updatedAt).getTime()
+    }
+    for (const field of ['ts', 'updatedAt']) {
+      if (!Number.isSafeInteger(record[field]) || !Number.isFinite(new Date(record[field]).getTime())) return null
     }
     return record
   } catch {
@@ -163,7 +179,7 @@ export function parseManifest(content: string): NamespaceManifest | null {
     if (!value.files || typeof value.files !== 'object' || Array.isArray(value.files)) return null
     const files: Record<string, ManifestFileEntry> = {}
     for (const [rel, entry] of Object.entries<any>(value.files)) {
-      if (typeof rel !== 'string' || !rel.endsWith('.ndjson') || rel.includes('..') || rel.startsWith('/')) return null
+      if (!isSafeSyncPath(rel) || !rel.endsWith('.ndjson')) return null
       if (!entry || typeof entry.digest !== 'string' || !/^[0-9a-f]{32}$/.test(entry.digest)) return null
       if (typeof entry.records !== 'number' || !Number.isInteger(entry.records) || entry.records < 0) return null
       files[rel] = { digest: entry.digest, records: entry.records }

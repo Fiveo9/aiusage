@@ -110,7 +110,7 @@ export function deleteLocalRecords(db: Database.Database, ids: Iterable<string>)
     }
     for (const [heirId, deletedVersion] of heirs) advance.run(Math.max(Date.now(), deletedVersion + 1), heirId)
     return deleted.length
-  })()
+  }).immediate()
 }
 
 /**
@@ -161,7 +161,7 @@ export function replaceSourceRecords(db: Database.Database, tool: Tool, sourceFi
     ).all(tool, sourceFile) as Array<{ id: string }>
     storeRecords(db, records)
     deleteLocalRecords(db, existing.map(row => row.id).filter(id => !keep.has(id)))
-  })()
+  }).immediate()
 }
 
 /**
@@ -197,7 +197,7 @@ export function replaceSourceSnapshot(
     if (better) return false
     replaceSourceRecords(db, tool, sourceFile, [record])
     return true
-  })()
+  }).immediate()
 }
 
 /**
@@ -248,7 +248,7 @@ export function replaceKiroLogLines(db: Database.Database, sourceFile: string, r
       (byRequest.get(request(record.lineOffset, record.model, record.inputTokens, record.outputTokens)) ?? [])
         .filter(id => id !== record.id)))
     storeRecords(db, records)
-  })()
+  }).immediate()
 }
 
 /** Session ids of the local records imported from Cursor's `state.vscdb`, which holds real token counts. */
@@ -402,7 +402,7 @@ export function collapseImporterDuplicates(db: Database.Database): ImporterDupli
     ))
 
     return { kiro, cursor, codebuddy }
-  })()
+  }).immediate()
 }
 
 /**

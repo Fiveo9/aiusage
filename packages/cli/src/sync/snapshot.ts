@@ -1,6 +1,7 @@
 import type { SyncRecord } from '@aiusage/core'
 import type { SyncBackend } from './index.js'
 import { canonicalDigest, isDayFilePath, manifestPath, parseManifest, parseNdjsonLines, type NamespaceManifest } from './manifest.js'
+import { isSafeDeviceInstanceId, isSafeSyncPath } from './safe-path.js'
 
 /**
  * The one way to read a device namespace from a file-based backend.
@@ -59,19 +60,30 @@ export function ownerDataPaths(owner: string, listedPaths: Iterable<string>): st
  * reading any data.
  */
 export async function planNamespaceRead(backend: SyncBackend, owner: string, listedPaths: Iterable<string>): Promise<NamespaceReadPlan> {
-  const listed = ownerDataPaths(owner, listedPaths)
-  const manifestContent = await backend.readFile(manifestPath(owner))
+  if (!isSafeDeviceInstanceId(owner)) {
+    return { owner, manifest: null, hasManifest: false, paths: [], reliable: false, problems: ['unsafe namespace owner'] }
+  }
+  const pathsInListing = [...listedPaths]
+  const listed = ownerDataPaths(owner, pathsInListing)
+  const unsafeListing = pathsInListing.some(path => path.startsWith(`${owner}/`) && !isSafeSyncPath(path))
+  const problems = unsafeListing ? ['unsafe namespace path'] : []
+  let manifestContent: string | null
+  try {
+    manifestContent = await backend.readFile(manifestPath(owner))
+  } catch {
+    return { owner, manifest: null, hasManifest: true, paths: listed, reliable: false, problems: [...problems, 'manifest cannot be read'] }
+  }
   if (manifestContent === null) {
-    return { owner, manifest: null, hasManifest: false, paths: listed, reliable: true, problems: [] }
+    return { owner, manifest: null, hasManifest: false, paths: listed, reliable: !unsafeListing, problems }
   }
   const manifest = parseManifest(manifestContent)
   if (!manifest) {
     // Unreadable manifest: the listed files are all there is to read, but
     // nothing about them can be verified.
-    return { owner, manifest: null, hasManifest: true, paths: listed, reliable: false, problems: ['manifest cannot be parsed'] }
+    return { owner, manifest: null, hasManifest: true, paths: listed, reliable: false, problems: [...problems, 'manifest cannot be parsed'] }
   }
   const paths = Object.keys(manifest.files).sort().map(rel => `${owner}/${rel}`)
-  return { owner, manifest, hasManifest: true, paths, reliable: true, problems: [] }
+  return { owner, manifest, hasManifest: true, paths, reliable: !unsafeListing, problems }
 }
 
 /**
@@ -91,7 +103,14 @@ export async function readNamespaceFiles(
   const problems = [...plan.problems]
   for (const path of plan.paths) {
     const rel = path.slice(plan.owner.length + 1)
-    const content = await backend.readFile(path)
+    let content: string | null
+    try {
+      content = await backend.readFile(path)
+    } catch {
+      reliable = false
+      problems.push(`${rel} cannot be read`)
+      continue
+    }
     if (content === null) {
       // Listed (or named by the manifest) a moment ago, gone now: the owner
       // is rewriting the namespace.
@@ -107,7 +126,7 @@ export async function readNamespaceFiles(
     }
     if (plan.manifest) {
       const expected = plan.manifest.files[rel]
-      if (!expected || expected.digest !== canonicalDigest(records)) {
+      if (!expected || expected.records !== records.length || expected.digest !== canonicalDigest(records)) {
         reliable = false
         problems.push(`${rel} does not match the manifest`)
       }
@@ -127,7 +146,9 @@ export async function readNamespaceSnapshot(backend: SyncBackend, owner: string,
 export function listedOwners(listedPaths: Iterable<string>): string[] {
   const owners = new Set<string>()
   for (const p of listedPaths) {
-    if (isDayFilePath(p) || /^[^/]+\/manifest\.json$/.test(p)) owners.add(p.slice(0, p.indexOf('/')))
+    // Keep poisoned namespaces in the plan as unreliable; never make their
+    // omission look like the owner's authoritative deletion.
+    if (p.indexOf('/') > 0 && (p.endsWith('.ndjson') || /^[^/]+\/manifest\.json$/.test(p))) owners.add(p.slice(0, p.indexOf('/')))
   }
   return [...owners].sort()
 }

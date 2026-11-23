@@ -9,6 +9,8 @@ vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
   unlink: vi.fn(),
   rm: vi.fn(),
+  lstat: vi.fn(),
+  rename: vi.fn(),
 }))
 
 // Keep the Windows empty global config out of the real ~/.aiusage.
@@ -18,15 +20,18 @@ vi.mock('../../src/config.js', async importOriginal => {
 })
 
 import { rmSync } from 'node:fs'
-import { readFile, readdir, stat, unlink } from 'node:fs/promises'
+import { readFile, readdir, lstat, rename } from 'node:fs/promises'
 import { AIUSAGE_DIR } from '../../src/config.js'
 import { GitSyncBackend } from '../../src/sync/git.js'
 afterAll(() => rmSync(AIUSAGE_DIR, { recursive: true, force: true }))
 
 const mockReadFile = vi.mocked(readFile)
 const mockReaddir = vi.mocked(readdir)
-const mockStat = vi.mocked(stat)
-const mockUnlink = vi.mocked(unlink)
+const mockStat = vi.mocked(lstat)
+const mockUnlink = vi.mocked(rename)
+const info = (directory: boolean) => ({ isDirectory: () => directory, isFile: () => !directory, isSymbolicLink: () => false, nlink: 1 })
+const directory = (name: string) => ({ name, isDirectory: () => true, isFile: () => false })
+const file = (name: string) => ({ name, isDirectory: () => false, isFile: () => true })
 
 const errno = (code: string) => Object.assign(new Error(`${code}: /secret/absolute/path`), { code })
 const CACHE = '/home/user/.aiusage/sync-repo'
@@ -40,6 +45,7 @@ describe('GitSyncBackend fails closed on cache I/O errors', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockStat.mockReset().mockImplementation(async path => info(!/\.(ndjson|json)$/.test(String(path))) as any)
     backend = new GitSyncBackend({ repo: 'u/r', token: 't', cacheDir: CACHE })
   })
 
@@ -79,21 +85,21 @@ describe('GitSyncBackend fails closed on cache I/O errors', () => {
     mockStat.mockRejectedValueOnce(errno('EACCES'))
     await expect(backend.listFiles()).rejects.toThrow("Cannot list 'data' in the GitHub sync cache (EACCES)")
 
-    mockStat.mockResolvedValueOnce({} as any)
+    mockStat.mockResolvedValueOnce(info(true) as any)
     mockReaddir.mockResolvedValueOnce([
-      { name: 'dev', isDirectory: () => true },
+      directory('dev'),
     ] as any)
     mockReaddir.mockRejectedValueOnce(errno('EIO'))
     await expect(backend.listFiles()).rejects.toThrow("Cannot list 'data' in the GitHub sync cache (EIO)")
   })
 
   it('listFiles walks a healthy tree', async () => {
-    mockStat.mockResolvedValueOnce({} as any)
+    mockStat.mockResolvedValueOnce(info(true) as any)
     mockReaddir
-      .mockResolvedValueOnce([{ name: 'dev', isDirectory: () => true }] as any)
+      .mockResolvedValueOnce([directory('dev')] as any)
       .mockResolvedValueOnce([
-        { name: '2026-09-06.ndjson', isDirectory: () => false },
-        { name: 'manifest.json', isDirectory: () => false },
+        file('2026-09-06.ndjson'),
+        file('manifest.json'),
       ] as any)
     await expect(backend.listFiles()).resolves.toEqual(['dev/2026-09-06.ndjson', 'dev/manifest.json'])
   })

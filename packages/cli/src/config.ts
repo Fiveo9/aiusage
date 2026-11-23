@@ -4,6 +4,7 @@ import type { ConsentConfig } from './sync/consent.js'
 import type { PriceEntry, ExchangeRateCache } from '@aiusage/core'
 import { JsonFileError, readJsonObjectFile, writeFileAtomic } from './json-file.js'
 import { withSettingsLock } from './settings-lock.js'
+import { normalizeS3Prefix, normalizeS3Endpoint } from './sync/s3-location.js'
 
 export const AIUSAGE_DIR = join(homedir(), '.aiusage')
 export const CONFIG_PATH = join(AIUSAGE_DIR, 'config.json')
@@ -136,10 +137,10 @@ export function buildConsentConfig(config: Config): ConsentConfig | null {
   const backend = sync.backend
   const target = backend === 'github'
     ? sync.repo ?? ''
-    : `${sync.bucket}/${sync.prefix ?? 'aiusage/'}`
+    : `${sync.bucket}/${normalizeS3Prefix(sync.prefix)}`
   const endpoint = backend === 'github'
     ? 'https://api.github.com'
-    : sync.endpoint ?? 'https://s3.amazonaws.com'
+    : normalizeS3Endpoint(sync.endpoint) || 'https://s3.amazonaws.com'
   const region = backend === 'github' ? 'global' : (sync.region ?? 'auto')
 
   return {

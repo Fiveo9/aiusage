@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
 
@@ -280,19 +281,22 @@ describe('cloud sync state (stubbed fetch, real runSync)', () => {
         lock.exec('BEGIN EXCLUSIVE')
         process.stdout.write('locked')
         setInterval(() => {}, 1000)
-      `, LOCK_PATH], { stdio: ['ignore', 'pipe', 'inherit'] })
+      `, LOCK_PATH], { cwd: fileURLToPath(new URL('../../', import.meta.url)), windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] })
+      const gone = new Promise<number | null>((resolve, reject) => {
+        holder.once('error', reject)
+        holder.once('close', resolve)
+      })
       try {
-        await new Promise<void>((resolve, reject) => {
-          holder.stdout.once('data', () => resolve())
-          holder.once('exit', code => reject(new Error(`lock holder exited early (${code})`)))
-        })
+        await Promise.race([
+          new Promise<void>(resolve => holder.stdout.once('data', () => resolve())),
+          gone.then(code => { throw new Error(`lock holder exited early (${code})`) }),
+        ])
         const blocked = await runSync(db)
         expect(blocked.status).toBe('failed')
         expect(blocked.error).toMatch(/Another cloud sync is running/)
         expect(fetch).not.toHaveBeenCalled()
       } finally {
-        const gone = new Promise(resolve => holder.once('close', resolve))
-        holder.kill()
+        if (holder.exitCode === null && holder.signalCode === null) holder.kill()
         await gone
       }
       expect(await runSync(db)).toMatchObject({ status: 'ok', uploadedCount: 1 })

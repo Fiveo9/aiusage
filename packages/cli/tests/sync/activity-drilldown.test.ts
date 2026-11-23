@@ -87,7 +87,7 @@ describe('cross-device activity drilldown', () => {
       expect((await get('tool-calls/events?name=Read&device=other&range=all')).total).toBe(2)
       expect((await get('tool-calls?device=receiver&range=all')).toolCalls).toEqual([])
       objects.set('usage/source/tool-calls.v1.json', '{')
-      expect(await sync(receiver, 'receiver')).toMatchObject({ status: 'failed' })
+      expect(await sync(receiver, 'receiver')).toMatchObject({ status: 'ok' })
       expect((await get('tool-calls/events?name=Read&device=source&range=all')).total).toBe(2)
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))

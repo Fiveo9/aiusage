@@ -1,9 +1,10 @@
 import type Database from 'better-sqlite3'
 import type { SyncBackend } from './index.js'
 import { contentDigest } from './manifest.js'
+import { isSafeDeviceInstanceId, isSafeSyncPath } from './safe-path.js'
 
 const fileName = 'tool-calls.v1.json'
-export const isToolCallPath = (path: string) => /^[^/]+\/tool-calls\.v1\.json$/.test(path)
+export const isToolCallPath = (path: string) => isSafeSyncPath(path) && /^[^/]+\/tool-calls\.v1\.json$/.test(path)
 
 interface Call {
   id: string; recordId: string | null; tool: string; name: string; ts: number; callIndex: number
@@ -27,6 +28,7 @@ function parseCalls(content: string, owner: string): Call[] {
 
 export async function syncToolCallSnapshots(db: Database.Database, backend: SyncBackend, target: string,
   own: string, paths: string[], digests: Map<string, string> | undefined, wireIds: Map<string, string>): Promise<number> {
+  if (!isSafeDeviceInstanceId(own)) throw new Error('Invalid tool call namespace owner')
   const listed = new Set(paths.filter(isToolCallPath))
   const known = db.prepare('SELECT DISTINCT owner FROM synced_tool_calls WHERE target = ?').all(target) as { owner: string }[]
   const owners = new Set([...known.map(row => row.owner), ...Array.from(listed, path => path.split('/')[0])])
@@ -35,14 +37,21 @@ export async function syncToolCallSnapshots(db: Database.Database, backend: Sync
   const insert = db.prepare(`INSERT INTO synced_tool_calls (target, owner, id, record_id, tool, name, ts, call_index)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
   for (const owner of owners) {
+    if (!isSafeDeviceInstanceId(owner)) continue
     const path = `${owner}/${fileName}`
-    const remote = await backend.readFile(path)
-    if (remote === null && listed.has(path)) throw new Error('Listed tool call snapshot is missing; retry sync')
-    const calls = remote === null ? [] : parseCalls(remote, owner)
+    let calls: Call[]
+    try {
+      const remote = await backend.readFile(path)
+      if (remote === null && listed.has(path)) continue
+      calls = remote === null ? [] : parseCalls(remote, owner)
+    } catch {
+      // A broken peer is not an authoritative empty snapshot.
+      continue
+    }
     db.transaction(() => {
       clear.run(target, owner)
       for (const call of calls) insert.run(target, owner, call.id, call.recordId, call.tool, call.name, call.ts, call.callIndex)
-    })()
+    }).immediate()
   }
 
   const calls: Call[] = []

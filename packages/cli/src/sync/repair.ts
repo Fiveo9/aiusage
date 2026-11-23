@@ -10,6 +10,7 @@ import { forgetSyncTargetState, isSyncTargetInState, knownSyncTargets } from './
 import { buildLocalSnapshot } from './index.js'
 import { buildManifest, manifestPath, serializeManifest, serializeSnapshot } from './manifest.js'
 import { listedOwners, readNamespaceSnapshot, type NamespaceSnapshot } from './snapshot.js'
+import { isSafeDeviceInstanceId } from './safe-path.js'
 
 /**
  * Opt-in cleanup of state left behind by earlier sync bugs.
@@ -193,7 +194,7 @@ export function planLocalRepair(
   remote?: RemotePresence,
 ): LocalRepairPlan {
   // 1. Provenance: local-flagged rows that are provably pulled copies.
-  const reflagRows = db.prepare(`
+  const reflagQuery = `
     SELECT id FROM records
     WHERE origin = 'local'
       AND (
@@ -204,7 +205,8 @@ export function planLocalRepair(
           WHERE s.id = records.id AND s.session_key = records.session_id
         )
       )
-  `).all({ deviceInstanceId }) as Array<{ id: string }>
+  `
+  const reflagRows = db.prepare(reflagQuery).all({ deviceInstanceId }) as Array<{ id: string }>
   const reflagRecordIds = reflagRows.map(r => r.id)
 
   // 2. Echoes in synced_records.
@@ -232,7 +234,9 @@ export function planLocalRepair(
   const stale = db.prepare(`
     SELECT COUNT(*) AS n FROM sync_record_state
     WHERE record_id IN (SELECT id FROM records WHERE origin = 'synced')
-  `).get() as { n: number }
+       OR record_id NOT IN (SELECT id FROM records)
+       OR record_id IN (${reflagQuery})
+  `).get({ deviceInstanceId }) as { n: number }
 
   // 5. Wire-id collisions among this device's own records.
   const { collisions } = buildLocalSnapshot(db, deviceInstanceId)
@@ -258,7 +262,7 @@ export function planLocalRepair(
     reflagRecordIds,
     echoSyncedIds,
     echoMergedIds,
-    staleSyncStateCount: stale.n + reflagRecordIds.length,
+    staleSyncStateCount: stale.n,
     wireIdCollisions: collisions,
     orphanedSyncedIds,
     orphanedDevices,
@@ -283,7 +287,7 @@ export function applyLocalRepair(db: Database.Database, plan: LocalRepairPlan): 
     // not, so their claims go with them (a dangling claim would keep a later
     // pull of the same id from ever being pruned).
     dropDanglingClaims(db)
-  })()
+  }).immediate()
 }
 
 // ---------------------------------------------------------------------------
@@ -570,23 +574,34 @@ export async function repairSyncContamination(db: Database.Database, options: Re
     }
     for (const [owner, files] of remote.finalFiles) {
       if (skipped.has(owner)) continue
-      for (const records of files.values()) for (const r of records) presence.verifiedIds.add(r.id)
+      for (const records of files.values()) for (const r of records) {
+        if (r.deviceInstanceId === owner) presence.verifiedIds.add(r.id)
+      }
     }
-    for (const record of remote.allRecords) if (!skipped.has(record.deviceInstanceId)) presence.verifiedIds.add(record.id)
     // A device with nothing listed may still have a manifest on the target:
     // its namespace is then authoritatively empty or unverifiable, either
     // way not absent, and its unresolved rows are sync's to settle.
     for (const owner of getUnclaimedSyncedRecords(db).keys()) {
       if (owner === deviceInstanceId || owner === UNKNOWN_DEVICE_INSTANCE_ID || owner === '' || presence.presentOwners.has(owner)) continue
-      if (await backend.readFile(manifestPath(owner)) !== null) presence.presentOwners.add(owner)
+      if (!isSafeDeviceInstanceId(owner)) { presence.presentOwners.add(owner); continue }
+      try {
+        if (await backend.readFile(manifestPath(owner)) !== null) presence.presentOwners.add(owner)
+      } catch {
+        // An unreadable manifest is unknown presence, never confirmed absence.
+        presence.presentOwners.add(owner)
+      }
     }
   }
-  const local = planLocalRepair(db, deviceInstanceId, remote?.allRecords, presence)
+  const plan = db.transaction(() => {
+    const local = planLocalRepair(db, deviceInstanceId, remote?.allRecords, presence)
+    if (options.apply) applyLocalRepair(db, local)
+    return local
+  })
+  const local = options.apply ? plan.immediate() : plan()
   const report: RepairReport = { deviceInstanceId, local, remote, applied: false }
 
   if (!options.apply) return report
 
-  applyLocalRepair(db, local)
   if (backend && remote) {
     const result = await applyRemoteRepair(backend, remote, deviceInstanceId)
     const flushed = remote.files.length > 0 ? (await backend.flush?.()) ?? false : false

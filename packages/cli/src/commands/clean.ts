@@ -10,6 +10,7 @@ import { buildManifest, manifestPath, serializeManifest, serializeSnapshot } fro
 import { listedOwners, readNamespaceSnapshot } from '../sync/snapshot.js'
 import { createBackend } from './sync.js'
 import { dropDanglingClaims } from '../db/sync-claims.js'
+import { acquireFileSyncLock } from '../lock.js'
 
 export interface CleanResult {
   deletedCount: number
@@ -287,7 +288,10 @@ export async function propagateClean(options: {
     }] }
   }
 
+  let release: (() => void) | null = null
   try {
+    release = acquireFileSyncLock(AIUSAGE_DIR)
+    if (!release) throw new Error('Another file sync, repair or remote clean is running on this device. Retry shortly.')
     await backend.prepare?.()
 
     if (options.all) {
@@ -328,6 +332,8 @@ export async function propagateClean(options: {
       status: 'failed',
       detail: err instanceof Error ? err.message : 'unknown error',
     })
+  } finally {
+    release?.()
   }
 
   return { backends: results }

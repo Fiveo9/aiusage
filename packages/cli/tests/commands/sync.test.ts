@@ -18,6 +18,7 @@ vi.mock('../../src/init.js', () => {
 })
 
 vi.mock('../../src/sync/consent.js', () => ({ verifyConsent: vi.fn(() => true) }))
+vi.mock('../../src/lock.js', () => ({ acquireFileSyncLock: vi.fn(() => () => {}) }))
 vi.mock('../../src/sync/git.js', () => ({ GitSyncBackend: class {} }))
 const repairCalls = vi.fn()
 vi.mock('../../src/sync/repair.js', async () => {

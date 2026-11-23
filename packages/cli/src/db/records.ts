@@ -172,28 +172,30 @@ function keptWhenEmptyEqual(existing: string | undefined, incoming: string | und
  */
 export function insertChangedRecords(db: Database.Database, records: StatsRecord[]): number {
   if (records.length === 0) return 0
-
-  const existing = new Map<string, StatsRecord>()
-  const chunkSize = 400
-  for (let start = 0; start < records.length; start += chunkSize) {
-    const ids = records.slice(start, start + chunkSize).map((record) => record.id)
-    const rows = db
-      .prepare(`SELECT * FROM records WHERE id IN (${ids.map(() => '?').join(', ')})`)
-      .all(...ids) as Record<string, unknown>[]
-    for (const row of rows) existing.set(row.id as string, mapRowToRecord(row))
-  }
-
-  let written = 0
-  const write = db.transaction((items: StatsRecord[]) => {
-    for (const record of items) {
+  return db.transaction(() => {
+    const existing = new Map<string, StatsRecord>()
+    const chunkSize = 400
+    for (let start = 0; start < records.length; start += chunkSize) {
+      const ids = records.slice(start, start + chunkSize).map((record) => record.id)
+      const rows = db
+        .prepare(`SELECT * FROM records WHERE id IN (${ids.map(() => '?').join(', ')})`)
+        .all(...ids) as Record<string, unknown>[]
+      for (const row of rows) existing.set(row.id as string, mapRowToRecord(row))
+    }
+    let written = 0
+    for (const record of records) {
       const prior = existing.get(record.id)
       if (prior && recordValuesEqual(prior, record)) continue
       insertRecord(db, record)
       written++
+      // insertRecord retains selected empty incoming fields. Cache the actual
+      // stored values, not the input or the batch's initial stale snapshot.
+      const stored = getRecordById(db, record.id)
+      if (stored) existing.set(record.id, stored)
+      else existing.delete(record.id)
     }
-  })
-  write(records)
-  return written
+    return written
+  }).immediate()
 }
 
 export function getRecordById(db: Database.Database, id: string): StatsRecord | null {
@@ -262,7 +264,7 @@ export function markRecordsSynced(db: Database.Database, ids: string[], syncedAt
         legacyStmt.run(syncedAt, id)
       }
     })
-    tx(ids)
+    tx.immediate(ids)
     return
   }
 
@@ -270,7 +272,7 @@ export function markRecordsSynced(db: Database.Database, ids: string[], syncedAt
   const tx = db.transaction((recordIds: string[]) => {
     for (const id of recordIds) updateStmt.run(syncedAt, id)
   })
-  tx(ids)
+  tx.immediate(ids)
 }
 
 /**
@@ -305,7 +307,7 @@ export function markRecordVersionsSynced(
       legacyStmt.run({ id, updatedAt })
     }
     return marked
-  })()
+  }).immediate()
 }
 
 /**
@@ -386,6 +388,10 @@ function mapRowToRecord(row: Record<string, unknown>): StatsRecord {
  * relabel anything. Returns the number of `(target, wire id)` pairs retired.
  */
 export function retireWireIdsOfUnknownLocalRows(db: Database.Database): number {
+  return db.transaction(() => retireUnknownLocalRowsInTransaction(db)).immediate()
+}
+
+function retireUnknownLocalRowsInTransaction(db: Database.Database): number {
   const rows = db.prepare(`
     SELECT s.record_id, s.target, r.tool, r.source_file, r.line_offset
     FROM sync_record_state s
@@ -398,15 +404,13 @@ export function retireWireIdsOfUnknownLocalRows(db: Database.Database): number {
   const retire = db.prepare(`INSERT OR IGNORE INTO sync_retired_wire_ids (target, wire_id) VALUES (?, ?)`)
   const forget = db.prepare(`DELETE FROM sync_record_state WHERE record_id = ? AND target = ?`)
   const requeue = db.prepare(`UPDATE records SET synced_at = NULL WHERE id = ?`)
-  return db.transaction(() => {
-    let retired = 0
-    for (const row of affected) {
-      retired += retire.run(row.target, generateSyncRecordId(UNKNOWN_DEVICE_INSTANCE_ID, row.source_file, row.line_offset)).changes
-      forget.run(row.record_id, row.target)
-      requeue.run(row.record_id)
-    }
-    return retired
-  })()
+  let retired = 0
+  for (const row of affected) {
+    retired += retire.run(row.target, generateSyncRecordId(UNKNOWN_DEVICE_INSTANCE_ID, row.source_file, row.line_offset)).changes
+    forget.run(row.record_id, row.target)
+    requeue.run(row.record_id)
+  }
+  return retired
 }
 
 /**
@@ -431,7 +435,7 @@ export function backfillUnknownDeviceInstanceId(db: Database.Database, deviceIns
           WHERE device_instance_id = '${UNKNOWN_DEVICE_INSTANCE_ID}' AND ${LOCAL_RECORDS_WHERE}
         `).run(deviceInstanceId)
     return result.changes
-  })()
+  }).immediate()
 }
 
 /**
@@ -610,7 +614,7 @@ export function foldRecordCopy(db: Database.Database, copyId: string, originalId
       for (const target of targets) retire.run(target, wireId)
     }
     return true
-  })()
+  }).immediate()
 }
 
 /** The wire id `row` is published under once a row still labelled `'unknown'` is relabelled. */
@@ -752,6 +756,10 @@ const SKILL_PLACEHOLDER_NAMES = new Set(['Skill', 'skill__unknown'])
  */
 export function foldClaudeCodeCopiesOfGoneTranscripts(db: Database.Database, deviceInstanceId: string): number {
   if (!deviceInstanceId || deviceInstanceId === UNKNOWN_DEVICE_INSTANCE_ID) return 0
+  return db.transaction(() => foldGoneTranscriptCopiesInTransaction(db, deviceInstanceId)).immediate()
+}
+
+function foldGoneTranscriptCopiesInTransaction(db: Database.Database, deviceInstanceId: string): number {
   const owned = `${LOCAL_RECORDS_WHERE} AND tool = 'claude-code' AND device_instance_id IN (@device, '${UNKNOWN_DEVICE_INSTANCE_ID}')`
   const shared = db.prepare(`
     SELECT 1 FROM records WHERE ${owned}
@@ -794,7 +802,7 @@ export function foldClaudeCodeCopiesOfGoneTranscripts(db: Database.Database, dev
       if (!foldRecordCopy(db, copy.id, original.id)) return
       for (const call of originalCalls) removeCall.run(call.id, original.id)
       folded++
-    })()
+    }).immediate()
   }
   return folded
 }

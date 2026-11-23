@@ -14,6 +14,7 @@ vi.mock('../../src/config.js', async () => ({
   loadConfig: () => ({ sync: { backend: 's3', bucket: 'synthetic-only' } }),
 }))
 vi.mock('../../src/commands/sync.js', () => ({ createBackend: () => state.backend }))
+vi.mock('../../src/lock.js', () => ({ acquireFileSyncLock: () => () => {} }))
 
 const NOW = Date.UTC(2026, 0, 3)
 const DAY = 86_400_000

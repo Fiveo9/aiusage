@@ -43,19 +43,14 @@ const MIGRATIONS = [
 ]
 
 export function runMigrations(db: Database.Database): void {
-  createSchemaVersionTable(db)
-
-  const currentVersion = db.prepare(
-    'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
-  ).get() as { version: number } | undefined
-
-  const current = currentVersion?.version ?? 0
-
-  for (const migration of MIGRATIONS) {
-    if (migration.version > current) {
-      db.transaction(() => {
-        migration.migrate(db)
-      })()
+  db.transaction(() => {
+    createSchemaVersionTable(db)
+    const currentVersion = db.prepare(
+      'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
+    ).get() as { version: number } | undefined
+    const current = currentVersion?.version ?? 0
+    for (const migration of MIGRATIONS) {
+      if (migration.version > current) migration.migrate(db)
     }
-  }
+  }).immediate()
 }

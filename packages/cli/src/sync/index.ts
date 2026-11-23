@@ -5,7 +5,7 @@ import {
   getLocalRecordsForDevice,
   getUnsyncedRecords,
   isUploadableLocalRecord,
-  markRecordsSynced,
+  markRecordVersionsSynced,
   repairRecordProvenance,
   UNKNOWN_DEVICE_INSTANCE_ID,
 } from '../db/records.js'
@@ -19,6 +19,7 @@ import {
 } from '../db/synced-records.js'
 import {
   clearRetiredWireIds,
+  getRetiredWireIds,
   getClaimedOwners,
   nextSyncTick,
   recordNamespaceVerdict,
@@ -211,6 +212,7 @@ export class SyncOrchestrator {
       const mergedCount = mergeSyncedRecordsIntoRecords(this.db, this.options.deviceInstanceId)
       const upload = await this.upload(listing)
       await this.backend.flush?.()
+      upload.acknowledge()
       this.options.onProgress?.({ phase: 'finalizing', pulledCount, uploadedCount: upload.uploadedCount })
       return {
         status: 'ok',
@@ -260,9 +262,10 @@ export class SyncOrchestrator {
    * way, so after an unverifiable read the old verdict no longer says what
    * the target carries. Our own namespace is never read here.
    *
-   * Failure semantics: a backend read failure or a local database failure
-   * while upserting propagates and aborts the sync before anything is
-   * reconciled. Lines upserted before the failure stay — an upsert only adds
+   * Failure semantics: a backend read failure isolates that namespace as
+   * unreliable; healthy namespaces can still reconcile. A local database
+   * failure while upserting aborts the pull before anything is reconciled.
+   * Lines upserted before that failure stay — an upsert only adds
    * an unresolved row (which no reconciliation can prune until every known
    * target has judged its namespace) or refreshes a row with a newer version
    * of itself — and this target's verdicts on the namespaces read so far
@@ -400,7 +403,7 @@ export class SyncOrchestrator {
    * consistent snapshot or a mismatch — never a partial snapshot it would
    * prune against.
    */
-  private async upload(allPaths: string[]): Promise<{ uploadedCount: number; retiredCount: number; collisionCount: number; writtenFiles: number }> {
+  private async upload(allPaths: string[]): Promise<{ uploadedCount: number; retiredCount: number; collisionCount: number; writtenFiles: number; acknowledge: () => void }> {
     const deviceInstanceId = this.options.deviceInstanceId
     const target = this.options.target
     const prefix = `${deviceInstanceId}/`
@@ -408,10 +411,12 @@ export class SyncOrchestrator {
     // The query already restricts to origin = 'local' rows owned by this
     // device; the explicit filter is the last line of defence so that no
     // record stamped with another device's id can reach our namespace.
-    const unsynced = getUnsyncedRecords(this.db, target, deviceInstanceId)
-      .filter(record => isUploadableLocalRecord(record, deviceInstanceId))
-
-    const snapshot = buildLocalSnapshot(this.db, deviceInstanceId)
+    const { unsynced, snapshot, retiredWireIds } = this.db.transaction(() => {
+      const snapshot = buildLocalSnapshot(this.db, deviceInstanceId)
+      const unsynced = getUnsyncedRecords(this.db, target, deviceInstanceId)
+        .filter(record => isUploadableLocalRecord(record, deviceInstanceId) && snapshot.wireIds.has(record.id))
+      return { unsynced, snapshot, retiredWireIds: getRetiredWireIds(this.db, target) }
+    }).immediate()
     const byRel = new Map<string, SyncRecord[]>()
     for (const wire of snapshot.records.values()) {
       const path = getSyncPath(wire.ts, deviceInstanceId)
@@ -494,21 +499,19 @@ export class SyncOrchestrator {
       writtenFiles++
     }
 
-    // Bookkeeping: rows newly published (or changed since their last upload)
-    // are what `uploadedCount` reports; retired wire ids are moot once the
-    // snapshot has been rewritten.
-    // A record counts as unsynced while its updated_at is above the
-    // acknowledgement. A changed record's updated_at is put above every
-    // earlier acknowledgement, so after the clock was set back it can be
-    // ahead of this machine's clock. The acknowledgement is therefore never
-    // below the newest version this upload published.
-    const publishedAt = unsynced.reduce((at, r) => Math.max(at, r.updatedAt), Date.now())
     if (this.backend.supportsToolCalls) {
       writtenFiles += await syncToolCallSnapshots(this.db, this.backend, target, deviceInstanceId, allPaths, digests, snapshot.wireIds)
     }
-    markRecordsSynced(this.db, unsynced.map(r => r.id), publishedAt, target)
-    clearRetiredWireIds(this.db, target)
-
-    return { uploadedCount: unsynced.length, retiredCount, collisionCount: snapshot.collisions.length, writtenFiles }
+    return {
+      uploadedCount: unsynced.length, retiredCount, collisionCount: snapshot.collisions.length, writtenFiles,
+      acknowledge: () => {
+        // The backend may only have staged writes. This runs after flush, and
+        // cannot acknowledge a newer edit or erase a later retirement request.
+        this.db.transaction(() => {
+          markRecordVersionsSynced(this.db, unsynced, target)
+          clearRetiredWireIds(this.db, target, retiredWireIds)
+        }).immediate()
+      },
+    }
   }
 }

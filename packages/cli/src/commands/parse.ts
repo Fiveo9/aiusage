@@ -70,50 +70,48 @@ function extractCwdFromJson(data: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-function extractSessionId(filePath: string, tool: Tool): string {
+export function extractSessionId(filePath: string, tool: Tool): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  const filename = basename(normalized)
   if (tool === 'claude-code') {
     // Extract from path like ~/.claude/projects/<project>/<session>.jsonl
-    const parts = filePath.split('/')
-    const filename = parts[parts.length - 1]
     return filename.replace('.jsonl', '')
   }
   if (tool === 'codex') {
     // Extract from path like ~/.codex/sessions/2026/04/22/rollout-<uuid>.jsonl
-    const filename = filePath.split('/').pop() ?? ''
     const match = filename.match(/rollout-(.+)\.jsonl$/)
     return match ? match[1] : filename.replace('.jsonl', '')
   }
   if (tool === 'openclaw') {
     // Extract from path like ~/.openclaw/agents/main/sessions/<uuid>.jsonl
-    const filename = filePath.split('/').pop() ?? ''
     return filename.replace('.jsonl', '')
   }
   if (tool === 'qoder') {
     // Extract from path like ~/.qoder/logs/sessions/<project>/<session>/segments/<segment>.jsonl
-    const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean)
+    const parts = normalized.split('/').filter(Boolean)
     const segmentsIndex = parts.lastIndexOf('segments')
     if (segmentsIndex > 0) return parts[segmentsIndex - 1]
-    const filename = parts[parts.length - 1] ?? ''
     return filename.replace('.jsonl', '') || 'unknown'
   }
   if (tool === 'copilot') {
     // OTEL: ~/.copilot/otel/copilot-otel-20250601.jsonl → filename
-    const parts = filePath.split('/')
-    return (parts.pop() ?? '').replace('.jsonl', '')
+    return filename.replace('.jsonl', '')
   }
   if (tool === 'pi') {
     // Extract UUID from filename like 2026-06-08T14-04-37-182Z_019ea78c-b5be-711c-8f30-c8fc56c92b85.jsonl
-    const filename = filePath.split('/').pop() ?? ''
     const match = filename.match(/_([^_]+)\.jsonl$/)
     return match ? match[1] : filename.replace('.jsonl', '')
   }
   if (tool === 'codefuse') {
-    const filename = basename(filePath)
     const snapshotMatch = filename.match(/^ant_cc_(.+)\.json$/)
     if (snapshotMatch) return snapshotMatch[1]
     const rolloutMatch = filename.match(/rollout-(.+)\.jsonl$/)
     if (rolloutMatch) return rolloutMatch[1]
     return filename.replace(/\.jsonl$/, '').replace(/\.json$/, '') || 'unknown'
+  }
+  if (tool === 'kimi' && filename === 'wire.jsonl') return basename(dirname(normalized)) || 'unknown'
+  if (['gemini', 'kimi', 'codebuddy', 'omp', 'craft', 'droid'].includes(tool)) {
+    return filename.replace(/\.(?:jsonl|json)$/, '') || 'unknown'
   }
   return 'unknown'
 }
@@ -924,7 +922,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
           if (countedFromDatabase) {
             replaceSourceRecords(db, 'cursor', filePath, [])
           } else if (est.inputTextChars + est.outputTextChars > 0) {
-            const sessionId = filePath.split('/').slice(-2, -1)[0] || 'unknown'
+            const sessionId = cursorTranscriptComposerId(filePath) || 'unknown'
             const recordTs = stat.mtimeMs
             const tokenArgs = { inputTokens: est.inputTextChars, outputTokens: est.outputTextChars, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0 }
             const cost = calculateCost('cursor-composer', tokenArgs, exchangeRate)
@@ -1486,6 +1484,7 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
   // Fall back to reading git tags from snapshot directories for session metadata.
   const traeDbPath = getDbPath('trae') ?? ''
   if ((!filterTool || filterTool === 'trae') && pathIsFile(traeDbPath)) {
+    try {
     const traeLastImported = wm.getTraeLastImported?.() ?? 0
     const result = runParseTrae({
       dbPath: traeDbPath,
@@ -1516,6 +1515,9 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
       wm.save()
     }
     onProgress({ phase: 'Parsing SQLite', tool: 'trae', current: 1, total: 1, records: parsedCount, toolCalls: toolCallCount })
+    } catch (error) {
+      errors.push(`${traeDbPath}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   // CodeBuddy IDE: per-message JSON files under CodeBuddyExtension/Data.

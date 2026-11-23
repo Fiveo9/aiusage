@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { join, extname, isAbsolute, basename } from 'node:path'
+import { join, extname, isAbsolute, basename, delimiter } from 'node:path'
 import { homedir, platform } from 'node:os'
 import type { Tool } from '@aiusage/core'
 import { loadConfig } from './config.js'
@@ -158,80 +158,84 @@ function windowsUserHomesFromWsl(): string[] {
 
 // ── Platform-aware default path resolvers ────────────────────────────
 
-export function defaultOpenCodeDbPath(): string {
-  return join(xdgDataDir(homedir(), 'opencode'), 'opencode.db')
+function defaultPathContext(): ProbeContext {
+  return { home: homedir(), env: process.env }
 }
 
-export function defaultHermesDbPath(): string {
-  return join(homedir(), '.hermes', 'state.db')
+export function defaultOpenCodeDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  return join(xdgDataDir(ctx.home, 'opencode', ctx.env), 'opencode.db')
 }
 
-export function defaultQoderDbPath(): string {
-  const home = homedir()
+export function defaultHermesDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  return join(ctx.home, '.hermes', 'state.db')
+}
+
+export function defaultQoderDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  const home = ctx.home
   const plat = platform()
   if (plat === 'darwin') {
     return join(home, 'Library', 'Application Support', 'Qoder', 'SharedClientCache', 'cache', 'db', 'local.db')
   }
   if (plat === 'win32') {
-    const appData = process.env.APPDATA ?? join(home, 'AppData', 'Roaming')
+    const appData = ctx.env.APPDATA ?? join(home, 'AppData', 'Roaming')
     return join(appData, 'Qoder', 'SharedClientCache', 'cache', 'db', 'local.db')
   }
-  const xdgDataHome = process.env.XDG_DATA_HOME ?? join(home, '.local', 'share')
+  const xdgDataHome = ctx.env.XDG_DATA_HOME ?? join(home, '.local', 'share')
   return join(xdgDataHome, 'Qoder', 'SharedClientCache', 'cache', 'db', 'local.db')
 }
 
-export function defaultCursorDbPath(): string {
-  const home = homedir()
+export function defaultCursorDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  const home = ctx.home
   const plat = platform()
   if (plat === 'win32') {
-    const appData = process.env.APPDATA ?? join(home, 'AppData', 'Roaming')
+    const appData = ctx.env.APPDATA ?? join(home, 'AppData', 'Roaming')
     return join(appData, 'Cursor', 'User', 'globalStorage', 'state.vscdb')
   }
   if (plat === 'darwin') {
     return join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
   }
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME ?? join(home, '.config')
+  const xdgConfigHome = ctx.env.XDG_CONFIG_HOME ?? join(home, '.config')
   return join(xdgConfigHome, 'Cursor', 'User', 'globalStorage', 'state.vscdb')
 }
 
-export function defaultKiloDbPath(): string {
-  const home = homedir()
+export function defaultKiloDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  const home = ctx.home
   if (platform() === 'win32') {
-    const appData = process.env.APPDATA ?? join(home, 'AppData', 'Roaming')
+    const appData = ctx.env.APPDATA ?? join(home, 'AppData', 'Roaming')
     return join(appData, 'kilo', 'kilo.db')
   }
-  return join(xdgDataDir(home, 'kilo'), 'kilo.db')
+  return join(xdgDataDir(home, 'kilo', ctx.env), 'kilo.db')
 }
 
-export function defaultGooseDbPath(): string {
-  const home = homedir()
+export function defaultGooseDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  const home = ctx.home
   const plat = platform()
   if (plat === 'darwin') {
     return join(home, 'Library', 'Application Support', 'goose', 'sessions', 'sessions.db')
   }
   if (plat === 'win32') {
-    const appData = process.env.APPDATA ?? join(home, 'AppData', 'Roaming')
+    const appData = ctx.env.APPDATA ?? join(home, 'AppData', 'Roaming')
     return join(appData, 'goose', 'sessions', 'sessions.db')
   }
-  return join(xdgDataDir(home, 'goose'), 'sessions', 'sessions.db')
+  return join(xdgDataDir(home, 'goose', ctx.env), 'sessions', 'sessions.db')
 }
 
-export function defaultZedDbPath(): string {
-  const home = homedir()
+export function defaultZedDbPath(ctx: ProbeContext = defaultPathContext()): string {
+  const home = ctx.home
   const plat = platform()
   if (plat === 'darwin') {
     return join(home, 'Library', 'Application Support', 'Zed', 'threads', 'threads.db')
   }
   if (plat === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
+    const localAppData = ctx.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
     return join(localAppData, 'Zed', 'threads', 'threads.db')
   }
-  return join(xdgDataDir(home, 'zed'), 'threads', 'threads.db')
+  return join(xdgDataDir(home, 'zed', ctx.env), 'threads', 'threads.db')
 }
 
-export function defaultZcodeDbPath(): string {
+export function defaultZcodeDbPath(ctx: ProbeContext = defaultPathContext()): string {
   // ZCode CLI stores its usage database at <home>/.zcode/cli/db/db.sqlite
-  return join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite')
+  return join(ctx.home, '.zcode', 'cli', 'db', 'db.sqlite')
 }
 
 // ── Per-tool probe functions ─────────────────────────────────────────
@@ -292,7 +296,7 @@ function probeHermes(ctx: ProbeContext): string | null {
   if (ctx.env.HERMES_HOME) return join(ctx.env.HERMES_HOME, 'state.db')
   const legacy = ctx.legacySources?.['hermes']
   if (legacy) return legacy
-  const dbPath = defaultHermesDbPath()
+  const dbPath = defaultHermesDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -301,7 +305,7 @@ function probeQoderSessions(ctx: ProbeContext): string | null {
   if (override) return override
   const legacy = ctx.legacySources?.['qoder']
   if (legacy) return legacy
-  const dirs = defaultQoderSessionDirs(ctx.home)
+  const dirs = defaultQoderSessionDirs(ctx.home, ctx.env)
   return dirs.find((d) => existsSync(d)) ?? null
 }
 
@@ -310,7 +314,7 @@ function probeQoderDb(ctx: ProbeContext): string | null {
   if (override) return override
   const legacy = ctx.legacySources?.['qoder-db']
   if (legacy) return legacy
-  const dbPath = defaultQoderDbPath()
+  const dbPath = defaultQoderDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -319,7 +323,7 @@ function probeCursor(ctx: ProbeContext): string | null {
   if (override) return override
   const legacy = ctx.legacySources?.['cursor']
   if (legacy) return legacy
-  const dbPath = defaultCursorDbPath()
+  const dbPath = defaultCursorDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -329,7 +333,7 @@ function probeKiloDb(ctx: ProbeContext): string | null {
   if (ctx.env.KILO_DB) return relativeOrAbsolute(xdgDataDir(ctx.home, 'kilo', ctx.env), ctx.env.KILO_DB)
   const legacy = ctx.legacySources?.['kilocode-db']
   if (legacy) return legacy
-  const dbPath = defaultKiloDbPath()
+  const dbPath = defaultKiloDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -586,7 +590,7 @@ function findAntigravityDataFiles(ctx: ProbeContext, primaryPath: string): strin
 function ideRoots(ctx: ProbeContext): string[] {
   const roots: string[] = []
   if (typeof ctx.env.AIUSAGE_IDE_ROOTS === 'string' && ctx.env.AIUSAGE_IDE_ROOTS.trim()) {
-    roots.push(...ctx.env.AIUSAGE_IDE_ROOTS.split(':').map((p) => p.trim()).filter(Boolean))
+    roots.push(...ctx.env.AIUSAGE_IDE_ROOTS.split(delimiter).map((p) => p.trim()).filter(Boolean))
   }
   const home = ctx.home
   if (platform() === 'darwin') {
@@ -619,7 +623,7 @@ function probeZed(ctx: ProbeContext): string | null {
   if (override) return override
   const legacy = ctx.legacySources?.['zed']
   if (legacy) return legacy
-  const dbPath = defaultZedDbPath()
+  const dbPath = defaultZedDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -629,7 +633,7 @@ function probeZcode(ctx: ProbeContext): string | null {
   if (ctx.env.ZCODE_HOME) return join(ctx.env.ZCODE_HOME, 'cli', 'db', 'db.sqlite')
   const legacy = ctx.legacySources?.['zcode']
   if (legacy) return legacy
-  const dbPath = defaultZcodeDbPath()
+  const dbPath = defaultZcodeDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -638,7 +642,7 @@ function probeGoose(ctx: ProbeContext): string | null {
   if (override) return override
   const legacy = ctx.legacySources?.['goose']
   if (legacy) return legacy
-  const dbPath = ctx.env.GOOSE_PATH_ROOT ? join(ctx.env.GOOSE_PATH_ROOT, 'data', 'sessions', 'sessions.db') : defaultGooseDbPath()
+  const dbPath = ctx.env.GOOSE_PATH_ROOT ? join(ctx.env.GOOSE_PATH_ROOT, 'data', 'sessions', 'sessions.db') : defaultGooseDbPath(ctx)
   return existsSync(dbPath) ? dbPath : null
 }
 
@@ -713,9 +717,9 @@ function probeTrae(ctx: ProbeContext): string | null {
 
 // ── Qoder multi-dir helpers ──────────────────────────────────────────
 
-function defaultQoderSessionDirs(home: string): string[] {
+function defaultQoderSessionDirs(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
   const windowsHomes = [
-    process.env.USERPROFILE,
+    env.USERPROFILE,
     ...windowsUserHomesFromWsl(),
   ].filter((value): value is string => !!value)
 
@@ -728,11 +732,11 @@ function defaultQoderSessionDirs(home: string): string[] {
     ]),
   ]
 
-  if (process.env.LOCALAPPDATA) {
-    dirs.push(join(process.env.LOCALAPPDATA, '.qoder', 'logs', 'sessions'))
+  if (env.LOCALAPPDATA) {
+    dirs.push(join(env.LOCALAPPDATA, '.qoder', 'logs', 'sessions'))
   }
-  if (process.env.APPDATA) {
-    dirs.push(join(process.env.APPDATA, 'Qoder', 'logs', 'sessions'))
+  if (env.APPDATA) {
+    dirs.push(join(env.APPDATA, 'Qoder', 'logs', 'sessions'))
   }
 
   return unique(dirs)
@@ -924,7 +928,7 @@ export function discoverLogFiles(env: NodeJS.ProcessEnv = process.env): { tool: 
   if (qoderPath) {
     // Handle custom path normalization
     const override = envOverride('qoder', ctx.env) || legacySources?.['qoder']
-    const dirs = override ? normalizeQoderPath(override) : defaultQoderSessionDirs(home)
+    const dirs = override ? normalizeQoderPath(override) : defaultQoderSessionDirs(home, ctx.env)
     const paths = unique(
       dirs
         .filter((dir) => existsSync(dir))
@@ -953,13 +957,14 @@ export function discoverLogFiles(env: NodeJS.ProcessEnv = process.env): { tool: 
     if (paths.length > 0) results.push({ tool: 'copilot', paths: unique(paths) })
   }
 
+  const kiroOverride = probeKiroOverridePath(ctx)
   const jsonlSources: Array<{ tool: Tool; path: string | null; filter?: (path: string) => boolean }> = [
     { tool: 'gemini', path: probeGemini(ctx) },
     { tool: 'kimi', path: probeKimi(ctx), filter: (p) => basename(p) === 'wire.jsonl' },
     { tool: 'codebuddy', path: probeCodeBuddy(ctx) },
-    { tool: 'kiro', path: kiroDevDataDir(ctx), filter: (p) => extname(p) === '.jsonl' || extname(p) === '.json' },
-    { tool: 'kiro', path: probeKiroOverridePath(ctx), filter: (p) => extname(p) === '.jsonl' || extname(p) === '.json' },
-    { tool: 'kiro', path: kiroWorkspaceSessionsDir(ctx), filter: (p) => extname(p) === '.json' && basename(p) !== 'sessions.json' },
+    { tool: 'kiro', path: kiroOverride ? null : kiroDevDataDir(ctx), filter: (p) => extname(p) === '.jsonl' || extname(p) === '.json' },
+    { tool: 'kiro', path: kiroOverride, filter: (p) => extname(p) === '.jsonl' || extname(p) === '.json' },
+    { tool: 'kiro', path: kiroOverride ? null : kiroWorkspaceSessionsDir(ctx), filter: (p) => extname(p) === '.json' && basename(p) !== 'sessions.json' },
     { tool: 'grok', path: probeGrok(ctx), filter: (p) => basename(p) === 'updates.jsonl' },
     { tool: 'omp', path: probeOmp(ctx) },
     { tool: 'pi', path: probePi(ctx) },

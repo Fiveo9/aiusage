@@ -18,22 +18,28 @@ function clearScreen(): void {
 function getPort(): number {
   if (existsSync(PORT_FILE)) {
     const raw = readFileSync(PORT_FILE, 'utf-8').trim()
-    const n = parseInt(raw, 10)
-    if (!isNaN(n) && n > 0) return n
+    const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+    if (Number.isInteger(n) && n > 0 && n <= 65535) return n
   }
   return DEFAULT_PORT
 }
 
-function getPidOnPort(port: number): string | null {
+export function getPidOnPort(port: number): string | null {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
   try {
     if (process.platform === 'win32') {
       const out = execSync(
-        `netstat -ano | findstr LISTENING | findstr :${port}`,
+        'netstat -ano',
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
       )
-      const parts = out.trim().split(/\s+/)
-      const pid = parts[parts.length - 1] ?? null
-      return pid && /^\d+$/.test(pid) ? pid : null
+      for (const line of out.split(/\r?\n/)) {
+        const parts = line.trim().split(/\s+/)
+        const localPort = parts[1]?.match(/:(\d+)$/)
+        const pid = parts[4]
+        if (parts[0] === 'TCP' && parts[3] === 'LISTENING' && localPort && Number(localPort[1]) === port
+          && pid && /^[1-9]\d*$/.test(pid)) return pid
+      }
+      return null
     } else {
       const out = execSync(`lsof -iTCP:${port} -sTCP:LISTEN -t`, {
         encoding: 'utf-8',
@@ -74,12 +80,17 @@ function openBrowser(url: string): void {
  * script. The command prints its own output; failing to start it is
  * reported here.
  */
-function runCommand(args: string[]): void {
+function cliInvocation(args: string[]): { command: string; args: string[] } {
   const entry = process.argv[1]
   // Node flags are passed on only to load a TypeScript entry (a development
   // run through tsx); others, such as --inspect, must not reach the child.
   const nodeFlags = /\.[cm]?ts$/.test(entry) ? process.execArgv : []
-  const result = spawnSync(process.execPath, [...nodeFlags, entry, ...args], { stdio: 'inherit' })
+  return { command: process.execPath, args: [...nodeFlags, entry, ...args] }
+}
+
+function runCommand(args: string[]): void {
+  const invocation = cliInvocation(args)
+  const result = spawnSync(invocation.command, invocation.args, { stdio: 'inherit' })
   if (result.error) {
     console.error(`Could not run "aiusage ${args.join(' ')}": ${result.error.message}`)
   }
@@ -118,15 +129,20 @@ function stopDashboard(port: number): boolean {
 }
 
 async function startDashboard(port: number): Promise<boolean> {
-  const child = spawn('aiusage', ['serve'], {
-    detached: true,
-    stdio: 'ignore',
-  })
-  child.unref()
+  const invocation = cliInvocation(['serve', '--port', String(port)])
+  let failed = false
+  try {
+    const child = spawn(invocation.command, invocation.args, {
+      detached: true, stdio: 'ignore', windowsHide: true,
+    })
+    child.once('error', () => { failed = true })
+    child.unref()
+  } catch { return false }
   // wait up to 15s for port to become available
   const deadline = Date.now() + 15_000
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500))
+    if (failed) return false
     if (getPidOnPort(port)) return true
   }
   return false
@@ -236,7 +252,7 @@ async function dataSubmenu(rl: Interface): Promise<void> {
       case '1': {
         const progress = await prompt(rl, '  Show progress? [Y/N]: ')
         const args = ['parse']
-        if (progress.toLowerCase() === 'y') args.push('--progress')
+        if (progress.toLowerCase() === 'n') args.push('--no-progress')
         console.log('')
         runCommand(args)
         await prompt(rl, '\n  Press Enter to continue...')

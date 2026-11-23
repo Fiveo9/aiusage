@@ -19,10 +19,16 @@ export async function launchWidget(): Promise<void> {
     process.exit(1)
   }
 
-  const child = spawn(electronBin, [], {
+  const batchShim = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(electronBin)
+  const child = spawn(batchShim ? `"${electronBin}"` : electronBin, [], {
     detached: true,
     stdio: 'ignore',
-    shell: false,
+    shell: batchShim,
+    windowsHide: true,
+  })
+  child.on('error', (error) => {
+    console.error(`Could not start aiusage widget: ${error.message}`)
+    process.exitCode = 1
   })
   child.unref()
 
@@ -49,13 +55,14 @@ function isWidgetRunning(): boolean {
   }
 }
 
-function resolveElectronBin(): string | null {
+export function resolveElectronBin(): string | null {
   try {
     const result = execSync(
-      process.platform === 'win32' ? 'where aiusage-widget' : 'which aiusage-widget',
+      process.platform === 'win32' ? 'where aiusage-widget' : 'command -v aiusage-widget',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim()
-    return result || null
+    const paths = result.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    return (process.platform === 'win32' ? paths.find(path => /\.(?:exe|cmd|bat)$/i.test(path)) ?? paths[0] : paths[0]) ?? null
   } catch {
     return null
   }

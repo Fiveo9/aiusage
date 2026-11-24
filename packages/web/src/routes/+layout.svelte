@@ -8,6 +8,7 @@
   import { fetchConfig, fetchAuthStatus, login } from '$lib/api.js'
   import { displayCurrency, exchangeRate } from '$lib/stores.js'
   import { getAuthShellState } from '$lib/auth-shell.js'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
   import CommandPalette from '$lib/components/ui/CommandPalette.svelte'
   import {
     House, LayoutDashboard, Coins, DollarSign, Box,
@@ -70,6 +71,10 @@
   // home was refused its protected requests (settings, quotas, refresh) while
   // locked. The initial auth check never changes it.
   let unlockCount = 0
+  let authStatusError = false
+  let disposed = false
+  let cleanupTheme
+  const beginAuthRequest = createRequestTracker()
 
   $: isHomeRoute = $page.url.pathname === '/'
   $: shellState = getAuthShellState({
@@ -77,20 +82,26 @@
     authEnabled,
     authenticated,
     authLoading,
+    authFailed: authStatusError,
   })
   $: shouldShowLogin = shellState === 'login-page'
   $: shouldShowPublicHome = shellState === 'public-home'
 
   async function loadAuthStatus() {
+    const isLatest = beginAuthRequest()
+    authLoading = true
+    authStatusError = false
     try {
       const status = await fetchAuthStatus()
-      authEnabled = Boolean(status.enabled)
-      authenticated = Boolean(status.authenticated)
+      if (!isLatest() || disposed) return
+      if (!status || typeof status.enabled !== 'boolean' || typeof status.authenticated !== 'boolean') throw new Error('Invalid auth status')
+      authEnabled = status.enabled
+      authenticated = status.authenticated
+      if (authenticated) fetchConfig().then(cfg => { if (isLatest() && !disposed) applyConfig(cfg) }).catch(() => {})
     } catch {
-      authEnabled = false
-      authenticated = false
+      if (isLatest() && !disposed) authStatusError = true
     } finally {
-      authLoading = false
+      if (isLatest() && !disposed) authLoading = false
     }
   }
 
@@ -99,22 +110,26 @@
     authSubmitting = true
     try {
       await login(password)
+      if (disposed) return
+      beginAuthRequest()
       authenticated = true
+      authLoading = false
+      authStatusError = false
       unlockCount += 1
       password = ''
       unlockOpen = false
-      fetchConfig().then(applyConfig).catch(() => {})
+      fetchConfig().then(cfg => { if (!disposed && authenticated) applyConfig(cfg) }).catch(() => {})
     } catch (err) {
-      authError = err instanceof Error ? err.message : $t('auth.loginFailed')
+      if (!disposed) authError = err instanceof Error ? err.message : $t('auth.loginFailed')
     } finally {
-      authSubmitting = false
+      if (!disposed) authSubmitting = false
     }
   }
 
   function toggleSidebar() {
     collapsed = !collapsed
     if (typeof window !== 'undefined') {
-      localStorage.setItem(SIDEBAR_KEY, String(collapsed))
+      try { localStorage.setItem(SIDEBAR_KEY, String(collapsed)) } catch {}
     }
   }
 
@@ -123,7 +138,7 @@
   }
 
   function openUnlock() {
-    if (authLoading) return
+    if (authLoading || authStatusError) return
     unlockOpen = true
     authError = ''
   }
@@ -135,21 +150,23 @@
   }
 
   function applyConfig(cfg) {
-    if (cfg.displayCurrency) displayCurrency.set(cfg.displayCurrency)
-    if (cfg.exchangeRateCache?.CNY_USD) exchangeRate.set(cfg.exchangeRateCache.CNY_USD)
-    if (cfg.exchangeRate) exchangeRate.set(cfg.exchangeRate)
+    if (!cfg) return
+    if (cfg.displayCurrency === 'USD' || cfg.displayCurrency === 'CNY') displayCurrency.set(cfg.displayCurrency)
+    for (const raw of [cfg.exchangeRateCache?.CNY_USD, cfg.exchangeRate]) {
+      const rate = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN
+      if (Number.isFinite(rate) && rate > 0) exchangeRate.set(rate)
+    }
   }
 
   onMount(() => {
-    initTheme()
+    cleanupTheme = initTheme()
     loadAuthStatus()
-    fetchConfig().then(applyConfig).catch(() => {})
     if (typeof window !== 'undefined') {
-      collapsed = localStorage.getItem(SIDEBAR_KEY) === 'true'
+      try { collapsed = localStorage.getItem(SIDEBAR_KEY) === 'true' } catch {}
     }
   })
 
-  onDestroy(() => {})
+  onDestroy(() => { disposed = true; beginAuthRequest(); cleanupTheme?.() })
 
   $: $page, mobileOpen = false
   $: if (typeof document !== 'undefined') {
@@ -207,9 +224,23 @@
       </div>
     </section>
   </main>
+{:else if shellState === 'auth-error'}
+  <main class="auth-page">
+    <section class="auth-card">
+      <p class="auth-error" role="alert">{$t('auth.statusFailed')}</p>
+      <button class="btn-primary" type="button" on:click={loadAuthStatus}>{$t('auth.retry')}</button>
+      <a class="auth-home" href="/">{$t('auth.backHome')}</a>
+    </section>
+  </main>
 {:else}
 <!-- The public home and the full shell share one <slot />, so the page is not
      mounted a second time when the auth check settles on `/` (issue #109). -->
+{#if authStatusError}
+  <div class="auth-error" role="alert">
+    {$t('auth.statusFailed')}
+    <button class="btn-primary" type="button" on:click={loadAuthStatus}>{$t('auth.retry')}</button>
+  </div>
+{/if}
 <div class:app={!shouldShowPublicHome} class:public-shell={shouldShowPublicHome} class:collapsed>
 
   {#if !shouldShowPublicHome}

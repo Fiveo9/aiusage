@@ -4,6 +4,7 @@
   import { fetchPricing, updatePricing, deletePricing, syncPricing, bindPricingAlias, unbindPricingAlias, recalcPricing, fetchPricingRecalcStatus } from '$lib/api.js'
   import { recalcStatus, displayCurrency, exchangeRate } from '$lib/stores.js'
   import { Search, X } from 'lucide-svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let models = []
   let loading = true
@@ -12,7 +13,8 @@
   let editingCurrency = null
   let editValues = {}
   let doneTimer = null
-  let viewCurrency = $displayCurrency || 'USD'
+  let viewCurrency = 'USD'
+  $: viewCurrency = $displayCurrency || 'USD'
   let syncingPrices = false
   let syncSummary = null
   let registry = null
@@ -36,24 +38,40 @@
   let recalcRefreshTimer = null
   let recalcWaitToken = 0
   let recalcPanelState = 'idle'
+  let disposed = false
+  let waitingRecalcToken = null
+  let statusInFlight = false
+  const beginLoad = createRequestTracker()
+  const sleepTimers = new Map()
+  const uiTimers = new Set()
 
   onDestroy(() => {
+    disposed = true
+    beginLoad()
     recalcWaitToken += 1
     if (doneTimer) clearTimeout(doneTimer)
     if (recalcTimer) clearInterval(recalcTimer)
     if (recalcRefreshTimer) clearTimeout(recalcRefreshTimer)
+    for (const timer of uiTimers) clearTimeout(timer)
+    uiTimers.clear()
+    for (const [timer, resolve] of sleepTimers) { clearTimeout(timer); resolve() }
+    sleepTimers.clear()
   })
 
   onMount(async () => {
     await loadData()
+    if (disposed) return
     await refreshRecalcStatus()
   })
 
   async function loadData({ showLoading = true } = {}) {
+    if (disposed) return
+    const isLatest = beginLoad()
     if (showLoading) loading = true
     error = null
     try {
       const data = await fetchPricing()
+      if (disposed || !isLatest()) return
       models = data.models || []
       registry = data.registry || null
       targets = data.targets || []
@@ -70,9 +88,9 @@
       aliasQueries = nextQueries
       if (!localBindings.length) aliasPanelExpanded = false
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load'
+      if (!disposed && isLatest()) error = e instanceof Error ? e.message : 'Failed to load'
     } finally {
-      if (showLoading) loading = false
+      if (showLoading && !disposed && isLatest()) loading = false
     }
   }
 
@@ -92,23 +110,30 @@
 
   function currencySymbol(c) { return c === 'CNY' ? '¥' : '$' }
 
-  function convertPrice(value, fromCurrency, toCurrency) {
-    if (value == null || fromCurrency === toCurrency) return value
-    return fromCurrency === 'CNY' ? value * $exchangeRate : value / $exchangeRate
+  function convertPrice(value, fromCurrency, toCurrency, configuredRate = $exchangeRate) {
+    if (value == null) return value
+    const amount = Number(value)
+    if (!Number.isFinite(amount)) return null
+    if (fromCurrency === toCurrency) return amount
+    const rate = Number.isFinite(Number(configuredRate)) && Number(configuredRate) > 0 ? Number(configuredRate) : 0.137
+    const converted = fromCurrency === 'CNY' ? amount * rate : amount / rate
+    return Number.isFinite(converted) ? converted : null
   }
 
-  function fmtPrice(value, fromCurrency, toCurrency) {
-    const converted = convertPrice(value, fromCurrency, toCurrency)
+  function fmtPrice(value, fromCurrency, toCurrency, rate) {
+    const converted = convertPrice(value, fromCurrency, toCurrency, rate)
     return converted != null ? `${currencySymbol(toCurrency)}${fmt(converted)}` : '-'
   }
 
   function markDone() {
+    if (disposed) return
     if (doneTimer) clearTimeout(doneTimer)
     recalcStatus.set('done')
-    doneTimer = setTimeout(() => { recalcStatus.set('idle') }, 3000)
+    doneTimer = setTimeout(() => { if (!disposed) recalcStatus.set('idle') }, 3000)
   }
 
   function markNeedsRecalc(since = Date.now()) {
+    if (disposed) return
     if (doneTimer) {
       clearTimeout(doneTimer)
       doneTimer = null
@@ -136,6 +161,7 @@
   }
 
   function applyRecalcStatus(status) {
+    if (disposed) return
     recalcProgress = status || { state: 'idle', total: 0, processed: 0, updated: 0, skipped: 0, error: null }
     const hasServerRecalcRequirement = applyServerRecalcRequirement(recalcProgress)
     if (recalcProgress.state === 'queued' || recalcProgress.state === 'running') {
@@ -178,19 +204,27 @@
   }
 
   async function refreshRecalcStatus() {
+    if (disposed || waitingRecalcToken != null || statusInFlight) return
+    const token = recalcWaitToken
+    statusInFlight = true
     try {
-      applyRecalcStatus(await fetchPricingRecalcStatus())
+      const status = await fetchPricingRecalcStatus()
+      if (disposed || token !== recalcWaitToken) return
+      applyRecalcStatus(status)
     } catch {
+      if (disposed || token !== recalcWaitToken) return
       if (recalcTimer) {
         clearInterval(recalcTimer)
         recalcTimer = null
       }
       recalcStatus.set('idle')
+    } finally {
+      statusInFlight = false
     }
   }
 
   function startRecalcPolling() {
-    if (recalcTimer) return
+    if (disposed || recalcTimer || waitingRecalcToken != null) return
     recalcTimer = setInterval(refreshRecalcStatus, 700)
   }
 
@@ -199,20 +233,35 @@
   }
 
   function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
+    if (disposed) return Promise.resolve()
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { sleepTimers.delete(timer); resolve() }, ms)
+      sleepTimers.set(timer, resolve)
+    })
   }
 
   async function waitForRecalcCompletion(token) {
-    for (let attempt = 0; attempt < 180 && token === recalcWaitToken; attempt += 1) {
-      await sleep(attempt < 5 ? 250 : 700)
-      if (token !== recalcWaitToken) return
-      const status = await fetchPricingRecalcStatus()
-      applyRecalcStatus(status)
-      if (!isActiveRecalcStatus(status)) return
+    waitingRecalcToken = token
+    if (recalcTimer) { clearInterval(recalcTimer); recalcTimer = null }
+    try {
+      for (let attempt = 0; attempt < 180 && !disposed && token === recalcWaitToken; attempt += 1) {
+        await sleep(attempt < 5 ? 250 : 700)
+        if (disposed || token !== recalcWaitToken) return
+        const status = await fetchPricingRecalcStatus()
+        if (disposed || token !== recalcWaitToken) return
+        applyRecalcStatus(status)
+        if (!isActiveRecalcStatus(status)) return
+      }
+    } finally {
+      if (waitingRecalcToken === token) {
+        waitingRecalcToken = null
+        if (!disposed && isActiveRecalcStatus(recalcProgress)) startRecalcPolling()
+      }
     }
   }
 
   function refreshRecalcStatusSoon() {
+    if (disposed || waitingRecalcToken != null) return
     if (recalcRefreshTimer) clearTimeout(recalcRefreshTimer)
     recalcRefreshTimer = setTimeout(() => {
       recalcRefreshTimer = null
@@ -221,15 +270,17 @@
   }
 
   async function startRecalcCosts() {
+    if (disposed) return
+    recalcWaitToken += 1
+    const waitToken = recalcWaitToken
     try {
       const recalcRequestedAt = Date.now()
       recalcPanelDismissed = false
       recalcStatus.set('updating')
       const r = await recalcPricing()
+      if (disposed || waitToken !== recalcWaitToken) return
       const status = r.status || r
       if (r.accepted !== false) activeRecalcStartedAt = status.startedAt ?? recalcRequestedAt
-      recalcWaitToken += 1
-      const waitToken = recalcWaitToken
       applyRecalcStatus(status)
       if (isActiveRecalcStatus(status)) {
         await waitForRecalcCompletion(waitToken)
@@ -237,57 +288,87 @@
         await refreshRecalcStatus()
       }
     } catch (e) {
+      if (disposed || waitToken !== recalcWaitToken) return
       recalcStatus.set('idle')
       alert(e.message)
     }
   }
 
   async function saveEdit(name) {
+    if (disposed) return
+    const validRate = (value, optional = false) => {
+      if (optional && (value == null || value === '')) return true
+      if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return false
+      return Number.isFinite(Number(value)) && Number(value) >= 0
+    }
+    if (typeof name !== 'string' || !name.trim() || !validRate(editValues.input) || !validRate(editValues.output)
+      || !validRate(editValues.cacheRead, true) || !validRate(editValues.cacheWrite, true)) {
+      alert($t('pricing.invalidRates'))
+      return
+    }
     try {
-      const result = await updatePricing(name, { ...editValues, currency: editingCurrency })
+      const result = await updatePricing(name, {
+        input: Number(editValues.input), output: Number(editValues.output),
+        cacheRead: editValues.cacheRead == null || editValues.cacheRead === '' ? null : Number(editValues.cacheRead),
+        cacheWrite: editValues.cacheWrite == null || editValues.cacheWrite === '' ? null : Number(editValues.cacheWrite),
+        currency: editingCurrency,
+      })
+      if (disposed) return
       editingModel = null
       editingCurrency = null
       await loadData({ showLoading: false })
+      if (disposed) return
       applyNeedsRecalcResult(result)
     } catch (e) {
+      if (disposed) return
       recalcStatus.set('idle')
       alert(e.message)
     }
   }
 
   async function resetModel(name) {
+    if (disposed) return
     try {
       const result = await deletePricing(name)
+      if (disposed) return
       await loadData({ showLoading: false })
+      if (disposed) return
       applyNeedsRecalcResult(result)
     } catch (e) {
+      if (disposed) return
       recalcStatus.set('idle')
       alert(e.message)
     }
   }
 
   async function syncPrices() {
+    if (disposed) return
     try {
       syncingPrices = true
       const r = await syncPricing()
+      if (disposed) return
       syncSummary = r.summary || null
       await loadData()
+      if (disposed) return
       applyNeedsRecalcResult(r)
     } catch (e) {
+      if (disposed) return
       recalcStatus.set('idle')
       alert(e.message)
     } finally {
-      syncingPrices = false
+      if (!disposed) syncingPrices = false
     }
   }
 
   async function bindAlias(alias, selectedModelKey = resolvedAliasModelKey(alias)) {
+    if (disposed) return
     const modelKey = selectedModelKey
     if (!modelKey) return
     const target = targets.find((item) => item.model === modelKey)
     try {
       bindingAlias = alias
       const result = await bindPricingAlias(alias, modelKey)
+      if (disposed) return
       applyNeedsRecalcResult(result)
       localBindings = localBindings.map((binding) => binding.model === alias
         ? { ...binding, modelKey, origin: 'user', source: 'manual', matchType: 'alias', hasPrice: true }
@@ -297,17 +378,20 @@
       bindingAlias = null
       await loadData({ showLoading: false })
     } catch (e) {
+      if (disposed) return
       recalcStatus.set('idle')
       alert(e.message)
     } finally {
-      bindingAlias = null
+      if (!disposed) bindingAlias = null
     }
   }
 
   async function unbindAlias(alias) {
+    if (disposed) return
     try {
       unbindingAlias = alias
       const result = await unbindPricingAlias(alias)
+      if (disposed) return
       applyNeedsRecalcResult(result)
       localBindings = localBindings.map((binding) => binding.model === alias
         ? { ...binding, modelKey: null, origin: null, source: null, matchType: null, hasPrice: false }
@@ -317,10 +401,11 @@
       unbindingAlias = null
       await loadData({ showLoading: false })
     } catch (e) {
+      if (disposed) return
       recalcStatus.set('idle')
       alert(e.message)
     } finally {
-      unbindingAlias = null
+      if (!disposed) unbindingAlias = null
     }
   }
 
@@ -413,13 +498,13 @@
     return selected ? formatTarget(selected) : ''
   }
 
-  function bindingLabel(binding) {
-    if (!binding.hasPrice || !binding.modelKey) return $t('pricing.noPrice')
-    if (binding.bindingType === 'custom') return $t('pricing.customPricing')
-    if (binding.bindingType === 'manual') return $t('pricing.manualBinding')
-    if (binding.matchType === 'alias') return $t('pricing.autoBinding')
-    if (binding.matchType === 'prefix') return $t('pricing.prefixBinding')
-    return $t('pricing.exactBinding')
+  function bindingLabel(binding, translate) {
+    if (!binding.hasPrice || !binding.modelKey) return translate('pricing.noPrice')
+    if (binding.bindingType === 'custom') return translate('pricing.customPricing')
+    if (binding.bindingType === 'manual') return translate('pricing.manualBinding')
+    if (binding.matchType === 'alias') return translate('pricing.autoBinding')
+    if (binding.matchType === 'prefix') return translate('pricing.prefixBinding')
+    return translate('pricing.exactBinding')
   }
 
   function isManualAliasBinding(binding) {
@@ -450,10 +535,10 @@
     return !modelKey || modelKey === binding.modelKey
   }
 
-  function aliasActionLabel(alias, binding, modelKey = resolvedAliasModelKey(alias)) {
-    if (unbindingAlias === alias) return $t('pricing.unbindingAlias')
-    if (isManualAliasBinding(binding) && !hasChangedAliasModelKey(modelKey, binding)) return $t('pricing.unbindAlias')
-    return bindButtonLabel(alias, modelKey)
+  function aliasActionLabel(alias, binding, modelKey = resolvedAliasModelKey(alias), translate) {
+    if (unbindingAlias === alias) return translate('pricing.unbindingAlias')
+    if (isManualAliasBinding(binding) && !hasChangedAliasModelKey(modelKey, binding)) return translate('pricing.unbindAlias')
+    return bindButtonLabel(alias, modelKey, translate)
   }
 
   function runAliasAction(alias, binding, modelKey = resolvedAliasModelKey(alias)) {
@@ -465,11 +550,17 @@
     return bindAlias(alias, modelKey)
   }
 
-  function bindButtonLabel(alias, modelKey = resolvedAliasModelKey(alias)) {
-    if (bindingAlias === alias) return $t('pricing.bindingAlias')
+  function bindButtonLabel(alias, modelKey = resolvedAliasModelKey(alias), translate) {
+    if (bindingAlias === alias) return translate('pricing.bindingAlias')
     const current = localBindings.find((binding) => binding.model === alias)
-    if (current?.modelKey && current.modelKey !== modelKey) return $t('pricing.updateBinding')
-    return $t('pricing.bindAlias')
+    if (current?.modelKey && current.modelKey !== modelKey) return translate('pricing.updateBinding')
+    return translate('pricing.bindAlias')
+  }
+
+  function scheduleAliasBlur(callback) {
+    if (disposed) return
+    const timer = setTimeout(() => { uiTimers.delete(timer); if (!disposed) callback() }, 100)
+    uiTimers.add(timer)
   }
 
   function modelMatchesSearch(model, search) {
@@ -640,7 +731,7 @@
                   <div class="alias-row auto">
                     <div class="alias-meta">
                       <span class="alias-model mono">{alias}</span>
-                      <span class="alias-state">{bindingLabel(binding)}</span>
+                      <span class="alias-state">{bindingLabel(binding, $t)}</span>
                     </div>
                     <div class="alias-combobox">
                       <input
@@ -676,7 +767,7 @@
                   <div class="alias-row">
                     <div class="alias-meta">
                       <span class="alias-model mono">{alias}</span>
-                      <span class="alias-state" class:unresolved={!binding.hasPrice}>{bindingLabel(binding)}</span>
+                      <span class="alias-state" class:unresolved={!binding.hasPrice}>{bindingLabel(binding, $t)}</span>
                     </div>
                     <div class="alias-combobox">
                       <input
@@ -686,9 +777,9 @@
                         aria-label={$t('pricing.aliasTarget')}
                         disabled={!canChangeBinding(binding)}
                         on:focus={() => openAliasOptions(alias)}
-                        on:blur={() => setTimeout(() => {
+                        on:blur={() => scheduleAliasBlur(() => {
                           if (openAliasSearch === alias) openAliasSearch = null
-                        }, 100)}
+                        })}
                         on:input={(event) => updateAliasQuery(alias, event.currentTarget.value)}
                       />
                       {#if openAliasSearch === alias}
@@ -709,7 +800,7 @@
                     {#if canChangeBinding(binding)}
                       <div class="alias-actions">
                         <button class="btn-sm" class:save={!isManualAliasBinding(binding) || aliasChanged} class:reset={isManualAliasBinding(binding) && !aliasChanged} on:click={() => runAliasAction(alias, binding, aliasModelKey)} disabled={aliasActionDisabled(alias, binding, aliasModelKey)}>
-                          {aliasActionLabel(alias, binding, aliasModelKey)}
+                          {aliasActionLabel(alias, binding, aliasModelKey, $t)}
                         </button>
                       </div>
                     {/if}
@@ -756,16 +847,16 @@
           </div>
           <div class="edit-fields">
             <label>{$t('pricing.input')} ({currencySymbol(editingCurrency)}/1M)
-              <input type="number" step="0.01" bind:value={editValues.input} class="edit-input" />
+              <input type="number" step="0.01" min="0" bind:value={editValues.input} class="edit-input" />
             </label>
             <label>{$t('pricing.output')} ({currencySymbol(editingCurrency)}/1M)
-              <input type="number" step="0.01" bind:value={editValues.output} class="edit-input" />
+              <input type="number" step="0.01" min="0" bind:value={editValues.output} class="edit-input" />
             </label>
             <label>{$t('pricing.cacheRead')} ({currencySymbol(editingCurrency)}/1M)
-              <input type="number" step="0.01" bind:value={editValues.cacheRead} class="edit-input" />
+              <input type="number" step="0.01" min="0" bind:value={editValues.cacheRead} class="edit-input" />
             </label>
             <label>{$t('pricing.cacheWrite')} ({currencySymbol(editingCurrency)}/1M)
-              <input type="number" step="0.01" bind:value={editValues.cacheWrite} class="edit-input" />
+              <input type="number" step="0.01" min="0" bind:value={editValues.cacheWrite} class="edit-input" />
             </label>
           </div>
           <div class="edit-btns">
@@ -786,23 +877,23 @@
           <div class="price-row">
             <div class="price-block primary">
               <span class="price-label">{$t('pricing.input')}</span>
-              <span class="price-val">{m.price ? fmtPrice(m.price.input, m.currency, viewCurrency) : '-'}</span>
+              <span class="price-val">{m.price ? fmtPrice(m.price.input, m.currency, viewCurrency, $exchangeRate) : '-'}</span>
             </div>
             <span class="slash">/</span>
             <div class="price-block primary">
               <span class="price-label">{$t('pricing.output')}</span>
-              <span class="price-val">{m.price ? fmtPrice(m.price.output, m.currency, viewCurrency) : '-'}</span>
+              <span class="price-val">{m.price ? fmtPrice(m.price.output, m.currency, viewCurrency, $exchangeRate) : '-'}</span>
             </div>
           </div>
 
           <div class="price-row secondary">
             <div class="price-block">
               <span class="price-label">{$t('pricing.cacheRead')}</span>
-              <span class="price-val sm">{m.price?.cacheRead != null ? fmtPrice(m.price.cacheRead, m.currency, viewCurrency) : '-'}</span>
+              <span class="price-val sm">{m.price?.cacheRead != null ? fmtPrice(m.price.cacheRead, m.currency, viewCurrency, $exchangeRate) : '-'}</span>
             </div>
             <div class="price-block">
               <span class="price-label">{$t('pricing.cacheWrite')}</span>
-              <span class="price-val sm">{m.price?.cacheWrite != null ? fmtPrice(m.price.cacheWrite, m.currency, viewCurrency) : '-'}</span>
+              <span class="price-val sm">{m.price?.cacheWrite != null ? fmtPrice(m.price.cacheWrite, m.currency, viewCurrency, $exchangeRate) : '-'}</span>
             </div>
           </div>
 

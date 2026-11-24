@@ -15,7 +15,7 @@ describe('settings sync status', () => {
     const code = source.replace(/\/\/.*$/gm, '')
     expect(code).not.toMatch(/lastSyncTarget\s*===/)
     expect(source).not.toContain('displayedSyncStatus')
-    expect(source).toContain('{formatSyncTime(syncStatusData?.lastSyncAt)}')
+    expect(source).toContain('{formatSyncTime(syncStatusData?.lastSyncAt, $t)}')
     expect(source).toContain('class:ok={syncStatusData?.lastSyncStatus ===')
   })
 

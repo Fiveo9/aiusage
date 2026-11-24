@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, formatTokens } from '$lib/stores.js'
   import { fetchTokens } from '$lib/api.js'
   import { t } from '$lib/i18n.js'
@@ -6,22 +7,29 @@
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
   import SvgTokenChart from '$lib/components/charts/SvgTokenChart.svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
   let loading = true
   let chartMode = 'breakdown' // 'breakdown' | 'total'
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   async function loadData() {
+    const isLatest = beginRequest()
     loading = true
     error = null
     try {
-      data = await fetchTokens({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      const response = await fetchTokens({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      if (!isLatest()) return
+      data = response
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 

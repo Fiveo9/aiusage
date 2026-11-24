@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { tokenComposition } from '../src/lib/token-composition.js'
+import { tokenComposition, displayOutputTokens } from '../src/lib/token-composition.js'
 
 const pageSource = readFileSync(
   fileURLToPath(new URL('../src/routes/+page.svelte', import.meta.url)),
@@ -18,6 +18,7 @@ describe('home page token composition', () => {
 
     expect(shares.inputPct).toBeCloseTo((100 / 164) * 100, 10)
     expect(shares.outputPct).toBeCloseTo((64 / 164) * 100, 10)
+    expect(displayOutputTokens({ outputTokens: 0, thinkingTokens: 64 })).toBe(64)
   })
 
   it('adds up to the whole total, thinking included', () => {
@@ -44,7 +45,7 @@ describe('home page token composition', () => {
   })
 
   it('is what the home page builds its bar from', () => {
-    expect(pageSource).toContain("import { tokenComposition } from '$lib/token-composition.js'")
+    expect(pageSource).toContain("import { tokenComposition, displayOutputTokens } from '$lib/token-composition.js'")
     expect(pageSource).toMatch(/\$: \(\{ inputPct, outputPct, cacheReadPct, cacheWritePct \} = tokenComposition\(data\)\)/)
     // No share is computed from the raw columns beside it.
     expect(pageSource).not.toMatch(/data\.(input|output|cacheRead|cacheWrite)Tokens\s*\/\s*tokenParts/)

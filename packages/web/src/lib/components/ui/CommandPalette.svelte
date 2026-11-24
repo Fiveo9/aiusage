@@ -94,6 +94,7 @@
   }
 
   async function handleWindowKeydown(e) {
+    if (e.isComposing || e.keyCode === 229) return
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault()
       if (open) closePalette()

@@ -48,14 +48,14 @@
       .replace(/^Weekly Limit/i, 'Weekly')
   }
 
-  function tierLabel(name) {
+  function tierLabel(name, translate) {
     const key = TIER_LABEL_KEYS[name]
-    return key ? $t(key) : formatUnknownTier(name)
+    return key ? translate(key) : formatUnknownTier(name)
   }
 
-  function toolLabel(tool) {
+  function toolLabel(tool, translate) {
     const key = TOOL_LABEL_KEYS[tool]
-    return key ? $t(key) : tool
+    return key ? translate(key) : tool
   }
 
   function utilizationBarColor(pct) {
@@ -67,7 +67,7 @@
   function countdownStr(resetsAt) {
     if (!resetsAt) return null
     const diffMs = new Date(resetsAt).getTime() - Date.now()
-    if (diffMs <= 0) return null
+    if (!Number.isFinite(diffMs) || diffMs <= 0) return null
     const hours = Math.floor(diffMs / (1000 * 60 * 60))
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
     if (hours > 24) {
@@ -78,8 +78,8 @@
     return `${minutes}m`
   }
 
-  function formatQueryTime(ms) {
-    if (!ms) return $t('quotas.never')
+  function formatQueryTime(ms, translate) {
+    if (!ms) return translate('quotas.never')
     return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
@@ -128,8 +128,8 @@
         {#each activeQuotas as quota (quota.tool)}
           <div class="quota-card card">
             <div class="card-header">
-              <span class="tool-name">{toolLabel(quota.tool)}</span>
-              <span class="query-time mono">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt)}</span>
+              <span class="tool-name">{toolLabel(quota.tool, $t)}</span>
+              <span class="query-time mono">{$t('quotas.lastUpdated')}: {formatQueryTime(quota.queriedAt, $t)}</span>
             </div>
 
             {#if quota.credentialStatus === 'expired' && !quota.success}
@@ -172,7 +172,7 @@
                   {@const countdown = countdownStr(tier.resetsAt)}
                   <div class="tier-row">
                     <div class="tier-label">
-                      <span class="tier-name">{tierLabel(tier.name)}</span>
+                      <span class="tier-name">{tierLabel(tier.name, $t)}</span>
                       {#if countdown}
                         <span class="tier-reset mono">
                           <RefreshCw size={10} strokeWidth={2} />
@@ -207,7 +207,7 @@
       <div class="inactive-list">
         {#each inactiveQuotas as quota (quota.tool)}
           <div class="inactive-card card">
-            <span class="tool-name">{toolLabel(quota.tool)}</span>
+            <span class="tool-name">{toolLabel(quota.tool, $t)}</span>
             <div class="inactive-hint">
               <span class="hint-icon"><CircleDashed size={13} strokeWidth={1.85} /></span>
               <span>{$t('quotas.noCredentials')} — {$t('quotas.noCredentialsHint')}</span>

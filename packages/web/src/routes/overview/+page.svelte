@@ -1,8 +1,9 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, formatNumber, formatCost, formatTokens } from '$lib/stores.js'
   import { fetchSummary, refreshData } from '$lib/api.js'
-  import { tokenComposition } from '$lib/token-composition.js'
+  import { tokenComposition, displayOutputTokens } from '$lib/token-composition.js'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
   import { t } from '$lib/i18n.js'
   import DateRangeSelector from '$lib/components/DateRangeSelector.svelte'
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
@@ -13,18 +14,25 @@
   let loading = true
   let tcTab = 'all'
   let initialized = false
+  let destroyed = false
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { destroyed = true; beginRequest() })
 
   async function loadData({ showLoading = true } = {}) {
-    if (!initialized) return
+    if (!initialized || destroyed) return
+    const isLatest = beginRequest()
     if (showLoading) loading = true
     error = null
     try {
-      data = await fetchSummary({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      const response = await fetchSummary({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      if (!isLatest() || destroyed) return
+      data = response
     } catch (e) {
+      if (!isLatest() || destroyed) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest() && !destroyed) loading = false
     }
   }
 
@@ -32,13 +40,15 @@
     // Show existing data first; don't block the page on log parsing (issue #40).
     initialized = true
     await loadData()
+    if (destroyed) return
     // Refresh logs in the background, then reload once it completes. The
     // figures already shown stay up while the reload is in flight.
-    refreshData().then(() => loadData({ showLoading: false })).catch(() => {})
+    refreshData().then(() => destroyed ? undefined : loadData({ showLoading: false })).catch(() => {})
   })
 
   $: $dateRange, $selectedDevice, $selectedTool, loadData()
   $: ({ inputPct, outputPct, cacheReadPct, cacheWritePct } = tokenComposition(data))
+  $: outputTotal = displayOutputTokens(data)
   $: toolEntries = data?.byTool
     ? Object.entries(data.byTool).sort(([, a], [, b]) => b.tokens - a.tokens)
     : []
@@ -92,7 +102,7 @@
       </div>
       <div class="kpi-card">
         <span class="kpi-label">{$t('overview.totalCost')}</span>
-        <span class="kpi-value accent numeric">{formatCost(data.totalCost)}</span>
+        <span class="kpi-value accent numeric">{$formatCost(data.totalCost)}</span>
       </div>
       <div class="kpi-card">
         <span class="kpi-label">{$t('overview.activeDays')}</span>
@@ -127,10 +137,10 @@
         <div class="token-cell">
           <div class="token-cell-head">
             <span class="swatch seg-output"></span>
-            <span class="token-label">{$t('overview.outputTokens')}</span>
+            <span class="token-label">{$t('overview.outputWithThinking')}</span>
             <span class="token-pct numeric">{outputPct.toFixed(1)}%</span>
           </div>
-          <span class="token-value numeric">{formatTokens(data.outputTokens)}</span>
+          <span class="token-value numeric">{formatTokens(outputTotal)}</span>
         </div>
         <div class="token-cell">
           <div class="token-cell-head">
@@ -177,7 +187,7 @@
                       </div>
                     </td>
                     <td class="numeric">{formatTokens(stats.tokens)}</td>
-                    <td class="numeric accent font-semibold">{formatCost(stats.cost)}</td>
+                    <td class="numeric accent font-semibold">{$formatCost(stats.cost)}</td>
                   </tr>
                 {/each}
               </tbody>

@@ -5,7 +5,8 @@
   import { fetchHomeSummary, refreshData as triggerRefresh, fetchConfig, fetchQuotas, SETTINGS_UPDATED_EVENT } from '$lib/api.js'
   import { t } from '$lib/i18n.js'
   import { formatCost, displayCurrency, exchangeRate } from '$lib/stores.js'
-  import { tokenComposition } from '$lib/token-composition.js'
+  import { tokenComposition, displayOutputTokens } from '$lib/token-composition.js'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
   import { SlidersHorizontal, RefreshCw, AlertTriangle, ArrowRight, X } from 'lucide-svelte'
 
   const DISPLAY_KEY = 'aiusage-home-display'
@@ -29,7 +30,9 @@
   }
 
   function saveDisplay(d) {
-    if (typeof window !== 'undefined') localStorage.setItem(DISPLAY_KEY, JSON.stringify(d))
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(DISPLAY_KEY, JSON.stringify(d)) } catch {}
+    }
   }
 
   let display = defaultDisplay()
@@ -52,6 +55,9 @@
   let loading    = true
   let refreshing = false
   let barsReady  = false
+  let barsTimer = null
+  const beginRequest = createRequestTracker()
+  const beginQuotaRequest = createRequestTracker()
 
   const tTokens   = tweened(0, { duration: 1800, easing: cubicOut })
   const tCost     = tweened(0, { duration: 1500, easing: cubicOut })
@@ -59,10 +65,15 @@
   const tDays     = tweened(0, { duration: 1100, easing: cubicOut })
 
   async function fetchAndApply(fast = false) {
+    if (destroyed) return false
+    const isLatest = beginRequest()
     const d = fast ? 400 : 1800
+    loading = !fast || !data
+    refreshing = fast && Boolean(data)
     error = null
     try {
       const newData = await fetchHomeSummary({ range: display.range })
+      if (!isLatest() || destroyed) return false
       if (newData) {
         data = newData
         tTokens.set(newData.totalTokens,       { duration: d })
@@ -70,29 +81,31 @@
         tSessions.set(newData.totalSessions || 0, { duration: Math.round(d * 0.72) })
         tDays.set(newData.activeDays,          { duration: Math.round(d * 0.62) })
         barsReady = false
-        setTimeout(() => { barsReady = true }, fast ? 60 : 250)
+        clearTimeout(barsTimer)
+        barsTimer = setTimeout(() => { if (isLatest() && !destroyed) barsReady = true }, fast ? 60 : 250)
       }
     } catch (e) {
+      if (!isLatest() || destroyed) return false
       error = e instanceof Error ? e.message : 'Failed to load'
       data = null
+    } finally {
+      if (isLatest() && !destroyed) { loading = false; refreshing = false }
     }
+    return isLatest() && !destroyed
   }
 
   async function loadData() {
-    loading = true
     tTokens.set(0, { duration: 0 })
     tCost.set(0,   { duration: 0 })
     tSessions.set(0, { duration: 0 })
     tDays.set(0,   { duration: 0 })
     barsReady = false
-    await fetchAndApply(false)
-    loading = false
+    clearTimeout(barsTimer)
+    return fetchAndApply(false)
   }
 
   async function silentRefresh() {
-    refreshing = true
-    await fetchAndApply(true)
-    refreshing = false
+    return fetchAndApply(true)
   }
 
   let countdown      = 0
@@ -111,14 +124,14 @@
     countdown = secs
     countdownTimer = setInterval(() => { countdown = Math.max(0, countdown - 1) }, 1000)
     refreshTimeout = setTimeout(() => {
-      silentRefresh().then(startRefreshCycle)
+      silentRefresh().then(applied => { if (applied) startRefreshCycle() })
     }, globalRefreshMs)
   }
 
   function manualRefresh() {
     clearInterval(countdownTimer)
     clearTimeout(refreshTimeout)
-    silentRefresh().then(() => startRefreshCycle())
+    silentRefresh().then(applied => { if (applied) startRefreshCycle() })
   }
 
   function handleSettingsUpdated(event) {
@@ -138,7 +151,7 @@
 
     try {
       const cfg = await fetchConfig()
-      if (cfg?.refreshInterval) globalRefreshMs = cfg.refreshInterval
+      if (cfg?.refreshInterval != null) globalRefreshMs = cfg.refreshInterval
     } catch {}
     if (destroyed) return
 
@@ -157,9 +170,12 @@
 
   onDestroy(() => {
     destroyed = true
+    beginRequest()
+    beginQuotaRequest()
     clearInterval(clockTimer)
     clearInterval(countdownTimer)
     clearTimeout(refreshTimeout)
+    clearTimeout(barsTimer)
     if (typeof window !== 'undefined') {
       window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated)
     }
@@ -170,20 +186,22 @@
 
   // Thinking tokens are stored apart from output tokens; the bar counts them as output.
   $: ({ inputPct, outputPct, cacheReadPct, cacheWritePct } = tokenComposition(data))
+  $: outputTotal = displayOutputTokens(data)
 
   $: refreshSecs  = Math.round(globalRefreshMs / 1000)
   $: refreshPct   = refreshSecs > 0 ? (1 - countdown / refreshSecs) * 100 : 0
   $: rangeKey     = RANGE_OPTIONS.find(r => r.value === display.range)?.tKey ?? 'range.allTime'
 
-  // Reactive cost formatting — depends on $displayCurrency and $exchangeRate so it re-evaluates on currency change
-  $: formattedCost = (() => { void $displayCurrency; void $exchangeRate; return formatCost($tCost) })()
+  $: formattedCost = $formatCost($tCost)
 
   // Quota warning: load once on mount, show banner when any tier >= 80%
   let quotaWarnings = []
 
   async function loadQuotaWarnings() {
+    const isLatest = beginQuotaRequest()
     try {
       const result = await fetchQuotas()
+      if (!isLatest() || destroyed) return
       const warnings = []
       for (const quota of result?.quotas ?? []) {
         if (!quota.success) continue
@@ -226,7 +244,7 @@
   function setRange(v) {
     display = { ...display, range: v }
     saveDisplay(display)
-    loadData().then(() => startRefreshCycle())
+    loadData().then(applied => { if (applied) startRefreshCycle() })
   }
 
   function setPrecision(v) {
@@ -463,7 +481,7 @@
         <div class="seg seg-input" style="width:{barsReady ? inputPct : 0}%" title="{$t('home.input')} {inputPct.toFixed(1)}%"></div>
       {/if}
       {#if outputPct > 0}
-        <div class="seg seg-output" style="width:{barsReady ? outputPct : 0}%" title="{$t('home.output')} {outputPct.toFixed(1)}%"></div>
+        <div class="seg seg-output" style="width:{barsReady ? outputPct : 0}%" title="{$t('overview.outputWithThinking')} {outputPct.toFixed(1)}%"></div>
       {/if}
       {#if cacheReadPct > 0}
         <div class="seg seg-cr" style="width:{barsReady ? cacheReadPct : 0}%" title="{$t('overview.cacheRead')} {cacheReadPct.toFixed(1)}%"></div>
@@ -485,10 +503,10 @@
       <div class="comp-cell">
         <div class="comp-cell-head">
           <span class="leg-swatch seg-output"></span>
-          <span class="comp-cell-label">{$t('home.output')}</span>
+          <span class="comp-cell-label">{$t('overview.outputWithThinking')}</span>
           <span class="comp-cell-pct numeric">{outputPct.toFixed(1)}%</span>
         </div>
-        <span class="comp-cell-val numeric">{fmtShort(data.outputTokens)}</span>
+        <span class="comp-cell-val numeric">{fmtShort(outputTotal)}</span>
       </div>
       <div class="comp-cell">
         <div class="comp-cell-head">

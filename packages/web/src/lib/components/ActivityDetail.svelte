@@ -74,7 +74,7 @@
             {:else}<td class="mono activity-time">{formatDateTime(row.ts)}</td>{/if}
             <td class="mono activity-id">{row.deviceInstanceId || '—'}</td>
             <td class="mono activity-id">{#if row.sessionId}<a class="activity-link" href={sessionDetailUrl(row.sessionId, row.deviceInstanceId, params.tool)}>{row.sessionId}</a>{:else}—{/if}</td>
-            {#if project}<td class="mono activity-number">{formatTokens(row.tokens)}</td><td class="mono accent activity-number">{formatCost(row.cost)}</td>
+            {#if project}<td class="mono activity-number">{formatTokens(row.tokens)}</td><td class="mono accent activity-number">{$formatCost(row.cost)}</td>
             {:else}<td><span class="activity-badge">{row.tool}</span></td><td class="mono activity-number">{row.callIndex}</td>{/if}
           </tr>
         {/each}

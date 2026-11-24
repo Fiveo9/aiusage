@@ -22,7 +22,7 @@
         <div class="source-row">
           <span class="source-name">{$t(`cost.source.${source}`)}</span>
           <span class="mono source-records">{formatNumber(provenance.sources[source].records)} {$t('cost.records')}</span>
-          <span class="mono source-cost">{source === 'unknown' ? $t('cost.unpriced') : formatCost(provenance.sources[source].cost)}</span>
+          <span class="mono source-cost">{source === 'unknown' ? $t('cost.unpriced') : $formatCost(provenance.sources[source].cost)}</span>
         </div>
       {/each}
     </div>

@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, modelDisplayMode, formatTokens, formatNumber, formatCost } from '$lib/stores.js'
   import { fetchModels } from '$lib/api.js'
   import { groupModels } from '$lib/model-display.js'
@@ -7,22 +8,29 @@
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
   import ModelDisplaySelector from '$lib/components/ModelDisplaySelector.svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
   let loading = true
   let chartMode = 'tokens'
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   async function loadData() {
+    const isLatest = beginRequest()
     loading = true
     error = null
     try {
-      data = await fetchModels({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      const response = await fetchModels({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      if (!isLatest()) return
+      data = response
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
@@ -46,8 +54,8 @@
     return maxMetricValue > 0 ? (value / maxMetricValue) * 100 : 0
   }
 
-  function formatChartValue(model) {
-    return chartMode === 'cost' ? formatCost(model.totalCost) : formatTokens(model.totalTokens)
+  function formatChartValue(model, formatter) {
+    return chartMode === 'cost' ? formatter(model.totalCost) : formatTokens(model.totalTokens)
   }
 
   function formatPercentage(value) {
@@ -148,7 +156,7 @@
                 <div class="ranking-bar-fill" style="width: {getChartWidth(model)}%"></div>
               {/if}
             </div>
-            <span class="numeric bar-value">{formatChartValue(model)}</span>
+            <span class="numeric bar-value">{formatChartValue(model, $formatCost)}</span>
             {#if chartMode === 'tokens'}
               <div class="token-breakdown">
                 <span class="numeric leg-i-val">{formatTokens(model.inputTokens)}</span>
@@ -169,7 +177,7 @@
           <div class="model-stats">
             <span class="stat-item">
               <span class="stat-label">{$t('models.cost')}</span>
-              <span class="numeric stat-value accent font-bold">{formatCost(model.totalCost)}</span>
+              <span class="numeric stat-value accent font-bold">{$formatCost(model.totalCost)}</span>
             </span>
             <span class="stat-item">
               <span class="stat-label">{$t('models.calls')}</span>

@@ -55,7 +55,7 @@
   }
 
   function handleCustomRange() {
-    if (customFrom && customTo) {
+    if (customFrom && customTo && customFrom <= customTo) {
       setCustomRange(customFrom, customTo)
       showCustom = false
     }
@@ -155,7 +155,7 @@
           type="button"
           class="eng-btn eng-btn-primary apply-btn"
           on:click={handleCustomRange}
-          disabled={!customFrom || !customTo}
+          disabled={!customFrom || !customTo || customFrom > customTo}
         >
           {$t('common.apply')}
         </button>

@@ -92,22 +92,20 @@
   }
 
   function buildSegments(day, active) {
-    let acc = 0
-    const segs = []
-    for (const s of active) {
-      const val = day[s.key] || 0
-      if (val <= 0) continue
-      const yBottom = yPos(acc)
-      acc += val
-      const yTop = yPos(acc)
-      segs.push({
-        key: s.key,
-        color: s.color,
-        y: yTop,
-        h: Math.max(1.5, yBottom - yTop),
-      })
-    }
-    return segs
+    const segments = active.filter(s => Number.isFinite(day[s.key]) && day[s.key] > 0)
+      .map(s => ({ key: s.key, color: s.color, rawHeight: (day[s.key] / scaleMax) * innerH }))
+    if (!segments.length) return []
+    const minimum = 1.5
+    const budget = Math.min(innerH, Math.max(minimum * segments.length,
+      segments.reduce((sum, s) => sum + s.rawHeight, 0)))
+    const slack = segments.reduce((sum, s) => sum + Math.max(0, s.rawHeight - minimum), 0)
+    const flexibleBudget = Math.max(0, budget - minimum * segments.length)
+    let bottom = PAD_TOP + innerH
+    return segments.map(s => {
+      const h = minimum + (slack > 0 ? Math.max(0, s.rawHeight - minimum) / slack * flexibleBudget : 0)
+      bottom -= h
+      return { key: s.key, color: s.color, y: bottom, h }
+    })
   }
 
   function handleColMove(e, idx) {
@@ -155,7 +153,7 @@
       {/each}
 
       <!-- Hover vertical highlight band -->
-      {#if hoveredIdx != null}
+      {#if hoveredDay}
         <rect
           x={PAD_LEFT + hoveredIdx * slotW}
           y={PAD_TOP}
@@ -178,8 +176,8 @@
         {@const bx = cx - barW / 2}
         {#if mode === 'total'}
           {@const total = getDayTotal(day)}
-          {@const barY = yPos(total)}
-          {@const barH = Math.max(total > 0 ? 2 : 0, PAD_TOP + innerH - barY)}
+          {@const barH = Math.min(innerH, Math.max(total > 0 ? 2 : 0, PAD_TOP + innerH - yPos(total)))}
+          {@const barY = PAD_TOP + innerH - barH}
           {#if barH > 0}
             <rect
               x={bx}
@@ -189,7 +187,7 @@
               rx={barW >= 8 ? 2.5 : 1.5}
               fill="var(--chart-total)"
               class="bar-rect"
-              class:dimmed={hoveredIdx != null && hoveredIdx !== i}
+              class:dimmed={hoveredDay && hoveredIdx !== i}
             />
           {/if}
         {:else}
@@ -203,7 +201,7 @@
               rx={si === segs.length - 1 && barW >= 8 ? 2 : 0}
               fill={seg.color}
               class="bar-rect"
-              class:dimmed={hoveredIdx != null && hoveredIdx !== i}
+              class:dimmed={hoveredDay && hoveredIdx !== i}
             />
           {/each}
         {/if}

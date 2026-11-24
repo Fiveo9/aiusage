@@ -106,16 +106,16 @@
     <div class="kpi-grid kpi-grid-3">
       <div class="kpi-card">
         <span class="kpi-label">{$t('cost.totalCost')}</span>
-        <span class="kpi-value accent numeric">{formatCost(totalCost)}</span>
+        <span class="kpi-value accent numeric">{$formatCost(totalCost)}</span>
         <span class="kpi-sub numeric">{days.length} {$t('common.activeDaysCount')}</span>
       </div>
       <div class="kpi-card">
         <span class="kpi-label">{$t('common.dailyAvg')}</span>
-        <span class="kpi-value numeric">{formatCost(dailyAvg)}</span>
+        <span class="kpi-value numeric">{$formatCost(dailyAvg)}</span>
       </div>
       <div class="kpi-card">
         <span class="kpi-label">{$t('common.peakDay')}</span>
-        <span class="kpi-value numeric">{peakDay ? formatCost(peakDay.cost) : '—'}</span>
+        <span class="kpi-value numeric">{peakDay ? $formatCost(peakDay.cost) : '—'}</span>
         {#if peakDay}<span class="kpi-sub numeric">{peakDay.date}</span>{/if}
       </div>
     </div>
@@ -141,7 +141,7 @@
                 {#if totalCost > 0}
                   <span class="row-share numeric">{((cost / totalCost) * 100).toFixed(1)}%</span>
                 {/if}
-                <span class="numeric accent font-semibold row-val">{formatCost(cost)}</span>
+                <span class="numeric accent font-semibold row-val">{$formatCost(cost)}</span>
               </span>
             </div>
           {/each}
@@ -159,7 +159,7 @@
                 {#if totalCost > 0}
                   <span class="row-share numeric">{((cost / totalCost) * 100).toFixed(1)}%</span>
                 {/if}
-                <span class="numeric accent font-semibold row-val">{formatCost(cost)}</span>
+                <span class="numeric accent font-semibold row-val">{$formatCost(cost)}</span>
               </span>
             </div>
           {/each}

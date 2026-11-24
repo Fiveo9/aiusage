@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import '$lib/activity.css'
   import { dateRange, selectedDevice, selectedTool, formatNumber } from '$lib/stores.js'
   import { fetchToolCalls, activityDetailUrl } from '$lib/api.js'
@@ -7,17 +8,20 @@
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
   import { ChevronRight } from 'lucide-svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
   let loading = true
   let selectedType = null // null = all
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   const TYPES = [
-    { key: null,       label: () => $t('toolCalls.typeAll') },
-    { key: 'builtin',  label: () => $t('toolCalls.typeBuiltin') },
-    { key: 'mcp',      label: () => $t('toolCalls.typeMcp') },
-    { key: 'skill',    label: () => $t('toolCalls.typeSkill') },
+    { key: null,       label: translate => translate('toolCalls.typeAll') },
+    { key: 'builtin',  label: translate => translate('toolCalls.typeBuiltin') },
+    { key: 'mcp',      label: translate => translate('toolCalls.typeMcp') },
+    { key: 'skill',    label: translate => translate('toolCalls.typeSkill') },
   ]
 
   const NO_TOOL_CALL_TOOLS = new Set([
@@ -43,20 +47,24 @@
   $: showNoToolCallNotice = NO_TOOL_CALL_TOOLS.has($selectedTool)
 
   async function loadData() {
+    const isLatest = beginRequest()
     loading = true
     error = null
     try {
-      data = await fetchToolCalls({
+      const response = await fetchToolCalls({
         ...$dateRange,
         device: $selectedDevice,
         tool: $selectedTool,
         toolType: selectedType,
       })
+      if (!isLatest()) return
+      data = response
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
@@ -100,7 +108,7 @@
           aria-pressed={selectedType === type.key}
           on:click={() => { selectedType = type.key }}
         >
-          {type.label()}
+          {type.label($t)}
         </button>
       {/each}
     </div>

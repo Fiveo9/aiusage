@@ -11,6 +11,7 @@
   onMount(async () => {
     try {
       const res = await fetch('/api/devices')
+      if (!res.ok) throw new Error('Device request failed')
       const data = await res.json()
       devices = data.devices || []
     } catch {

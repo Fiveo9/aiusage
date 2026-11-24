@@ -1,20 +1,30 @@
 <script>
+  import { onDestroy } from 'svelte'
   import { dateRange, selectedDevice, selectedTool, setTool } from '../stores.js'
   import { fetchTools } from '../api.js'
+  import { createRequestTracker } from '../sessions-paging.js'
 
   let tools = []
   let loading = true
+  let canClearSelection = false
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   async function loadTools() {
+    const isLatest = beginRequest()
     loading = true
+    canClearSelection = false
     try {
       const params = { ...$dateRange, device: $selectedDevice }
       const data = await fetchTools(params)
-      tools = data.tools || []
+      if (!isLatest()) return
+      if (!Array.isArray(data?.tools)) throw new Error('Invalid tools response')
+      tools = data.tools
+      canClearSelection = true
     } catch {
-      tools = []
+      // Keep the last confirmed list and the user's selection on failure.
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
@@ -22,7 +32,7 @@
   $: $dateRange, $selectedDevice, loadTools()
 
   // Clear selection if the selected tool no longer has data
-  $: if (!loading && $selectedTool && !tools.some(t => t.tool === $selectedTool)) {
+  $: if (!loading && canClearSelection && $selectedTool && !tools.some(t => t.tool === $selectedTool)) {
     setTool('')
   }
 

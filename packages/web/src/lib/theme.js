@@ -1,10 +1,13 @@
-import { writable } from 'svelte/store'
+import { writable, get } from 'svelte/store'
 
 const THEME_KEY = 'aiusage-theme'
 
 function getStored() {
   if (typeof window === 'undefined') return 'system'
-  return localStorage.getItem(THEME_KEY) || 'system'
+  try {
+    const value = localStorage.getItem(THEME_KEY)
+    return ['system', 'light', 'dark'].includes(value) ? value : 'system'
+  } catch { return 'system' }
 }
 
 function getSystemTheme() {
@@ -34,17 +37,17 @@ export function initTheme() {
     resolvedTheme.set(theme)
   }
 
-  apply(getStored())
-
-  userPref.subscribe(pref => {
-    localStorage.setItem(THEME_KEY, pref)
+  const unsubscribe = userPref.subscribe(pref => {
+    try { localStorage.setItem(THEME_KEY, pref) } catch {}
     apply(pref)
   })
 
-  mq.addEventListener('change', () => {
-    const pref = getStored()
+  const onChange = () => {
+    const pref = get(userPref)
     if (pref === 'system') {
       apply('system')
     }
-  })
+  }
+  mq.addEventListener('change', onChange)
+  return () => { unsubscribe(); mq.removeEventListener('change', onChange) }
 }

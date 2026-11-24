@@ -11,8 +11,8 @@ export async function githubConnection(action, body = {}) {
   const response = await fetch(`/api/github/${action}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })
-  const result = await response.json()
-  if (!response.ok) throw new Error(result.error?.message || 'GitHub connection failed')
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result || typeof result !== 'object' || Array.isArray(result)) throw new Error(result?.error?.message || 'GitHub connection failed')
   return result
 }
 
@@ -26,20 +26,24 @@ async function apiFetch(url, { signal, method } = {}) {
     ? fetch(url, signal ? { method, signal } : { method })
     : signal ? fetch(url, { signal }) : fetch(url)
 
-  // Deduplicate in-flight requests
+  const load = () => request().then(async (response) => {
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: { message: 'API error' } }))
+      throw new Error(error?.error?.message || `HTTP ${response.status}`)
+    }
+    return response.json()
+  })
+
+  // A caller's cancellation never owns another caller's request; mutations
+  // also keep their own request/response instead of joining a GET by URL.
+  if (signal || (method && method.toUpperCase() !== 'GET')) return load()
   if (inflightRequests.has(url)) {
     return inflightRequests.get(url)
   }
 
-  const promise = request()
-    .then(async (response) => {
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: { message: 'API error' } }))
-        throw new Error(error.error?.message || `HTTP ${response.status}`)
-      }
-      return response.json()
-    })
-    .finally(() => inflightRequests.delete(url))
+  const promise = load().finally(() => {
+    if (inflightRequests.get(url) === promise) inflightRequests.delete(url)
+  })
 
   inflightRequests.set(url, promise)
   return promise
@@ -202,12 +206,12 @@ export async function fetchCloudSyncStatus(siteUrl) {
   try {
     const response = await fetch('/api/cli/sync/status')
     if (!response.ok) return { enabled: false }
-    return response.json()
+    return await response.json()
   } catch {
     try {
       const response = await fetch(`${siteUrl}/api/cli/sync/status`)
       if (!response.ok) return { enabled: false }
-      return response.json()
+      return await response.json()
     } catch {
       return { enabled: false }
     }

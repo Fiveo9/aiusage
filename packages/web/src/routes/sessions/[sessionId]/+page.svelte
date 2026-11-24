@@ -1,16 +1,21 @@
 <script>
   import '$lib/activity.css'
   import { page } from '$app/stores'
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { formatCost, formatTokens } from '$lib/stores.js'
   import { fetchSessionDetail } from '$lib/api.js'
   import { sessionLabel } from '$lib/session-title.js'
   import { t } from '$lib/i18n.js'
   import { ArrowLeft } from 'lucide-svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
   let loading = true
+  let mounted = false
+  const beginRequest = createRequestTracker()
+  onMount(() => { mounted = true })
+  onDestroy(() => { mounted = false; beginRequest() })
 
   function formatDateTime(ts) {
     return new Date(ts).toLocaleString()
@@ -33,9 +38,9 @@
     return `+${s % 1 === 0 ? s.toFixed(0) : s.toFixed(1)}s`
   }
 
-  function formatGap(ms) {
+  function formatGap(ms, translate) {
     const s = Math.round(ms / 1000)
-    return `${s}s ${$t('sessions.detail.gap')}`
+    return `${s}s ${translate('sessions.detail.gap')}`
   }
 
   function tokenPercent(part, total) {
@@ -43,19 +48,28 @@
     return Math.round((part / total) * 1000) / 10
   }
 
-  onMount(async () => {
-    const sessionId = $page.params.sessionId
-    const tool = $page.url.searchParams.get('tool') || ''
-    const device = $page.url.searchParams.get('device') || ''
-
+  async function loadData(sessionId, search) {
+    const isLatest = beginRequest()
+    const params = new URLSearchParams(search)
+    const tool = params.get('tool') || ''
+    const device = params.get('device') || ''
+    loading = true
+    error = null
     try {
-      data = await fetchSessionDetail(sessionId, { tool, device })
+      const response = await fetchSessionDetail(sessionId, { tool, device })
+      if (!isLatest() || !mounted) return
+      data = response
     } catch (e) {
+      if (!isLatest() || !mounted) return
       error = e instanceof Error ? e.message : 'Failed to load session'
+      data = null
     } finally {
-      loading = false
+      if (isLatest() && mounted) loading = false
     }
-  })
+  }
+  $: sessionId = $page.params.sessionId
+  $: search = $page.url.search
+  $: if (mounted) loadData(sessionId, search)
 </script>
 
 <svelte:head>
@@ -144,7 +158,7 @@
       <div class="metrics-grid">
         <div class="metric-cell">
           <span class="metric-label">{$t('sessions.detail.meta.cost')}</span>
-          <span class="metric-value mono accent">{formatCost(session.cost)}</span>
+          <span class="metric-value mono accent">{$formatCost(session.cost)}</span>
         </div>
         <div class="metric-cell">
           <span class="metric-label">{$t('sessions.detail.meta.totalTokens')}</span>
@@ -203,7 +217,7 @@
       {@const recordTotal = record.inputTokens + record.outputTokens + (record.cacheReadTokens || 0) + (record.cacheWriteTokens || 0) + (record.thinkingTokens || 0)}
       {#if i > 0 && record.ts - records[i - 1].ts > 1000}
         <div class="gap-divider">
-          <span class="gap-text">{formatGap(record.ts - records[i - 1].ts)}</span>
+          <span class="gap-text">{formatGap(record.ts - records[i - 1].ts, $t)}</span>
         </div>
       {/if}
 
@@ -214,7 +228,7 @@
             <span class="record-relts mono muted">{formatRelativeTs(record.ts - session.firstTs)}</span>
             <span class="record-model mono">{record.model}</span>
           </div>
-          <span class="record-cost mono accent">{formatCost(record.cost)}</span>
+          <span class="record-cost mono accent">{$formatCost(record.cost)}</span>
         </div>
 
         <div class="record-tokens">

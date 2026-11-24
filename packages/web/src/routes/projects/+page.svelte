@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import '$lib/activity.css'
   import { dateRange, selectedDevice, selectedTool, formatTokens, formatCost, formatNumber } from '$lib/stores.js'
   import { fetchProjects, activityDetailUrl } from '$lib/api.js'
@@ -7,21 +8,28 @@
   import DeviceSelector from '$lib/components/DeviceSelector.svelte'
   import ToolSelector from '$lib/components/ToolSelector.svelte'
   import { ChevronRight } from 'lucide-svelte'
+  import { createRequestTracker } from '$lib/sessions-paging.js'
 
   let data = null
   let error = null
   let loading = true
+  const beginRequest = createRequestTracker()
+  onDestroy(() => { beginRequest() })
 
   async function loadData() {
+    const isLatest = beginRequest()
     loading = true
     error = null
     try {
-      data = await fetchProjects({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      const response = await fetchProjects({ ...$dateRange, device: $selectedDevice, tool: $selectedTool })
+      if (!isLatest()) return
+      data = response
     } catch (e) {
+      if (!isLatest()) return
       error = e instanceof Error ? e.message : 'Failed to load data'
       data = null
     } finally {
-      loading = false
+      if (isLatest()) loading = false
     }
   }
 
@@ -82,7 +90,7 @@
           <div class="activity-stats">
             <span class="activity-stat"><span class="activity-stat-label">{$t('projects.sessions')}</span><span class="activity-stat-value mono">{formatNumber(proj.sessions)}</span></span>
             <span class="activity-stat"><span class="activity-stat-label">{$t('projects.tokens')}</span><span class="activity-stat-value mono">{formatTokens(proj.tokens)}</span></span>
-            <span class="activity-stat"><span class="activity-stat-label">{$t('projects.cost')}</span><span class="activity-stat-value mono accent">{formatCost(proj.cost)}</span></span>
+            <span class="activity-stat"><span class="activity-stat-label">{$t('projects.cost')}</span><span class="activity-stat-value mono accent">{$formatCost(proj.cost)}</span></span>
             <span class="activity-stat"><span class="activity-stat-label">{$t('projects.share')}</span><span class="activity-stat-value mono">{proj.percentage.toFixed(1)}%</span></span>
           </div>
           <span class="activity-chevron" aria-hidden="true"><ChevronRight size={15} strokeWidth={1.85} /></span>

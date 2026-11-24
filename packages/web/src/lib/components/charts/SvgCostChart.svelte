@@ -82,11 +82,11 @@
           class:baseline={tick === 0}
         />
         <text x={PAD_LEFT - 8} y={y + 3.5} text-anchor="end" class="axis-label numeric">
-          {formatCost(tick)}
+          {$formatCost(tick)}
         </text>
       {/each}
 
-      {#if hoveredIdx != null}
+      {#if hoveredDay}
         <rect
           x={PAD_LEFT + hoveredIdx * slotW}
           y={PAD_TOP}
@@ -106,8 +106,8 @@
       {#each days as day, i (day.date)}
         {@const cx = PAD_LEFT + (i + 0.5) * slotW}
         {@const bx = cx - barW / 2}
-        {@const barY = yPos(day.cost || 0)}
-        {@const barH = Math.max((day.cost || 0) > 0 ? 2 : 0, PAD_TOP + innerH - barY)}
+        {@const barH = Math.min(innerH, Math.max((day.cost || 0) > 0 ? 2 : 0, PAD_TOP + innerH - yPos(day.cost || 0)))}
+        {@const barY = PAD_TOP + innerH - barH}
         {#if barH > 0}
           <rect
             x={bx}
@@ -117,7 +117,7 @@
             rx={barW >= 8 ? 2.5 : 1.5}
             fill="var(--accent)"
             class="bar-rect"
-            class:dimmed={hoveredIdx != null && hoveredIdx !== i}
+            class:dimmed={hoveredDay && hoveredIdx !== i}
           />
         {/if}
 
@@ -157,7 +157,7 @@
         />
         <g transform="translate({containerWidth - PAD_RIGHT - 4}, {Math.max(PAD_TOP + 10, avgY - 5)})">
           <text text-anchor="end" class="avg-label numeric">
-            {$t('common.dailyAvg')} {formatCost(avgCost)}
+            {$t('common.dailyAvg')} {$formatCost(avgCost)}
           </text>
         </g>
       {/if}
@@ -170,7 +170,7 @@
         style="left: {hoverCenterX}px; top: {hoverY}px;"
       >
         <div class="tt-date numeric">{hoveredDay.date}</div>
-        <div class="tt-cost numeric">{formatCost(hoveredDay.cost)}</div>
+        <div class="tt-cost numeric">{$formatCost(hoveredDay.cost)}</div>
         {#if totalCost > 0}
           <div class="tt-share numeric">{$t('common.share')}: {hoverShare}%</div>
         {/if}

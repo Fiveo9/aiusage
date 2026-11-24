@@ -10,6 +10,9 @@
   let activeSection = 'general'
   let loading = true
   let loadError = null
+  let disposed = false
+  let generalSavedTimer = null
+  let syncSavedTimer = null
 
   // Unified form state for General + Data + Currency
   let general = {
@@ -46,6 +49,7 @@
   let syncRunning = false
   let cloudSyncAvailable = true
   let syncPollTimer = null
+  let syncStatusRequest = null
 
   // The status is the one the server reports for the configured target: it
   // already selects it, and only it knows the target key (`s3:<bucket>` plus
@@ -62,58 +66,81 @@
   let ghRepositories = []
   let ghBusy = false
   let ghTimer = null
+  let ghEpoch = 0
 
   async function connectGitHub() {
+    if (disposed || ghBusy) return
     ghBusy = true; syncError = ''
     try {
       await cancelGitHub()
-      ghConnection = await githubConnection('start')
+      if (disposed) return
+      const epoch = ghEpoch
+      const connection = await githubConnection('start')
+      if (disposed || epoch !== ghEpoch) {
+        if (connection?.sessionId) await githubConnection('cancel', { sessionId: connection.sessionId }).catch(() => {})
+        return
+      }
+      ghConnection = connection
       ghTimer = setTimeout(pollGitHub, 5000)
-    } catch (e) { syncError = e.message }
-    finally { ghBusy = false }
+    } catch (e) { if (!disposed) syncError = e.message }
+    finally { if (!disposed) ghBusy = false }
   }
 
   async function pollGitHub() {
     const connection = ghConnection
-    if (!connection) return
+    if (disposed || !connection) return
     try {
       const result = await githubConnection('poll', { sessionId: connection.sessionId })
-      if (ghConnection !== connection) return
+      if (disposed || ghConnection !== connection) return
       if (result.status === 'pending') ghTimer = setTimeout(pollGitHub, 5000)
       else {
         ghConnection = { ...connection, login: result.login }
         await refreshGitHubRepositories()
       }
-    } catch (e) { syncError = e.message; await cancelGitHub() }
+    } catch (e) {
+      if (disposed || ghConnection !== connection) return
+      syncError = e.message; await cancelGitHub()
+    }
   }
 
   async function refreshGitHubRepositories() {
+    const connection = ghConnection
+    if (disposed || !connection) return
     ghBusy = true
     try {
-      const result = await githubConnection('repositories', { sessionId: ghConnection.sessionId })
+      const result = await githubConnection('repositories', { sessionId: connection.sessionId })
+      if (disposed || ghConnection !== connection) return
       ghRepositories = result.repositories
-    } catch (e) { syncError = e.message }
-    finally { ghBusy = false }
+    } catch (e) { if (!disposed && ghConnection === connection) syncError = e.message }
+    finally { if (!disposed) ghBusy = false }
   }
 
   async function selectGitHubRepository(repo) {
+    const connection = ghConnection
+    if (disposed || !connection || ghBusy) return
+    const confirmedSnapshot = JSON.parse(savedSyncSnapshot || syncSnapshot())
     ghBusy = true; syncError = ''
     try {
-      await githubConnection('connect', { sessionId: ghConnection.sessionId, repo })
+      await githubConnection('connect', { sessionId: connection.sessionId, repo })
+      if (disposed || ghConnection !== connection) return
       syncData.repo = repo; ghAppIsSet = true; ghToken = ''; ghTokenIsSet = false
+      prevRepo = repo
+      // This receipt confirms the target, not unrelated automatic-sync drafts.
+      savedSyncSnapshot = JSON.stringify({ ...confirmedSnapshot, repo: repo.trim(), ghTokenPending: false })
       ghConnection = null; ghRepositories = []
       notifySettingsUpdated()
-    } catch (e) { syncError = e.message }
-    finally { ghBusy = false }
+    } catch (e) { if (!disposed) syncError = e.message }
+    finally { if (!disposed) ghBusy = false }
   }
 
   async function cancelGitHub() {
+    ghEpoch += 1
     clearTimeout(ghTimer)
+    ghTimer = null
     const connection = ghConnection
     ghConnection = null; ghRepositories = []
     if (connection) await githubConnection('cancel', { sessionId: connection.sessionId }).catch(() => {})
   }
-  onDestroy(() => { void cancelGitHub() })
 
   // S3 credential state — two separate credentials required by sync.ts
   let s3AkidValue = ''
@@ -170,10 +197,10 @@
     ghAppIsSet = false; ghTokenIsSet = false; s3AkidIsSet = false; s3SakIsSet = false
     try {
       const status = await fetchCredentialStatus(target)
-      if (target.backend !== syncData.backend || target.repo !== syncData.repo || target.bucket !== syncData.bucket) return
+      if (disposed || target.backend !== syncData.backend || target.repo !== syncData.repo || target.bucket !== syncData.bucket) return
       applyCredentialStatus(status)
     } catch (e) {
-      syncError = e instanceof Error ? e.message : 'Failed to load credential status'
+      if (!disposed) syncError = e instanceof Error ? e.message : 'Failed to load credential status'
     }
   }
 
@@ -240,6 +267,7 @@
   onMount(async () => {
     try {
       const [cfg, toolsResult] = await Promise.all([fetchConfig(), fetchDetectedTools()])
+      if (disposed) return
       general = {
         device: cfg.device ?? '',
         weekStart: cfg.weekStart ?? 1,
@@ -280,47 +308,53 @@
         cachedRateFetchedAt = cfg.exchangeRateCache.fetchedAt
       }
 
-      loadSyncStatusData()
+      void loadSyncStatusData()
       if (cfg.siteUrl) {
-        fetchCloudSyncStatus(cfg.siteUrl).then(s => { cloudSyncAvailable = s.enabled })
+        fetchCloudSyncStatus(cfg.siteUrl).then(s => { if (!disposed) cloudSyncAvailable = s.enabled })
       }
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Failed to load'
+      if (!disposed) loadError = e instanceof Error ? e.message : 'Failed to load'
     } finally {
-      loading = false
+      if (!disposed) loading = false
     }
   })
 
   async function loadSyncStatusData() {
-    try {
-      const data = await fetchSyncStatus()
-      syncStatusData = data.status
-      syncRunning = Boolean(syncStatusData?.isRunning)
-    } catch {
-      syncStatusData = null
-    }
+    if (disposed) return
+    if (syncStatusRequest) return syncStatusRequest
+    syncStatusRequest = (async () => {
+      try {
+        const data = await fetchSyncStatus()
+        if (disposed) return
+        syncStatusData = data.status
+        syncRunning = Boolean(syncStatusData?.isRunning)
+        if (syncRunning) startSyncPolling()
+        else stopSyncPolling()
+      } catch {
+        if (!disposed) syncStatusData = null
+      }
+    })()
+    try { await syncStatusRequest }
+    finally { syncStatusRequest = null }
   }
 
   async function handleSyncFromSettings() {
+    if (disposed || syncRunning) return
     syncRunning = true
     try {
       await triggerSync()
+      if (disposed) return
       startSyncPolling()
     } catch {
+      if (disposed) return
       syncRunning = false
       await loadSyncStatusData()
     }
   }
 
   function startSyncPolling() {
-    stopSyncPolling()
-    syncPollTimer = setInterval(async () => {
-      await loadSyncStatusData()
-      if (!syncStatusData?.isRunning) {
-        stopSyncPolling()
-        syncRunning = false
-      }
-    }, 800)
+    if (disposed || syncPollTimer) return
+    syncPollTimer = setInterval(() => { void loadSyncStatusData() }, 800)
   }
 
   function stopSyncPolling() {
@@ -330,13 +364,14 @@
     }
   }
 
-  function formatSyncTime(ts) {
-    if (!ts) return $t('settings.syncNever')
+  function formatSyncTime(ts, translate) {
+    if (!ts) return translate('settings.syncNever')
     const d = new Date(ts)
     return d.toLocaleString()
   }
 
   async function saveGeneral() {
+    if (disposed || generalSaving) return
     generalSaving = true; generalError = ''
     try {
       // Convert user-facing USD→CNY to internal CNY→USD
@@ -351,6 +386,7 @@
         displayCurrency: general.displayCurrency,
         exchangeRate: internalRate,
       })
+      if (disposed) return
       notifySettingsUpdated({
         refreshInterval: general.refreshInterval ? Number(general.refreshInterval) : null,
         device: general.device || null,
@@ -363,15 +399,17 @@
         exchangeRate.set(cachedRate)
       }
       generalSaved = true
-      setTimeout(() => { generalSaved = false }, 2000)
+      clearTimeout(generalSavedTimer)
+      generalSavedTimer = setTimeout(() => { generalSaved = false; generalSavedTimer = null }, 2000)
     } catch (e) {
-      generalError = e instanceof Error ? e.message : 'Save failed'
+      if (!disposed) generalError = e instanceof Error ? e.message : 'Save failed'
     } finally {
-      generalSaving = false
+      if (!disposed) generalSaving = false
     }
   }
 
   async function saveSync() {
+    if (disposed || syncSaving) return false
     syncSaving = true; syncError = ''
     try {
       syncData.repo = syncData.repo.trim()
@@ -427,6 +465,7 @@
       if (Object.keys(credentials).length > 0) payload.syncCredentials = credentials
 
       await saveConfig(payload)
+      if (disposed) return false
 
       // Update isSet flags and clear entered values (don't expose creds in memory longer than needed)
       if (syncData.backend === 'github') {
@@ -449,21 +488,24 @@
 
       savedSyncSnapshot = syncSnapshot()
       syncSaved = true
-      setTimeout(() => { syncSaved = false }, 2000)
+      clearTimeout(syncSavedTimer)
+      syncSavedTimer = setTimeout(() => { syncSaved = false; syncSavedTimer = null }, 2000)
       await loadSyncStatusData()
       return true
     } catch (e) {
-      syncError = e instanceof Error ? e.message : 'Save failed'
+      if (!disposed) syncError = e instanceof Error ? e.message : 'Save failed'
       return false
     } finally {
-      syncSaving = false
+      if (!disposed) syncSaving = false
     }
   }
 
   async function handleRefreshRate() {
+    if (disposed || rateRefreshing) return
     rateRefreshing = true
     try {
       const result = await refreshExchangeRate()
+      if (disposed) return
       cachedRate = result.rate
       cachedRateFetchedAt = result.fetchedAt
       // Update store if no manual override
@@ -471,9 +513,9 @@
         exchangeRate.set(result.rate)
       }
     } catch (e) {
-      generalError = e instanceof Error ? e.message : 'Refresh failed'
+      if (!disposed) generalError = e instanceof Error ? e.message : 'Refresh failed'
     } finally {
-      rateRefreshing = false
+      if (!disposed) rateRefreshing = false
     }
   }
 
@@ -534,7 +576,11 @@
   function toggleS3Sak() { s3SakVisible = !s3SakVisible }
 
   onDestroy(() => {
+    disposed = true
     stopSyncPolling()
+    clearTimeout(generalSavedTimer)
+    clearTimeout(syncSavedTimer)
+    void cancelGitHub()
   })
 
   function btnLabel(saving, saved, t_save, t_saved) {
@@ -972,12 +1018,12 @@
           <div class="sync-status-grid">
             <div class="sync-status-item">
               <span class="sync-status-label">{$t('settings.syncLastSync')}</span>
-              <span class="sync-status-value numeric">{formatSyncTime(syncStatusData?.lastSyncAt)}</span>
+              <span class="sync-status-value numeric">{formatSyncTime(syncStatusData?.lastSyncAt, $t)}</span>
             </div>
             {#if syncStatusData?.nextSyncAt}
               <div class="sync-status-item">
                 <span class="sync-status-label">{$t('settings.syncNextSync')}</span>
-                <span class="sync-status-value numeric">{formatSyncTime(syncStatusData.nextSyncAt)}</span>
+                <span class="sync-status-value numeric">{formatSyncTime(syncStatusData.nextSyncAt, $t)}</span>
               </div>
             {/if}
             <div class="sync-status-item">

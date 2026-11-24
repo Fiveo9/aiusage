@@ -1,11 +1,21 @@
-import { writable, get } from 'svelte/store'
+import { writable, derived } from 'svelte/store'
 
-function persisted(key, defaultValue) {
+function sameStoredType(value, defaultValue) {
+  if (defaultValue === null) return value === null
+  if (Array.isArray(defaultValue)) return Array.isArray(value)
+  if (typeof defaultValue === 'object') return value !== null && typeof value === 'object' && !Array.isArray(value)
+  return typeof value === typeof defaultValue && (typeof value !== 'number' || Number.isFinite(value))
+}
+
+function persisted(key, defaultValue, validate = value => sameStoredType(value, defaultValue)) {
   if (typeof window === 'undefined') return writable(defaultValue)
   let initial = defaultValue
   try {
     const stored = localStorage.getItem(key)
-    if (stored !== null) initial = JSON.parse(stored)
+    if (stored !== null) {
+      const parsed = JSON.parse(stored)
+      if (validate(parsed)) initial = parsed
+    }
   } catch {}
   const store = writable(initial)
   store.subscribe(value => {
@@ -27,7 +37,7 @@ export function setDevice(deviceInstanceId) {
 
 export const selectedTool = persisted('aiusage-selectedTool', '') // '' = all tools, value = tool name
 
-export const modelDisplayMode = persisted('aiusage-modelDisplayMode', 'full') // 'full' | 'merged'
+export const modelDisplayMode = persisted('aiusage-modelDisplayMode', 'full', value => value === 'full' || value === 'merged') // 'full' | 'merged'
 
 export function setTool(tool) {
   selectedTool.set(tool)
@@ -39,7 +49,8 @@ export const recalcStatus = writable('idle')
 export const pollingInterval = writable(30000) // 30 seconds default
 
 export const displayCurrency = writable('USD')
-export const exchangeRate = writable(0.137) // must match FALLBACK_RATE in core/src/exchange-rate.ts
+const FALLBACK_RATE = 0.137 // USD per CNY; must match core/src/exchange-rate.ts.
+export const exchangeRate = writable(FALLBACK_RATE)
 
 export function setRange(range) {
   dateRange.set({ range, month: undefined })
@@ -61,15 +72,18 @@ export function formatNumber(n) {
   return n.toLocaleString()
 }
 
-export function formatCost(n) {
-  const curr = get(displayCurrency)
-  if (curr === 'CNY') {
-    const rate = get(exchangeRate)
-    const cny = n / rate
-    return cny < 0.01 ? `¥${cny.toFixed(4)}` : `¥${cny.toFixed(2)}`
+export const formatCost = derived([displayCurrency, exchangeRate], ([currency, configuredRate]) => {
+  const numericRate = typeof configuredRate === 'number' || typeof configuredRate === 'string' ? Number(configuredRate) : NaN
+  const rate = Number.isFinite(numericRate) && numericRate > 0 ? numericRate : FALLBACK_RATE
+  return (value) => {
+    const amount = typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : NaN
+    if (!Number.isFinite(amount)) return '—'
+    const converted = currency === 'CNY' ? amount / rate : amount
+    if (!Number.isFinite(converted)) return '—'
+    const digits = Math.abs(converted) < 0.01 ? 4 : 2
+    return `${currency === 'CNY' ? '¥' : '$'}${converted.toFixed(digits)}`
   }
-  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`
-}
+})
 
 export function formatTokens(n) {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`

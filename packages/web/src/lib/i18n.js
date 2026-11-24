@@ -72,6 +72,7 @@ const translations = {
       totalSessions: 'Sessions',
       inputTokens: 'Input',
       outputTokens: 'Output',
+      outputWithThinking: 'Output + Thinking',
       cacheRead: 'Cache Read',
       cacheWrite: 'Cache Write',
       byTool: 'By AI Assistant',
@@ -238,6 +239,7 @@ const translations = {
       actions: 'Actions',
       edit: 'Edit',
       save: 'Save',
+      invalidRates: 'Rates must be finite, non-negative numbers.',
       cancel: 'Cancel',
       reset: 'Reset',
       recalc: 'Recalculate Costs',
@@ -484,6 +486,8 @@ const translations = {
       backHome: 'Back to public home',
       checking: 'Checking access...',
       loginFailed: 'Login failed',
+      statusFailed: 'Could not verify dashboard access. Please retry.',
+      retry: 'Retry',
     },
     support: {
       title: 'Service & Support',
@@ -584,6 +588,7 @@ const translations = {
       totalSessions: '会话数',
       inputTokens: '输入',
       outputTokens: '输出',
+      outputWithThinking: '输出与推理',
       cacheRead: '缓存读取',
       cacheWrite: '缓存写入',
       byTool: '按 AI 助手',
@@ -750,6 +755,7 @@ const translations = {
       actions: '操作',
       edit: '编辑',
       save: '保存',
+      invalidRates: '费率必须为有限的非负数。',
       cancel: '取消',
       reset: '重置',
       recalc: '重新计算费用',
@@ -996,6 +1002,8 @@ const translations = {
       backHome: '返回公开首页',
       checking: '正在检查访问权限...',
       loginFailed: '登录失败',
+      statusFailed: '无法确认仪表盘访问权限，请重试。',
+      retry: '重试',
     },
     support: {
       title: '服务与支持',
@@ -1029,7 +1037,10 @@ const translations = {
 
 function getStoredLang() {
   if (typeof window === 'undefined') return 'en'
-  return localStorage.getItem('aiusage-lang') || 'en'
+  try {
+    const value = localStorage.getItem('aiusage-lang')
+    return value === 'zh' || value === 'en' ? value : 'en'
+  } catch { return 'en' }
 }
 
 export const lang = writable(getStoredLang())
@@ -1037,7 +1048,9 @@ export const lang = writable(getStoredLang())
 export function toggleLang() {
   lang.update(current => {
     const next = current === 'en' ? 'zh' : 'en'
-    if (typeof window !== 'undefined') localStorage.setItem('aiusage-lang', next)
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem('aiusage-lang', next) } catch {}
+    }
     return next
   })
 }

@@ -52,20 +52,24 @@ function existingOpenCodeDbs(env: NodeJS.ProcessEnv = process.env): string[] {
 
 // ── File helpers ─────────────────────────────────────────────────────
 
-function findJsonlFiles(dir: string): string[] {
+function findFiles(dir: string, matchesName: (name: string) => boolean): string[] {
   const results: string[] = []
   try {
     const entries = readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
-        results.push(...findJsonlFiles(fullPath))
-      } else if (entry.isFile() && extname(entry.name) === '.jsonl') {
+        results.push(...findFiles(fullPath, matchesName))
+      } else if (entry.isFile() && matchesName(entry.name)) {
         results.push(fullPath)
       }
     }
   } catch {}
   return results
+}
+
+function findJsonlFiles(dir: string): string[] {
+  return findFiles(dir, name => extname(name) === '.jsonl')
 }
 
 function findQoderSegmentFiles(dir: string): string[] {
@@ -1062,51 +1066,15 @@ function findCursorTranscriptFiles(dir: string): string[] {
 }
 
 function findJsonFiles(dir: string): string[] {
-  const results: string[] = []
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        results.push(...findJsonFiles(fullPath))
-      } else if (entry.isFile() && extname(entry.name) === '.json') {
-        results.push(fullPath)
-      }
-    }
-  } catch {}
-  return results
+  return findFiles(dir, name => extname(name) === '.json')
 }
 
 function findZipFiles(dir: string): string[] {
-  const results: string[] = []
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        results.push(...findZipFiles(fullPath))
-      } else if (entry.isFile() && extname(entry.name) === '.zip') {
-        results.push(fullPath)
-      }
-    }
-  } catch {}
-  return results
+  return findFiles(dir, name => extname(name) === '.zip')
 }
 
 function findKelivoDatabaseFiles(dir: string): string[] {
-  const results: string[] = []
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        results.push(...findKelivoDatabaseFiles(fullPath))
-      } else if (entry.isFile() && isKelivoDatabaseFile(entry.name)) {
-        results.push(fullPath)
-      }
-    }
-  } catch {}
-  return results
+  return findFiles(dir, isKelivoDatabaseFile)
 }
 
 function normalizeQoderPath(source: string): string[] {

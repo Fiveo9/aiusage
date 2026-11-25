@@ -1,3 +1,7 @@
+/**
+* @param {{ sessionTitle?: any; sessionId?: any; }} session
+* @param {string} unnamed
+*/
 export function sessionLabel(session, unnamed) {
   const title = typeof session?.sessionTitle === 'string' ? session.sessionTitle.trim() : ''
   if (title) return title

@@ -1,4 +1,5 @@
-export const FALLBACK_RATE = 0.137  // CNY → USD
+/** USD per CNY (CNY → USD). This is the inverse of the widget's USD/CNY feed. */
+export const FALLBACK_RATE = 0.137
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000  // 24 hours
 
 export interface ExchangeRateCache {
@@ -35,10 +36,12 @@ export async function fetchExchangeRate(): Promise<number | null> {
   }
 }
 
+/** `rate` is USD per CNY, not CNY per USD. */
 export function convertToUSD(cny: number, rate: number): number {
   return cny * rate
 }
 
+/** `rate` is USD per CNY: USD → CNY divides rather than multiplies. */
 export function convertFromUSD(usd: number, rate: number): number {
   return usd / rate
 }

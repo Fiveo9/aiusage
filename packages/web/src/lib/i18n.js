@@ -1035,6 +1035,7 @@ const translations = {
   },
 }
 
+/** @returns {'en' | 'zh'} */
 function getStoredLang() {
   if (typeof window === 'undefined') return 'en'
   try {
@@ -1057,8 +1058,10 @@ export function toggleLang() {
 
 export const t = derived(lang, ($lang) => {
   const dict = translations[$lang] || translations.en
-  return (key) => {
+  return (/** @type {string} */ key) => {
     const parts = key.split('.')
+    // Dot-separated translation paths traverse heterogeneous nested dictionaries.
+    /** @type {any} */
     let result = dict
     for (const part of parts) {
       result = result?.[part]

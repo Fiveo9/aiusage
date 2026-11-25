@@ -583,7 +583,7 @@
                   </div>
                   <div class="list-item-actions">
                     <label class="toggle-label" title={zh ? '禁用 AIUsage Cloud' : 'Disable AIUsage Cloud'}>
-                      <input type="checkbox" checked={user.cloud_sync_enabled} on:change={() => toggleCloudSync(user.id, user.username, user.cloud_sync_enabled)} disabled={!!actionLoading} />
+                      <input type="checkbox" checked={user.cloud_sync_banned} on:change={() => toggleCloudSync(user.id, user.username, user.cloud_sync_banned)} disabled={!!actionLoading} />
                       <span class="toggle-text">{zh ? '禁用 Cloud' : 'Ban Cloud'}</span>
                     </label>
                     {#if user.status === 'active'}

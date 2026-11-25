@@ -20,6 +20,7 @@ import { isKelivoDatabaseFile, isKelivoSourceFile, runParseKelivo } from './pars
 import { runParseGoose } from './parse-goose.js'
 import { runParseZed } from './parse-zed.js'
 import { runParseKiro } from './parse-kiro.js'
+import { normalizeKiroModel } from './kiro-model.js'
 import { runParseZcode } from './parse-zcode.js'
 import { runParseTrae } from './parse-trae.js'
 import { runParseCodeBuddy } from './parse-codebuddy.js'
@@ -204,17 +205,6 @@ function parseUiMessagesFile(options: {
   }
 
   return { records, errors }
-}
-
-function normalizeKiroModel(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) return 'kiro-agent'
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/^(anthropic\.|openai\.|aws\.)/, '')
-    .replace(/:\d+$/, '')
-    .replace(/-\d{8}-v\d+(?:-\d+)?$/i, '')
 }
 
 /**
@@ -1363,19 +1353,6 @@ export async function runParse(db: Database.Database, filterTool?: string, optio
         if (result.nextCursor) {
           wm.setKiloCursor(result.nextCursor)
           wm.save()
-        }
-
-        // 输出KiloCode统计信息
-        if (result.records.length > 0) {
-          const inputTokens = result.records.reduce((sum, r) => sum + r.inputTokens, 0)
-          const outputTokens = result.records.reduce((sum, r) => sum + r.outputTokens, 0)
-          const cacheReadTokens = result.records.reduce((sum, r) => sum + r.cacheReadTokens, 0)
-          const cacheWriteTokens = result.records.reduce((sum, r) => sum + r.cacheWriteTokens, 0)
-          const thinkingTokens = result.records.reduce((sum, r) => sum + r.thinkingTokens, 0)
-          const totalCost = result.records.reduce((sum, r) => sum + r.cost, 0)
-          console.log(`[KiloCode] Parsed ${result.records.length} records`)
-          console.log(`[KiloCode] Input: ${inputTokens.toLocaleString()}, Output: ${outputTokens.toLocaleString()}, CacheRead: ${cacheReadTokens.toLocaleString()}, CacheWrite: ${cacheWriteTokens.toLocaleString()}, Thinking: ${thinkingTokens.toLocaleString()}`)
-          console.log(`[KiloCode] Total Cost: ${totalCost.toFixed(4)} USD`)
         }
 
         errors.push(...result.errors)

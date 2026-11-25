@@ -14,9 +14,12 @@ export function createRequestTracker() {
 }
 
 /**
- * The page to show after a response. A page past the end comes back empty with
- * a non-zero total (the list shrank under it): go to the last page that exists.
- */
+* The page to show after a response. A page past the end comes back empty with
+* a non-zero total (the list shrank under it): go to the last page that exists.
+* @param {{ sessions: any; total: any; } | null} response
+* @param {number} page
+* @param {number} pageSize
+*/
 export function resolvePage(response, page, pageSize) {
   if (response && !response.sessions.length && response.total > 0 && page > 1) {
     return Math.ceil(response.total / pageSize)

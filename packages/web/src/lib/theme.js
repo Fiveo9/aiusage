@@ -1,12 +1,14 @@
 import { writable, get } from 'svelte/store'
 
 const THEME_KEY = 'aiusage-theme'
+/** @typedef {'system' | 'light' | 'dark'} ThemePreference */
 
+/** @returns {ThemePreference} */
 function getStored() {
   if (typeof window === 'undefined') return 'system'
   try {
     const value = localStorage.getItem(THEME_KEY)
-    return ['system', 'light', 'dark'].includes(value) ? value : 'system'
+    return ['system', 'light', 'dark'].includes(/** @type {string} */ (value)) ? /** @type {ThemePreference} */ (value) : 'system'
   } catch { return 'system' }
 }
 
@@ -31,6 +33,9 @@ export function initTheme() {
 
   const mq = window.matchMedia('(prefers-color-scheme: dark)')
 
+  /**
+* @param {ThemePreference} pref
+*/
   function apply(pref) {
     const theme = pref === 'system' ? getSystemTheme() : pref
     document.documentElement.setAttribute('data-theme', theme)

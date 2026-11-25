@@ -1,6 +1,9 @@
 import type Database from 'better-sqlite3'
 
 export function migrateV7(db: Database.Database): void {
+  // Compatibility-only cache tables from the retired aggregate/leaderboard
+  // design. Keep the historical migration and any user data; live dashboard
+  // queries now read records/activity views instead of populating these caches.
   // Local aggregate cache for dashboard performance
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_daily_aggregates (

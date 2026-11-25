@@ -1,3 +1,4 @@
+/** @param {{ pathname: string, authEnabled: boolean, authenticated: boolean, authLoading: boolean, authFailed?: boolean }} state */
 export function getAuthShellState({ pathname, authEnabled, authenticated, authLoading, authFailed = false }) {
   const isHome = pathname === '/'
   if (authLoading) return isHome ? 'public-home' : 'loading'

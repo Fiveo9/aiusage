@@ -8,6 +8,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./format": {
+      "types": "./dist/format.d.ts",
+      "import": "./dist/format.js"
+    },
+    "./exchange-rate": {
+      "types": "./dist/exchange-rate.d.ts",
+      "import": "./dist/exchange-rate.js"
     }
   },
   "engines": {

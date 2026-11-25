@@ -1,3 +1,7 @@
+/** @typedef {'callCount' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'thinkingTokens' | 'totalTokens' | 'totalCost'} UsageField */
+/** @typedef {{ model: string, provider?: string, percentage?: number } & Partial<Record<UsageField, number>>} ModelUsage */
+/** @typedef {{ model: string, providers: Set<string>, originalModels: Set<string> } & Record<UsageField, number>} ModelAccumulator */
+/** @type {UsageField[]} */
 const usageFields = [
   'callCount',
   'inputTokens',
@@ -9,17 +13,25 @@ const usageFields = [
   'totalCost',
 ]
 
+/**
+* @param {string} model
+*/
 export function modelDisplayName(model, mode = 'full') {
   if (mode !== 'merged') return model
   // Keep an empty trailing segment intact rather than producing a blank name.
   return model.slice(model.lastIndexOf('/') + 1) || model
 }
 
+/** @param {ReadonlyArray<ModelUsage>} [models]
+ * @param {string} [mode]
+ * @returns {Array<ModelUsage & { originalModels: string[] }>}
+ */
 export function groupModels(models = [], mode = 'full') {
   if (mode !== 'merged') {
     return models.map(row => ({ ...row, originalModels: [row.model] }))
   }
 
+  /** @type {Map<string, ModelAccumulator>} */
   const groups = new Map()
   let totalTokens = 0
   for (const row of models) {
@@ -30,7 +42,7 @@ export function groupModels(models = [], mode = 'full') {
         model: name,
         providers: new Set(),
         originalModels: new Set(),
-        ...Object.fromEntries(usageFields.map(field => [field, 0])),
+        .../** @type {Record<UsageField, number>} */ (Object.fromEntries(usageFields.map(field => [field, 0]))),
       }
       groups.set(name, group)
     }
@@ -49,7 +61,12 @@ export function groupModels(models = [], mode = 'full') {
   }))
 }
 
+/** @param {Readonly<Record<string, number>>} [byModel]
+ * @param {string} [mode]
+ * @returns {Record<string, number>}
+ */
 export function groupModelCosts(byModel = {}, mode = 'full') {
+  /** @type {Map<string, number>} */
   const groups = new Map()
   for (const [model, cost] of Object.entries(byModel)) {
     const name = modelDisplayName(model, mode)

@@ -18,7 +18,7 @@ describe('settings source grouping', () => {
 
     const groups = splitSettingsSources(tools)
 
-    expect(groups.manualImportTools.map((tool) => tool.sourceKey)).toEqual(['kelivo'])
+    expect(groups.manualImportTools.map((tool: { sourceKey: any }) => tool.sourceKey)).toEqual(['kelivo'])
     expect(groups.manualImportTools[0].lastImportedAt).toBe(1770000000000)
     expect(groups.activeDetectedTools.map((tool) => tool.sourceKey)).toEqual(['claude-code'])
     expect(groups.notFoundDetectedTools.map((tool) => tool.sourceKey)).toEqual(['cursor'])

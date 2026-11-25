@@ -18,6 +18,10 @@ function widget(extra = {}) {
     saveSettings: vi.fn(async (value: unknown) => value), resizeWindow() {},
     onDataUpdate: vi.fn(() => () => {}), onInstallStatus: vi.fn(() => () => {}), onSetupStatus: vi.fn(() => () => {}), ...extra }
 }
+it('uses the real shared formatter for billion-scale totals', () => {
+  const rendered = view('App', {}, '{ formatTokens }')
+  expect(rendered.reports.at(-1).formatTokens(2_000_000_000)).toBe('2.0B')
+})
 it('resets loading on a failed renderer refresh', async () => {
   vi.stubGlobal('window', { widget: widget({ getData: async () => { throw Error('synthetic unavailable') } }) })
   const rendered = view('App', {}, '{ refresh, loading }')

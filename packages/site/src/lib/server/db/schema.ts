@@ -649,5 +649,20 @@ const migrations = [
       await tx`CREATE INDEX IF NOT EXISTS idx_users_created_desc ON users(created_at DESC)`
       await tx`CREATE INDEX IF NOT EXISTS idx_cloud_usage_active_model ON cloud_usage_records(model) WHERE deleted_at IS NULL`
     }
+  },
+  {
+    version: 23,
+    name: 'cloud_ban_name_and_retired_leaderboard_metadata',
+    up: async (tx: postgres.TransactionSql) => {
+      // v13 already made true mean banned. Rename only: do not flip/reset
+      // existing bans or touch user_sync_settings.cloud_sync_enabled.
+      await tx`ALTER TABLE users RENAME COLUMN cloud_sync_enabled TO cloud_sync_banned`
+      // The product no longer exposes a leaderboard. Preserve historical
+      // data and compatibility migrations; this is metadata, not a DROP.
+      await tx`COMMENT ON TABLE leaderboard_metrics IS 'Retired leaderboard data retained for compatibility and audit; not a public leaderboard'`
+      await tx`COMMENT ON TABLE user_leaderboard_settings IS 'Retired leaderboard preferences retained for compatibility'`
+      await tx`COMMENT ON COLUMN users.leaderboard_visibility IS 'Deprecated leaderboard compatibility field'`
+      await tx`COMMENT ON COLUMN users.leaderboard_anonymous IS 'Deprecated leaderboard compatibility field'`
+    }
   }
 ]

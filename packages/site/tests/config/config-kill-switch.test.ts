@@ -29,7 +29,7 @@ const db = vi.hoisted(() => {
       return Promise.resolve([])
     }
     // checkCloudSyncAccess past the kill switch: no such user.
-    if (text.startsWith('SELECT cloud_sync_enabled')) return Promise.resolve([])
+    if (text.startsWith('SELECT cloud_sync_banned')) return Promise.resolve([])
     throw new Error(`unexpected statement: ${text}`)
   }
   return { state, sql }

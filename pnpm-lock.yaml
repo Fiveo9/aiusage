@@ -146,6 +146,9 @@ importers:
         specifier: ^1.0.1
         version: 1.0.1(svelte@4.2.20)
     devDependencies:
+      '@aiusage/core':
+        specifier: workspace:*
+        version: link:../core
       '@sveltejs/adapter-static':
         specifier: ~3.0.0
         version: 3.0.10(@sveltejs/kit@2.15.3(@sveltejs/vite-plugin-svelte@3.1.2(svelte@4.2.20)(vite@5.4.21(@types/node@25.7.0)))(svelte@4.2.20)(vite@5.4.21(@types/node@25.7.0)))
@@ -177,6 +180,9 @@ importers:
         specifier: ^33.0.0
         version: 33.4.11
     devDependencies:
+      '@aiusage/core':
+        specifier: workspace:*
+        version: link:../core
       '@electron/rebuild':
         specifier: ^3.6.1
         version: 3.6.1

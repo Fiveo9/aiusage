@@ -17,7 +17,7 @@ export const GET: RequestHandler = async (event) => {
       sql`
         SELECT u.id, u.username, u.display_name, u.email, u.role, u.status,
                u.created_at, u.banned_at, u.ban_reason,
-               u.cloud_sync_enabled, u.github_starred,
+               u.cloud_sync_banned, u.github_starred,
                (SELECT gi.provider_username FROM user_identities gi WHERE gi.user_id = u.id AND gi.provider = 'github' ORDER BY gi.id LIMIT 1) AS github_username
         FROM users u
         WHERE u.username ILIKE ${pattern} OR u.display_name ILIKE ${pattern} OR u.email ILIKE ${pattern}
@@ -33,7 +33,7 @@ export const GET: RequestHandler = async (event) => {
       sql`
         SELECT u.id, u.username, u.display_name, u.email, u.role, u.status,
                u.created_at, u.banned_at, u.ban_reason,
-               u.cloud_sync_enabled, u.github_starred,
+               u.cloud_sync_banned, u.github_starred,
                (SELECT gi.provider_username FROM user_identities gi WHERE gi.user_id = u.id AND gi.provider = 'github' ORDER BY gi.id LIMIT 1) AS github_username
         FROM users u
         ORDER BY u.created_at DESC

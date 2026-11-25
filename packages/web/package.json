@@ -6,9 +6,11 @@
     "dev": "vite dev",
     "build": "svelte-kit sync && vite build",
     "preview": "vite preview",
+    "check": "svelte-kit sync && tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@aiusage/core": "workspace:*",
     "@sveltejs/adapter-static": "~3.0.0",
     "@sveltejs/kit": "~2.15.0",
     "@sveltejs/vite-plugin-svelte": "~3.1.0",

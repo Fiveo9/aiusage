@@ -37,9 +37,9 @@ export async function unbanUser(adminUserId: string, targetUserId: string): Prom
   await logAdminAction(adminUserId, 'unban_user', 'users', targetUserId, 'User unbanned')
 }
 
-export async function setCloudSync(adminUserId: string, targetUserId: string, enabled: boolean): Promise<void> {
-  await sql`UPDATE users SET cloud_sync_enabled = ${enabled}, updated_at = NOW() WHERE id = ${targetUserId}`
-  await logAdminAction(adminUserId, 'set_cloud_sync', 'users', targetUserId, enabled ? 'Cloud sync disabled for user' : 'Cloud sync re-enabled for user')
+export async function setCloudSync(adminUserId: string, targetUserId: string, banned: boolean): Promise<void> {
+  await sql`UPDATE users SET cloud_sync_banned = ${banned}, updated_at = NOW() WHERE id = ${targetUserId}`
+  await logAdminAction(adminUserId, 'set_cloud_sync', 'users', targetUserId, banned ? 'Cloud sync disabled for user' : 'Cloud sync re-enabled for user')
 }
 
 export async function setUserRole(adminUserId: string, targetUserId: string, role: string): Promise<void> {

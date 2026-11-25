@@ -9,8 +9,9 @@ import { onDestroy, tick } from 'svelte'
 export function createScriptHarness(url: URL, props: Record<string, unknown>, fields: string | ((source: string) => string), setup = '') {
   const source = readFileSync(url, 'utf8')
   const instance = parse(source).instance!
-  const start = instance.content.start
-  let script = source.slice(start, instance.content.end)
+  const content = instance.content as typeof instance.content & { start: number; end: number }
+  const start = content.start
+  let script = source.slice(start, content.end)
   const bindings = new Set<string>()
   for (const node of [...instance.content.body].reverse() as any[]) {
     if (node.type !== 'ImportDeclaration') continue

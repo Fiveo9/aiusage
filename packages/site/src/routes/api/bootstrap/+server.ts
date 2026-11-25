@@ -25,7 +25,8 @@ export const GET: RequestHandler = async (event) => {
     WHERE user_id = ${user.id}
   `
 
-  // Get user's leaderboard visibility
+  // Deprecated compatibility fields for older clients. No public leaderboard
+  // is exposed; keep these values until that compatibility contract is retired.
   const userSettings = await sql`
     SELECT leaderboard_visibility, leaderboard_anonymous
     FROM users WHERE id = ${user.id}

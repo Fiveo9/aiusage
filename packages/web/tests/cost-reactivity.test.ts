@@ -13,9 +13,10 @@ import { groupModelCosts } from '../src/lib/model-display.js'
 function createHarness(fetchCost: () => Promise<unknown>) {
   const source = readFileSync(new URL('../src/routes/cost/+page.svelte', import.meta.url), 'utf8')
   const instance = parse(source).instance!
-  const start = instance.content.start
-  let script = source.slice(start, instance.content.end)
-  for (const node of [...instance.content.body].reverse()) {
+  const content = instance.content as typeof instance.content & { start: number; end: number }
+  const start = content.start
+  let script = source.slice(start, content.end)
+  for (const node of [...content.body].reverse() as Array<(typeof content.body)[number] & { start: number; end: number }>) {
     if (node.type === 'ImportDeclaration') {
       script = script.slice(0, node.start - start) + script.slice(node.end - start)
     }

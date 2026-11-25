@@ -25,7 +25,7 @@ it('rolls back schema and migration versions together, then permits a successful
     startup.fail = false
     await runMigrations()
     const versions = await query<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version')
-    expect(versions.map(row => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22])
+    expect(versions.map(row => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])
     expect(await query("SELECT column_name FROM information_schema.columns WHERE table_name = 'cloud_usage_records' AND column_name = 'session_title'"))
       .toEqual([{ column_name: 'session_title' }])
     expect(await query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'cloud_sync_batches' AND column_name = 'response_summary'"))

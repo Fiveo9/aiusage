@@ -1,5 +1,9 @@
 const sorts = ['newest', 'cost', 'tokens']
 
+/**
+* @param {URLSearchParams} params
+* @param {{ range?: string, from?: string, to?: string, month?: string, device?: string, tool?: string }} [defaults]
+*/
 export function readSessionQuery(params, defaults = {}) {
   const rawPage = params.get('page') || '1'
   const page = /^\d+$/.test(rawPage) && Number.isSafeInteger(Number(rawPage)) && Number(rawPage) > 0
@@ -11,10 +15,13 @@ export function readSessionQuery(params, defaults = {}) {
     from: filters.from || '', to: filters.to || '', month: filters.month || '',
     device: filters.device || '', tool: filters.tool || '',
     q: (params.get('q') || '').trim().slice(0, 200),
-    sort: sorts.includes(params.get('sort')) ? params.get('sort') : 'newest', page,
+    sort: sorts.includes(/** @type {string} */ (params.get('sort'))) ? params.get('sort') : 'newest', page,
   }
 }
 
+/**
+* @param {{ range: any; from: any; to: any; month: any; device: any; tool: any; q: any; sort: any; page: any; }} state
+*/
 export function sessionListUrl(state) {
   const params = new URLSearchParams()
   if (state.from && state.to) {
@@ -30,6 +37,11 @@ export function sessionListUrl(state) {
   return `/sessions?${params}`
 }
 
+/**
+* @param {{ range: any; from: any; to: any; month: any; }} range
+* @param {any} device
+* @param {any} tool
+*/
 export function sessionFilterKey(range, device, tool) {
   return JSON.stringify([range.range || '', range.from || '', range.to || '', range.month || '', device || '', tool || ''])
 }

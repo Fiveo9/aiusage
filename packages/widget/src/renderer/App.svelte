@@ -1,5 +1,6 @@
 <script lang="ts">
   import { afterUpdate, onMount, onDestroy, tick } from 'svelte'
+  import { formatTokens } from '@aiusage/core/format'
   import Header from './components/Header.svelte'
   import StatRow from './components/StatRow.svelte'
   import TokenBreakdown from './components/TokenBreakdown.svelte'
@@ -60,12 +61,6 @@
   let ratePromise: Promise<void> | null = null
   const statusTimers = new Set<ReturnType<typeof setTimeout>>()
   const subscriptions: Array<() => void> = []
-
-  function formatTokens(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-    return String(n)
-  }
 
   $: locale = settings?.locale ?? initialLocale
   $: i18n = t(locale)

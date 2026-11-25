@@ -1,6 +1,7 @@
 export type CurrencyCode = 'USD' | 'CNY'
 
 export interface ExchangeRateState {
+  // This feed is CNY per USD (USD → CNY), the inverse of Core's CNY_USD cache.
   base: 'USD'
   target: 'CNY'
   rate: number | null
@@ -72,6 +73,7 @@ export function convertUsdCost(
   if (!Number.isFinite(value)) return null
   if (currency === 'USD') return value
   if (exchangeRate?.rate && Number.isFinite(exchangeRate.rate) && exchangeRate.rate > 0) {
+    // Unlike Core's USD-per-CNY rate, this USD-base feed is multiplied.
     const converted = value * exchangeRate.rate
     return Number.isFinite(converted) ? converted : null
   }

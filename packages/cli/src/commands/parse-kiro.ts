@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import type { StatsRecord } from '@aiusage/core'
 import { calculateCost, inferProvider, parseTimestamp, recordIdFor, type RecordIdBuilder } from '@aiusage/core'
 import type { TimestampIdCursor } from '../watermark.js'
+import { normalizeKiroModel } from './kiro-model.js'
 
 export interface KiroImportOptions {
   dbPath: string
@@ -31,25 +32,6 @@ function tableExists(db: Database.Database, table: string): boolean {
 function num(value: unknown): number {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
-}
-
-function ts(value: unknown, fallback: number, unit: 'auto' | 'ms' = 'auto'): number {
-  if (typeof value === 'string' && value.trim()) {
-    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value.trim()) ? `${value.trim()}Z` : value
-    return parseTimestamp(normalized, fallback, unit)
-  }
-  return parseTimestamp(value, fallback, unit)
-}
-
-function normalizeModel(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) return 'kiro-agent'
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/^(anthropic\.|openai\.|aws\.)/, '')
-    .replace(/:\d+$/, '')
-    .replace(/-\d{8}-v\d+(?:-\d+)?$/i, '')
 }
 
 function recordFromParts(options: {
@@ -111,11 +93,11 @@ function parseTokensGenerated(db: Database.Database, options: KiroImportOptions)
     const inputTokens = num(row.tokens_prompt)
     const outputTokens = num(row.tokens_generated)
     if (inputTokens + outputTokens === 0) continue
-    const model = normalizeModel(row.model)
+    const model = normalizeKiroModel(row.model)
     records.push(recordFromParts({
       dbPath,
       sourceId: String(row.id),
-      ts: ts(row.timestamp, 0),
+      ts: parseTimestamp(row.timestamp, 0, 'auto', 'utc'),
       model,
       provider: typeof row.provider === 'string' ? row.provider : inferProvider(model),
       inputTokens,
@@ -163,11 +145,11 @@ function parseConversationsV2(db: Database.Database, options: KiroImportOptions)
       const inputTokens = Math.floor(num(request.user_prompt_length) / CHARS_PER_TOKEN)
       const outputTokens = Math.floor(num(request.response_size) / CHARS_PER_TOKEN)
       if (inputTokens + outputTokens === 0) continue
-      const model = normalizeModel(request.model_id ?? sessionModel)
+      const model = normalizeKiroModel(request.model_id ?? sessionModel)
       records.push(recordFromParts({
         dbPath,
         sourceId: String(requestId),
-        ts: ts(request.request_start_timestamp_ms, 0, 'ms'),
+        ts: parseTimestamp(request.request_start_timestamp_ms, 0, 'ms'),
         model,
         provider: inferProvider(model),
         inputTokens,

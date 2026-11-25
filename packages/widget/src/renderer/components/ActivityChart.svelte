@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { formatTokens } from '@aiusage/core/format'
   import { convertUsdCost, formatCurrency, formatUsdCost } from '../../currency'
   import type { CurrencyCode, ExchangeRateState } from '../../currency'
 
@@ -123,12 +124,6 @@
     const normalized = val / magnitude
     const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
     return step * magnitude
-  }
-
-  function formatTokens(val: number): string {
-    if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`
-    if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`
-    return String(Math.round(val))
   }
 
   function formatTokenAxisVal(val: number): string {
@@ -360,7 +355,7 @@
           xmlns="http://www.w3.org/1999/xhtml"
         >
           <span class="tooltip-date">{formatDate(entry.date)}</span>
-          <span class="tooltip-metric token-dot">{formatTokens(entry.tokens)}</span>
+          <span class="tooltip-metric token-dot">{formatTokens(entry.tokens, true)}</span>
           {#if showCost && entry.cost > 0}
             <span class="tooltip-metric cost-dot">{formatTooltipCost(entry.cost)}</span>
           {/if}

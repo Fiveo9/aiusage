@@ -39,12 +39,12 @@ describe('model prefix display', () => {
       inputTokens: 350, outputTokens: 70, cacheReadTokens: 105, cacheWriteTokens: 140,
       thinkingTokens: 35, totalTokens: 700, totalCost: 0.875, callCount: 6, percentage: 70,
     })
-    for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'totalTokens', 'totalCost', 'callCount']) {
-      expect(merged.reduce((sum, row) => sum + row[field], 0))
+    for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens', 'totalTokens', 'totalCost', 'callCount'] as const) {
+      expect(merged.reduce((sum, row) => sum + row[field]!, 0))
         .toBe(rows.reduce((sum, row) => sum + row[field], 0))
     }
     // Sorting/displaying a merged result must not replace or reorder the source.
-    merged.sort((a, b) => b.totalCost - a.totalCost)
+    merged.sort((a, b) => b.totalCost! - a.totalCost!)
     expect(groupModels(rows, 'full')).toEqual(rows.map(row => ({ ...row, originalModels: [row.model] })))
   })
 

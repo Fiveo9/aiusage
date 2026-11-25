@@ -100,61 +100,67 @@ export async function syncPricingFromLitellm(adminUserId: string): Promise<{ add
 
   await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext('pricing-write'))`
-    for (const owner of plan.prices) {
-      const entry = {
-        modelKey: owner.modelKey,
-        provider: owner.provider,
-        input: owner.price.input,
-        output: owner.price.output,
-        cacheRead: owner.price.cacheRead ?? null,
-        cacheWrite: owner.price.cacheWrite ?? null,
-      }
-      const sourceModelId = owner.sourceModelId
-      const existing = await tx`SELECT origin, input, output, cache_read, cache_write, currency FROM model_prices WHERE model_key = ${entry.modelKey}`
-      const row = existing[0] as { origin: string; input: string; output: string; cache_read: string | null; cache_write: string | null; currency: string } | undefined
+    type ExistingPrice = { model_key: string; provider: string; origin: string; input: string; output: string;
+      cache_read: string | null; cache_write: string | null; currency: string; status: string }
+    const existing = await tx<ExistingPrice[]>`SELECT model_key, provider, origin, input, output, cache_read, cache_write, currency, status FROM model_prices`
+    const byKey = new Map(existing.map(row => [row.model_key, row]))
+    const prices = plan.prices.filter(owner => {
+      const row = byKey.get(owner.modelKey)
       if (row?.origin === 'user') {
         userPreserved++
-      } else if (!row) {
-        await tx`
-          INSERT INTO model_prices (model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id, source_url, origin, status, last_synced_at)
-          VALUES (${entry.modelKey}, ${entry.provider}, ${entry.input}, ${entry.output}, ${entry.cacheRead}, ${entry.cacheWrite}, 'USD', 'litellm', ${sourceModelId}, ${LITELLM_PRICING_URL}, 'builtin', 'active', NOW())
-          ON CONFLICT (model_key) DO UPDATE SET
-            provider = EXCLUDED.provider, input = EXCLUDED.input, output = EXCLUDED.output,
-            cache_read = EXCLUDED.cache_read, cache_write = EXCLUDED.cache_write,
-            currency = 'USD', source = 'litellm', source_model_id = EXCLUDED.source_model_id,
-            source_url = EXCLUDED.source_url, status = 'active', last_synced_at = NOW(), updated_at = NOW()
-          WHERE model_prices.origin = 'builtin'
-        `
-        added++
-      } else {
-        const changed = Number(row.input) !== entry.input || Number(row.output) !== entry.output ||
-          (row.cache_read == null ? null : Number(row.cache_read)) !== entry.cacheRead ||
-          (row.cache_write == null ? null : Number(row.cache_write)) !== entry.cacheWrite || row.currency !== 'USD'
-        await tx`
-          UPDATE model_prices
-          SET provider = ${entry.provider}, input = ${entry.input}, output = ${entry.output}, cache_read = ${entry.cacheRead}, cache_write = ${entry.cacheWrite},
-              currency = 'USD', source = 'litellm', source_model_id = ${sourceModelId}, source_url = ${LITELLM_PRICING_URL},
-              origin = 'builtin', status = 'active', last_synced_at = NOW(), updated_at = NOW()
-          WHERE model_key = ${entry.modelKey} AND origin = 'builtin'
-        `
+        return false
+      }
+      if (!row) added++
+      else {
+        const changed = Number(row.input) !== owner.price.input || Number(row.output) !== owner.price.output ||
+          (row.cache_read == null ? null : Number(row.cache_read)) !== (owner.price.cacheRead ?? null) ||
+          (row.cache_write == null ? null : Number(row.cache_write)) !== (owner.price.cacheWrite ?? null) || row.currency !== 'USD'
         if (changed) updated++
       }
+      if (!row || row.origin === 'builtin') {
+        byKey.set(owner.modelKey, { model_key: owner.modelKey, provider: owner.provider, origin: 'builtin',
+          input: String(owner.price.input), output: String(owner.price.output), cache_read: owner.price.cacheRead == null ? null : String(owner.price.cacheRead),
+          cache_write: owner.price.cacheWrite == null ? null : String(owner.price.cacheWrite), currency: 'USD', status: 'active' })
+      }
+      return true
+    })
+    if (prices.length) {
+      await tx`
+        INSERT INTO model_prices (model_key, provider, input, output, cache_read, cache_write, currency, source, source_model_id, source_url, origin, status, last_synced_at)
+        SELECT incoming.model_key, incoming.provider, incoming.input, incoming.output, incoming.cache_read, incoming.cache_write,
+          'USD', 'litellm', incoming.source_model_id, ${LITELLM_PRICING_URL}, 'builtin', 'active', NOW()
+        FROM UNNEST(${tx.array(prices.map(owner => owner.modelKey))}::text[], ${tx.array(prices.map(owner => owner.provider))}::text[],
+          ${tx.array(prices.map(owner => owner.price.input))}::numeric[], ${tx.array(prices.map(owner => owner.price.output))}::numeric[],
+          ${tx.array(prices.map(owner => owner.price.cacheRead ?? null))}::numeric[], ${tx.array(prices.map(owner => owner.price.cacheWrite ?? null))}::numeric[],
+          ${tx.array(prices.map(owner => owner.sourceModelId))}::text[])
+          AS incoming(model_key, provider, input, output, cache_read, cache_write, source_model_id)
+        ON CONFLICT (model_key) DO UPDATE SET
+          provider = EXCLUDED.provider, input = EXCLUDED.input, output = EXCLUDED.output,
+          cache_read = EXCLUDED.cache_read, cache_write = EXCLUDED.cache_write,
+          currency = 'USD', source = 'litellm', source_model_id = EXCLUDED.source_model_id,
+          source_url = EXCLUDED.source_url, status = 'active', last_synced_at = NOW(), updated_at = NOW()
+        WHERE model_prices.origin = 'builtin'
+      `
     }
 
-    for (const planned of plan.aliases) {
-      // A dated Claude shortcut must not sit on a name that has a price of
-      // its own the file does not list (a curated price, or a row an earlier
-      // sync left): it points at that row instead.
-      let target = { modelKey: planned.modelKey, provider: planned.provider }
-      if (planned.datedShortcut) {
-        const own = await tx`SELECT provider FROM model_prices WHERE model_key = ${planned.alias} AND status = 'active'` as Array<{ provider: string }>
-        if (own[0]) target = { modelKey: planned.alias, provider: own[0].provider }
-      }
-      const alias = planned.alias
-      const before = await tx`SELECT model_key, origin, enabled FROM model_price_aliases WHERE alias = ${alias}` as Array<{ model_key: string; origin: string; enabled: boolean }>
+    const existingAliases = await tx<{ alias: string; model_key: string; origin: string; enabled: boolean }[]>`
+      SELECT alias, model_key, origin, enabled FROM model_price_aliases`
+    const aliasByName = new Map(existingAliases.map(row => [row.alias, row]))
+    const aliases = plan.aliases.map(planned => {
+      const own = byKey.get(planned.alias)
+      const target = planned.datedShortcut && own?.status === 'active'
+        ? { modelKey: planned.alias, provider: own.provider } : { modelKey: planned.modelKey, provider: planned.provider }
+      const before = aliasByName.get(planned.alias)
+      if (!before) aliasesAdded++
+      else if (before.origin !== 'user' && (before.model_key !== target.modelKey || before.enabled !== true)) aliasesUpdated++
+      return { alias: planned.alias, ...target }
+    })
+    if (aliases.length) {
       await tx`
         INSERT INTO model_price_aliases (alias, model_key, match_type, provider, priority, source, origin, enabled)
-        VALUES (${alias}, ${target.modelKey}, 'exact', ${target.provider}, 100, 'litellm', 'builtin', TRUE)
+        SELECT incoming.alias, incoming.model_key, 'exact', incoming.provider, 100, 'litellm', 'builtin', TRUE
+        FROM UNNEST(${tx.array(aliases.map(alias => alias.alias))}::text[], ${tx.array(aliases.map(alias => alias.modelKey))}::text[],
+          ${tx.array(aliases.map(alias => alias.provider))}::text[]) AS incoming(alias, model_key, provider)
         ON CONFLICT (alias) DO UPDATE SET
           model_key = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.model_key ELSE model_price_aliases.model_key END,
           provider = CASE WHEN model_price_aliases.origin = 'builtin' THEN EXCLUDED.provider ELSE model_price_aliases.provider END,
@@ -162,9 +168,6 @@ export async function syncPricingFromLitellm(adminUserId: string): Promise<{ add
           enabled = CASE WHEN model_price_aliases.origin = 'builtin' THEN TRUE ELSE model_price_aliases.enabled END,
           updated_at = NOW()
       `
-      const existingAlias = before[0]
-      if (!existingAlias) aliasesAdded++
-      else if (existingAlias.origin !== 'user' && (existingAlias.model_key !== target.modelKey || existingAlias.enabled !== true)) aliasesUpdated++
     }
 
     // Curated aliases for model names no pricing source lists verbatim; they
@@ -186,6 +189,7 @@ export async function getPriceEntries(adminUserId: string) {
     LEFT JOIN (
       SELECT model, COUNT(*)::INTEGER AS usage_count
       FROM cloud_usage_records
+      WHERE deleted_at IS NULL
       GROUP BY model
     ) u ON u.model = p.model_key
     ORDER BY COALESCE(u.usage_count, 0) DESC, p.model_key ASC

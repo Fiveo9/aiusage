@@ -1,5 +1,10 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { env } from '$env/dynamic/private'
+import { registerSiteResource } from '../resource-lifecycle.js'
+
+let client: S3Client | undefined
+let configuration: string | undefined
+let unregister: (() => void) | undefined
 
 function getClient(): S3Client {
   const accountId = env.R2_ACCOUNT_ID
@@ -10,11 +15,27 @@ function getClient(): S3Client {
     throw new Error('R2 storage not configured: missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY')
   }
 
-  return new S3Client({
+  const signature = JSON.stringify([accountId, accessKeyId, secretAccessKey])
+  if (client && configuration === signature) return client
+  const previous = client
+  client = undefined
+  configuration = undefined
+  unregister?.()
+  unregister = undefined
+  previous?.destroy()
+  client = new S3Client({
     region: 'auto',
     endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
     credentials: { accessKeyId, secretAccessKey }
   })
+  configuration = signature
+  unregister = registerSiteResource(() => {
+    client?.destroy()
+    client = undefined
+    configuration = undefined
+    unregister = undefined
+  })
+  return client
 }
 
 function getBucket(): string {

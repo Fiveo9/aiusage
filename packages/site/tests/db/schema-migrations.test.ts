@@ -40,7 +40,7 @@ describe('migration v16: leaderboard_metrics survives upload-history pruning', (
     await runMigrations()
 
     const statements = migrationStatements()
-    expect(statements).toHaveLength(12)
+    expect(statements).toHaveLength(21)
     expect(statements[0]).toBe('ALTER TABLE leaderboard_metrics ALTER COLUMN upload_request_id DROP NOT NULL')
     // The old constraint is found in the catalog, whatever it is called.
     expect(statements[1]).toContain("c.conrelid = 'leaderboard_metrics'::regclass AND c.confrelid = 'upload_requests'::regclass AND c.contype = 'f' AND a.attname = 'upload_request_id'")
@@ -50,11 +50,11 @@ describe('migration v16: leaderboard_metrics survives upload-history pruning', (
     )
     // statements[3] is migration v17, statements[4] adds optional session titles.
     expect(statements[4]).toBe("ALTER TABLE cloud_usage_records ADD COLUMN IF NOT EXISTS session_title TEXT NOT NULL DEFAULT ''")
-    expect(queries.filter(q => q.text.startsWith('INSERT INTO schema_migrations')).map(q => q.values)).toEqual([[16], [17], [18], [19], [20], [21]])
+    expect(queries.filter(q => q.text.startsWith('INSERT INTO schema_migrations')).map(q => q.values)).toEqual([[16], [17], [18], [19], [20], [21], [22]])
   })
 
   it('does nothing once it is recorded as applied', async () => {
-    database([...BEFORE_V16, 16, 17, 18, 19, 20, 21])
+    database([...BEFORE_V16, 16, 17, 18, 19, 20, 21, 22])
 
     await runMigrations()
 
@@ -79,8 +79,8 @@ it('adds the title column and OAuth constraints when upgrading from v17', async 
   database([...BEFORE_V16, 16, 17])
   await runMigrations()
   const statements = migrationStatements()
-  expect(statements).toHaveLength(8)
+  expect(statements).toHaveLength(17)
   expect(statements[0]).toBe("ALTER TABLE cloud_usage_records ADD COLUMN IF NOT EXISTS session_title TEXT NOT NULL DEFAULT ''")
   expect(statements[2]).toContain('UNIQUE (user_id, provider)')
-  expect(queries.filter(q => q.text.startsWith('INSERT INTO schema_migrations')).map(q => q.values)).toEqual([[18], [19], [20], [21]])
+  expect(queries.filter(q => q.text.startsWith('INSERT INTO schema_migrations')).map(q => q.values)).toEqual([[18], [19], [20], [21], [22]])
 })

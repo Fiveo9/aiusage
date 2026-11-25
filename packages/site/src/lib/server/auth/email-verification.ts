@@ -138,17 +138,12 @@ export async function checkVerificationEmailRateLimit(ip: string, email: string)
 }
 
 export async function recordVerificationEmailAttempt(ip: string, email: string): Promise<void> {
-  const retentionDays = await getConfigValue(CFG.EMAIL_SEND_ATTEMPT_RETENTION_DAYS)
 
   await sql`
     INSERT INTO email_send_attempts (id, purpose, ip_hash, email_hash)
     VALUES (${nanoid()}, ${PURPOSE}, ${hashValue(ip)}, ${hashValue(email)})
   `
 
-  await sql`
-    DELETE FROM email_send_attempts
-    WHERE created_at < NOW() - (${`${retentionDays} days`})::INTERVAL
-  `
 }
 
 export async function sendVerificationEmail(email: string, username: string, verificationUrl: string): Promise<void> {

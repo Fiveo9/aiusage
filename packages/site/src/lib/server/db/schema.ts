@@ -634,5 +634,20 @@ const migrations = [
       // represent a JSON \u0000 escape, even when that identifier was rejected.
       await tx`ALTER TABLE cloud_sync_batches ADD COLUMN IF NOT EXISTS response_summary TEXT`
     }
+  },
+  {
+    version: 22,
+    name: 'batch_sync_and_maintenance_indexes',
+    up: async (tx: postgres.TransactionSql) => {
+      await tx`CREATE INDEX IF NOT EXISTS idx_cloud_usage_generation_seq ON cloud_usage_records(user_id, sync_generation, change_seq)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_cloud_usage_active_device ON cloud_usage_records(user_id, device_id) WHERE deleted_at IS NULL`
+      await tx`CREATE INDEX IF NOT EXISTS idx_cloud_usage_tombstone_retention ON cloud_usage_records(deleted_at) WHERE deleted_at IS NOT NULL`
+      await tx`CREATE INDEX IF NOT EXISTS idx_cloud_sync_batches_created ON cloud_sync_batches(created_at)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_admin_audit_created_desc ON admin_audit_logs(created_at DESC)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_device_auth_expiry ON device_auth_requests(expires_at)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_users_created_desc ON users(created_at DESC)`
+      await tx`CREATE INDEX IF NOT EXISTS idx_cloud_usage_active_model ON cloud_usage_records(model) WHERE deleted_at IS NULL`
+    }
   }
 ]

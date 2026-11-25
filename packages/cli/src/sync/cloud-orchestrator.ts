@@ -148,11 +148,13 @@ export class CloudSyncOrchestrator {
         withdrawNamespaceVerdict(this.db, this.target, UNKNOWN_NAMESPACE_VERDICT)
         for (const owner of claimed.keys()) withdrawNamespaceVerdict(this.db, this.target, namespaceVerdictKey(owner))
       })()
-      for (const record of pullResult.records) {
-        if (record.deviceInstanceId === this.options.deviceInstanceId) continue
-        insertSyncedRecord(this.db, record, tick)
-        insertedCount++
-      }
+      this.db.transaction(() => {
+        for (const record of pullResult.records) {
+          if (record.deviceInstanceId === this.options.deviceInstanceId) continue
+          insertSyncedRecord(this.db, record, tick)
+          insertedCount++
+        }
+      }).immediate()
 
       // Step 2a: The pull is complete (every page of the server's current
       // generation was read), so it is authoritative for what the cloud

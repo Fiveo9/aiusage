@@ -333,7 +333,7 @@ export async function propagateClean(options: {
       detail: err instanceof Error ? err.message : 'unknown error',
     })
   } finally {
-    release?.()
+    try { await backend.close?.() } finally { release?.() }
   }
 
   return { backends: results }

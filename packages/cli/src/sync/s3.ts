@@ -43,6 +43,8 @@ export class S3SyncBackend {
   private client: S3Client
   private bucket: string
   private prefix: string
+  private closed = false
+  private ownedAgents: Array<{ destroy(): void }> = []
 
   constructor(config: S3Config) {
     this.bucket = config.bucket
@@ -51,6 +53,7 @@ export class S3SyncBackend {
     this.prefix = normalizeS3Prefix(config.prefix)
     const endpoint = normalizeS3Endpoint(config.endpoint)
     const requestHandler = s3ProxyHandler()
+    if ('httpAgent' in requestHandler) this.ownedAgents.push(requestHandler.httpAgent, requestHandler.httpsAgent)
     this.client = new S3Client({
       region: config.region ?? 'auto',
       ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
@@ -91,20 +94,29 @@ export class S3SyncBackend {
       Bucket: this.bucket,
       Key: key,
       Body: content,
-      ContentType: isToolCallPath(path) ? 'application/json' : 'application/x-ndjson',
+      ContentType: isToolCallPath(path) || /^[^/]+\/manifest\.json$/.test(path) ? 'application/json' : 'application/x-ndjson',
     })
     await this.client.send(command)
   }
 
   async listFiles(): Promise<string[]> {
+    return (await this.listFilesWithDigests()).paths
+  }
+
+  async listFilesWithDigests(): Promise<{ paths: string[]; digests: Map<string, string> }> {
     const files: string[] = []
+    const digests = new Map<string, string>()
     for (const entry of await this.listEntries()) {
       if (entry.path.endsWith('.ndjson') || /^[^/]+\/(manifest\.json|tool-calls\.v1\.json)$/.test(entry.path)) {
         if (!isSafeSyncPath(entry.path)) throw new Error('S3 returned an unsafe sync path in its listing.')
         files.push(entry.path)
+        if (entry.path.endsWith('.ndjson') || isToolCallPath(entry.path)) {
+          const etag = entry.etag?.replace(/^"|"$/g, '')
+          if (etag && /^[0-9a-f]{32}$/i.test(etag)) digests.set(entry.path, etag.toLowerCase())
+        }
       }
     }
-    return files.sort()
+    return { paths: files.sort(), digests }
   }
 
   /**
@@ -114,14 +126,14 @@ export class S3SyncBackend {
    * orchestrator falls back to reading those files.
    */
   async listFileDigests(): Promise<Map<string, string>> {
-    const digests = new Map<string, string>()
-    for (const entry of await this.listEntries()) {
-      if (!entry.path.endsWith('.ndjson') && !isToolCallPath(entry.path)) continue
-      if (!isSafeSyncPath(entry.path)) throw new Error('S3 returned an unsafe sync path in its listing.')
-      const etag = entry.etag?.replace(/^"|"$/g, '')
-      if (etag && /^[0-9a-f]{32}$/i.test(etag)) digests.set(entry.path, etag.toLowerCase())
-    }
-    return digests
+    return (await this.listFilesWithDigests()).digests
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    try { this.client.destroy() }
+    finally { for (const agent of this.ownedAgents) agent.destroy() }
   }
 
   /** Every object under the prefix (data files and namespace manifests alike). */

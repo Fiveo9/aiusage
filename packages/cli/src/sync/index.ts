@@ -59,6 +59,10 @@ export interface SyncBackend {
    * Must throw if listing fails; an empty array means the target is empty.
    */
   listFiles(): Promise<string[]>
+  /** One authoritative listing for paths and their cheap content digests. */
+  listFilesWithDigests?(): Promise<{ paths: string[]; digests: Map<string, string> }>
+  /** The creator closes owned transport resources after its operation. */
+  close?(): void | Promise<void>
   /** Optional: delete a single file from the backend */
   deleteFile?(path: string): Promise<void>
   /** Optional: delete all data files. Returns the number of files deleted. */
@@ -206,11 +210,12 @@ export class SyncOrchestrator {
       const repairedCount = repairRecordProvenance(this.db, this.options.deviceInstanceId)
       backfillUnknownDeviceInstanceId(this.db, this.options.deviceInstanceId)
       await this.backend.prepare?.()
-      const listing = await this.backend.listFiles()
+      const combined = await this.backend.listFilesWithDigests?.()
+      const listing = combined?.paths ?? await this.backend.listFiles()
       const { pulledCount, ignoredCount, prunedCount, skippedNamespaces } = await this.pull(listing)
       this.options.onProgress?.({ phase: 'merging', pulledCount })
       const mergedCount = mergeSyncedRecordsIntoRecords(this.db, this.options.deviceInstanceId)
-      const upload = await this.upload(listing)
+      const upload = await this.upload(listing, combined?.digests)
       await this.backend.flush?.()
       upload.acknowledge()
       this.options.onProgress?.({ phase: 'finalizing', pulledCount, uploadedCount: upload.uploadedCount })
@@ -403,7 +408,7 @@ export class SyncOrchestrator {
    * consistent snapshot or a mismatch — never a partial snapshot it would
    * prune against.
    */
-  private async upload(allPaths: string[]): Promise<{ uploadedCount: number; retiredCount: number; collisionCount: number; writtenFiles: number; acknowledge: () => void }> {
+  private async upload(allPaths: string[], listedDigests?: Map<string, string>): Promise<{ uploadedCount: number; retiredCount: number; collisionCount: number; writtenFiles: number; acknowledge: () => void }> {
     const deviceInstanceId = this.options.deviceInstanceId
     const target = this.options.target
     const prefix = `${deviceInstanceId}/`
@@ -431,7 +436,7 @@ export class SyncOrchestrator {
     const stalePaths = ownPaths.filter(p => !byRel.has(p.slice(prefix.length)))
     const uploads = Array.from(byRel.entries()).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     const totalFiles = uploads.length + 1 + stalePaths.length
-    const digests = await this.backend.listFileDigests?.()
+    const digests = listedDigests ?? await this.backend.listFileDigests?.()
 
     let retiredCount = 0
     let writtenFiles = 0

@@ -7,7 +7,7 @@ vi.mock('../../src/lib/server/db/pool.js', async () => {
       if (faults.insert && strings.join('').includes('INSERT INTO cloud_usage_records')) throw new Error('synthetic insert failure')
       return tag(strings, ...values)
     }
-    return Object.assign(wrapped, { begin: async (fn: (tx: any) => Promise<unknown>) => {
+    return Object.assign(wrapped, { array: tag.array, begin: async (fn: (tx: any) => Promise<unknown>) => {
       if (faults.pauseBegin) { faults.pauseBegin = false; faults.reached?.(); await faults.resume }
       return tag.begin((tx: any) => fn(wrap(tx)))
     } })

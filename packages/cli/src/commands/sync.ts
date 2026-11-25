@@ -220,6 +220,7 @@ async function runConfiguredSync(db: Database.Database, config: import('../confi
     return failedResult('Could not create sync backend. Check credentials.')
   }
 
+  try {
   const orchestrator = new SyncOrchestrator(db, backend, {
     deviceInstanceId: state.deviceInstanceId,
     target,
@@ -244,6 +245,7 @@ async function runConfiguredSync(db: Database.Database, config: import('../confi
   if (result.status !== 'ok') return result
   const lingeringLegacyTarget = lingeringLegacySyncTarget(db, getState(AIUSAGE_DIR), config.sync)
   return lingeringLegacyTarget ? { ...result, lingeringLegacyTarget } : result
+  } finally { await backend.close?.() }
 }
 
 export interface SyncRepairOptions {
@@ -346,6 +348,8 @@ async function runConfiguredSyncRepair(db: Database.Database, config: import('..
     return { status: 'ok', report: { ...report, otherTargets } }
   } catch (error) {
     return { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' }
+  } finally {
+    await backend.close?.()
   }
 }
 

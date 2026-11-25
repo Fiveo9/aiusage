@@ -184,7 +184,7 @@ export const POST: RequestHandler = async ({ request }) => {
       }
       if (previous) batchId = previous.id as string
       const instanceRowId = await registerInstance(tx, userId, deviceId, deviceInstanceId, serverGeneration)
-      // Upsert records
+      const valid: Record<string, any>[] = []
       for (const record of records) {
         const problem = record !== null && typeof record === 'object' ? recordProblem(record) : 'invalid_value'
         if (problem) {
@@ -192,71 +192,77 @@ export const POST: RequestHandler = async ({ request }) => {
           skipped++
           continue
         }
-
-        const id = nanoid()
+        valid.push(record)
+      }
+      // The generation lock serializes writers; row locks also exclude maintenance
+      // while input-order versions/counters and inherited titles are consolidated.
+      const existing = valid.length ? await tx<{ record_id: string; updated_at: string; session_title: string }[]>`
+        SELECT record_id, updated_at::text, session_title FROM cloud_usage_records
+        WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}
+          AND device_instance_id = ${deviceInstanceId}
+          AND record_id = ANY(${tx.array([...new Set(valid.map(record => record.id))])}::text[])
+        FOR UPDATE
+      ` : []
+      const before = new Map(existing.map(row => [row.record_id, row]))
+      type Entry = { id: string; record: Record<string, any>; updatedAt: number; title: string }
+      const changed = new Map<string, Entry>()
+      for (const record of valid) {
+        const prior = changed.get(record.id)
+        const stored = before.get(record.id)
+        const version = prior?.updatedAt ?? stored?.updated_at
         const updatedAt = record.updatedAt ?? Date.now()
-        // Plain INSERT first: a returned row means the record is new.
-        const created = await tx`
+        if (version !== undefined && BigInt(updatedAt) <= BigInt(version)) { skipped++; continue }
+        if (version === undefined) inserted++
+        else updated++
+        changed.set(record.id, { id: prior?.id ?? nanoid(), record, updatedAt,
+          title: record.sessionTitle || prior?.title || stored?.session_title || '' })
+      }
+      const entries = [...changed.values()]
+      if (entries.length) {
+        const column = (value: (entry: Entry) => any) => tx.array(entries.map(value))
+        await tx`
           INSERT INTO cloud_usage_records (
             id, user_id, device_id, device_instance_id, sync_generation,
             record_id, ts, tool, model, provider,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens,
             cost, cost_source, session_key, session_title, source_file, cwd,
             device_name, platform, updated_at, server_updated_at
-          ) VALUES (
-            ${id}, ${userId}, ${deviceId}, ${deviceInstanceId}, ${serverGeneration},
-            ${record.id}, ${record.ts || 0}, ${record.tool}, ${record.model}, ${record.provider || ''},
-            ${record.inputTokens || 0}, ${record.outputTokens || 0}, ${record.cacheReadTokens || 0},
-            ${record.cacheWriteTokens || 0}, ${record.thinkingTokens || 0},
-            ${record.cost ?? null}, ${record.costSource || null}, ${record.sessionKey || ''},
-            ${record.sessionTitle || ''},
-            ${record.sourceFile || ''}, ${record.cwd || ''},
-            ${record.deviceName || null}, ${record.platform || null},
-            ${updatedAt}, NOW()
-          )
-          ON CONFLICT (user_id, sync_generation, device_instance_id, record_id) DO NOTHING
-          RETURNING id
-        `
-        if (created.length > 0) {
-          inserted++
-          continue
-        }
-
-        // The row already exists: apply the record only if it is newer.
-        // No returned row means it was older/equal and nothing changed.
-        const changed = await tx`
-          UPDATE cloud_usage_records SET
-            ts = ${record.ts || 0},
-            tool = ${record.tool},
-            model = ${record.model},
-            provider = ${record.provider || ''},
-            input_tokens = ${record.inputTokens || 0},
-            output_tokens = ${record.outputTokens || 0},
-            cache_read_tokens = ${record.cacheReadTokens || 0},
-            cache_write_tokens = ${record.cacheWriteTokens || 0},
-            thinking_tokens = ${record.thinkingTokens || 0},
-            cost = ${record.cost ?? null},
-            cost_source = ${record.costSource || null},
-            session_key = ${record.sessionKey || ''},
-            session_title = COALESCE(NULLIF(${record.sessionTitle || ''}, ''), cloud_usage_records.session_title),
-            source_file = ${record.sourceFile || ''},
-            cwd = ${record.cwd || ''},
-            device_name = ${record.deviceName || null},
-            platform = ${record.platform || null},
-            updated_at = ${updatedAt},
+          ) SELECT incoming.id, ${userId}, ${deviceId}, ${deviceInstanceId}, ${serverGeneration},
+            incoming.record_id, incoming.ts, incoming.tool, incoming.model, incoming.provider,
+            incoming.input_tokens, incoming.output_tokens, incoming.cache_read_tokens, incoming.cache_write_tokens, incoming.thinking_tokens,
+            incoming.cost, incoming.cost_source, incoming.session_key, incoming.session_title, incoming.source_file, incoming.cwd,
+            incoming.device_name, incoming.platform, incoming.updated_at, NOW()
+          FROM UNNEST(
+            ${column(entry => entry.id)}::text[], ${column(entry => entry.record.id)}::text[],
+            ${column(entry => entry.record.ts || 0)}::bigint[], ${column(entry => entry.record.tool)}::text[],
+            ${column(entry => entry.record.model)}::text[], ${column(entry => entry.record.provider || '')}::text[],
+            ${column(entry => entry.record.inputTokens || 0)}::bigint[], ${column(entry => entry.record.outputTokens || 0)}::bigint[],
+            ${column(entry => entry.record.cacheReadTokens || 0)}::bigint[], ${column(entry => entry.record.cacheWriteTokens || 0)}::bigint[],
+            ${column(entry => entry.record.thinkingTokens || 0)}::bigint[], ${column(entry => entry.record.cost ?? null)}::numeric[],
+            ${column(entry => entry.record.costSource || null)}::text[], ${column(entry => entry.record.sessionKey || '')}::text[],
+            ${column(entry => entry.title)}::text[], ${column(entry => entry.record.sourceFile || '')}::text[],
+            ${column(entry => entry.record.cwd || '')}::text[], ${column(entry => entry.record.deviceName || null)}::text[],
+            ${column(entry => entry.record.platform || null)}::text[], ${column(entry => entry.updatedAt)}::bigint[]
+          ) AS incoming(id, record_id, ts, tool, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+            thinking_tokens, cost, cost_source, session_key, session_title, source_file, cwd, device_name, platform, updated_at)
+          ON CONFLICT (user_id, sync_generation, device_instance_id, record_id) DO UPDATE SET
+            ts = EXCLUDED.ts, tool = EXCLUDED.tool, model = EXCLUDED.model, provider = EXCLUDED.provider,
+            input_tokens = EXCLUDED.input_tokens, output_tokens = EXCLUDED.output_tokens,
+            cache_read_tokens = EXCLUDED.cache_read_tokens, cache_write_tokens = EXCLUDED.cache_write_tokens,
+            thinking_tokens = EXCLUDED.thinking_tokens, cost = EXCLUDED.cost, cost_source = EXCLUDED.cost_source,
+            session_key = EXCLUDED.session_key,
+            session_title = COALESCE(NULLIF(EXCLUDED.session_title, ''), cloud_usage_records.session_title),
+            source_file = EXCLUDED.source_file, cwd = EXCLUDED.cwd, device_name = EXCLUDED.device_name, platform = EXCLUDED.platform,
+            updated_at = EXCLUDED.updated_at,
             server_updated_at = NOW(),
             deleted_at = NULL,
             change_seq = nextval(pg_get_serial_sequence('cloud_usage_records', 'change_seq'))
-          WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}
-            AND device_instance_id = ${deviceInstanceId} AND record_id = ${record.id}
-            AND updated_at < ${updatedAt}
-          RETURNING id
+          WHERE cloud_usage_records.updated_at < EXCLUDED.updated_at
         `
-        if (changed.length > 0) updated++
-        else skipped++
       }
 
       // Process tombstones
+      const tombstoneVersions = new Map<string, number>()
       for (const tombstone of tombstones) {
         const problem = tombstone !== null && typeof tombstone === 'object' ? tombstoneProblem(tombstone) : 'invalid_value'
         if (problem) {
@@ -265,14 +271,20 @@ export const POST: RequestHandler = async ({ request }) => {
           continue
         }
         const tombstoneUpdatedAt = tombstone.updatedAt ?? Date.now()
+        const previousVersion = tombstoneVersions.get(tombstone.record_id)
+        if (previousVersion === undefined || tombstoneUpdatedAt > previousVersion) tombstoneVersions.set(tombstone.record_id, tombstoneUpdatedAt)
+      }
+      if (tombstoneVersions.size) {
         await tx`
-          UPDATE cloud_usage_records
-          SET deleted_at = NOW(), server_updated_at = NOW(), updated_at = ${tombstoneUpdatedAt},
+          UPDATE cloud_usage_records AS stored
+          SET deleted_at = NOW(), server_updated_at = NOW(), updated_at = incoming.updated_at,
             change_seq = nextval(pg_get_serial_sequence('cloud_usage_records', 'change_seq'))
-          WHERE user_id = ${userId} AND sync_generation = ${serverGeneration}
-            AND device_instance_id = ${deviceInstanceId} AND record_id = ${tombstone.record_id}
-            AND updated_at <= ${tombstoneUpdatedAt}
-            AND (deleted_at IS NULL OR updated_at < ${tombstoneUpdatedAt})
+          FROM UNNEST(${tx.array([...tombstoneVersions.keys()])}::text[], ${tx.array([...tombstoneVersions.values()])}::bigint[])
+            AS incoming(record_id, updated_at)
+          WHERE stored.user_id = ${userId} AND stored.sync_generation = ${serverGeneration}
+            AND stored.device_instance_id = ${deviceInstanceId} AND stored.record_id = incoming.record_id
+            AND stored.updated_at <= incoming.updated_at
+            AND (stored.deleted_at IS NULL OR stored.updated_at < incoming.updated_at)
         `
       }
 

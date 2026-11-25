@@ -10,6 +10,8 @@ interface Call {
   id: string; recordId: string | null; tool: string; name: string; ts: number; callIndex: number
 }
 
+const peerCaches = new WeakMap<Database.Database, Map<string, Map<string, { digest: string; calls: Call[] }>>>()
+
 function parseCalls(content: string, owner: string): Call[] {
   const snapshot = JSON.parse(content)
   if (snapshot?.version !== 1 || snapshot.owner !== owner || !Array.isArray(snapshot.calls)) {
@@ -23,12 +25,17 @@ function parseCalls(content: string, owner: string): Call[] {
       || !Number.isSafeInteger(call.ts) || !Number.isSafeInteger(call.callIndex)) throw new Error('Invalid tool call entry')
     ids.add(call.id)
   }
-  return snapshot.calls
+  return snapshot.calls.map((call: Call) => ({ id: call.id, recordId: call.recordId, tool: call.tool,
+    name: call.name, ts: call.ts, callIndex: call.callIndex }))
 }
 
 export async function syncToolCallSnapshots(db: Database.Database, backend: SyncBackend, target: string,
   own: string, paths: string[], digests: Map<string, string> | undefined, wireIds: Map<string, string>): Promise<number> {
   if (!isSafeDeviceInstanceId(own)) throw new Error('Invalid tool call namespace owner')
+  let targets = peerCaches.get(db)
+  if (!targets) { targets = new Map(); peerCaches.set(db, targets) }
+  let cache = targets.get(target)
+  if (!cache) { cache = new Map(); targets.set(target, cache) }
   const listed = new Set(paths.filter(isToolCallPath))
   const known = db.prepare('SELECT DISTINCT owner FROM synced_tool_calls WHERE target = ?').all(target) as { owner: string }[]
   const owners = new Set([...known.map(row => row.owner), ...Array.from(listed, path => path.split('/')[0])])
@@ -40,10 +47,20 @@ export async function syncToolCallSnapshots(db: Database.Database, backend: Sync
     if (!isSafeDeviceInstanceId(owner)) continue
     const path = `${owner}/${fileName}`
     let calls: Call[]
+    const digest = digests?.get(path)
+    let cacheable = false
     try {
-      const remote = await backend.readFile(path)
-      if (remote === null && listed.has(path)) continue
-      calls = remote === null ? [] : parseCalls(remote, owner)
+      const saved = cache.get(owner)
+      if (digest && saved?.digest === digest && listed.has(path)) {
+        calls = saved.calls
+        cacheable = true
+      } else {
+        const remote = await backend.readFile(path)
+        if (remote === null && listed.has(path)) continue
+        calls = remote === null ? [] : parseCalls(remote, owner)
+        // A listing can race a write. Never associate new bytes with an old ETag.
+        cacheable = remote !== null && digest !== undefined && contentDigest(remote) === digest
+      }
     } catch {
       // A broken peer is not an authoritative empty snapshot.
       continue
@@ -52,7 +69,10 @@ export async function syncToolCallSnapshots(db: Database.Database, backend: Sync
       clear.run(target, owner)
       for (const call of calls) insert.run(target, owner, call.id, call.recordId, call.tool, call.name, call.ts, call.callIndex)
     }).immediate()
+    if (cacheable && digest) cache.set(owner, { digest, calls })
+    else cache.delete(owner)
   }
+  for (const owner of cache.keys()) if (!owners.has(owner)) cache.delete(owner)
 
   const calls: Call[] = []
   const local = db.prepare(`SELECT tc.id, tc.record_id AS recordId, COALESCE(r.tool, tc.tool, '') AS tool,

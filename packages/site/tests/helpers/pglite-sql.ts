@@ -12,6 +12,8 @@ import { PGlite, types, type Transaction } from '@electric-sql/pglite'
 type Runner = Pick<PGlite, 'query'> | Transaction
 
 const db = new PGlite()
+/** SQL text only, never parameter values; used to bound batch round trips. */
+export const executedStatements: string[] = []
 
 // postgres.js returns int8 and numeric columns as strings.
 const parsers = {
@@ -43,13 +45,15 @@ class Fragment implements PromiseLike<Record<string, unknown>[] & { count: numbe
 
   async execute(): Promise<Record<string, unknown>[] & { count: number }> {
     const { text, params } = this.build()
+    executedStatements.push(text)
     // postgres.js sends strings and numbers untyped and lets the server infer
     // the type from the statement; booleans and dates are typed.
     const paramTypes = params.map(p =>
       typeof p === 'boolean' ? types.BOOL : p instanceof Date ? types.TIMESTAMPTZ : 0
     )
     const serialized = params.map(p =>
-      p == null || typeof p === 'boolean' ? p : p instanceof Date ? p.toISOString() : String(p)
+      p == null || typeof p === 'boolean' ? p : p instanceof Date ? p.toISOString()
+        : Array.isArray(p) ? `{${p.map(value => value == null ? 'NULL' : `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}` : String(p)
     )
     const result = await this.runner().query<Record<string, unknown>>(text, serialized, { paramTypes, parsers })
     const rows = [...result.rows]
@@ -66,11 +70,13 @@ class Fragment implements PromiseLike<Record<string, unknown>[] & { count: numbe
 
 type Tag = ((strings: TemplateStringsArray, ...values: unknown[]) => Fragment) & {
   begin<T>(fn: (tx: Tag) => Promise<T>): Promise<T>
+  array(values: unknown[]): unknown[]
 }
 
 function tagFor(runner: () => Runner, inTransaction: boolean): Tag {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => new Fragment(runner, strings, values)
   return Object.assign(tag, {
+    array: (values: unknown[]) => values,
     begin<T>(fn: (tx: Tag) => Promise<T>): Promise<T> {
       if (inTransaction) throw new Error('nested begin is not supported')
       return db.transaction((tx) => fn(tagFor(() => tx, true)))

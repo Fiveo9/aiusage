@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // and the follow-up UPDATE ... RETURNING yields a row only for a newer record.
 const db = vi.hoisted(() => ({
   rows: new Map<string, number>(),
+  titles: new Map<string, string>(),
   recordQueries: [] as string[],
   recordParams: [] as unknown[][],
 }))
@@ -27,10 +28,19 @@ vi.mock('$lib/server/db/pool.js', () => {
     if (text.includes('INSERT INTO cloud_usage_records')) {
       db.recordQueries.push(text)
       db.recordParams.push(params)
-      const recordId = params[RECORD_ID_PARAM] as string
-      if (db.rows.has(recordId)) return Promise.resolve([])
-      db.rows.set(recordId, params[UPDATED_AT_PARAM] as number)
+      const ids = params[RECORD_ID_PARAM] as string[]
+      const versions = params[UPDATED_AT_PARAM] as number[]
+      const titles = params[18] as string[]
+      for (const [index, id] of ids.entries()) {
+        const current = db.rows.get(id)
+        if (current !== undefined && current >= versions[index]) continue
+        db.rows.set(id, versions[index])
+        db.titles.set(id, titles[index] || db.titles.get(id) || '')
+      }
       return Promise.resolve([{ id: 'row' }])
+    }
+    if (text.includes('SELECT record_id, updated_at::text, session_title')) {
+      return Promise.resolve([...db.rows].map(([record_id, updated_at]) => ({ record_id, updated_at: String(updated_at), session_title: db.titles.get(record_id) || '' })))
     }
     if (text.includes('UPDATE cloud_usage_records') && text.includes('RETURNING')) {
       db.recordQueries.push(text)
@@ -50,6 +60,7 @@ vi.mock('$lib/server/db/pool.js', () => {
     return Promise.resolve([])
   }
   sql.begin = (fn: (tx: typeof sql) => Promise<unknown>) => fn(sql)
+  sql.array = (values: unknown[]) => values
   return { sql }
 })
 
@@ -100,6 +111,7 @@ async function push(records: unknown[], tombstones: unknown[] = []) {
 describe('POST /api/cli/sync/push result counters', () => {
   beforeEach(() => {
     db.rows.clear()
+    db.titles.clear()
     db.recordQueries.length = 0
     db.recordParams.length = 0
   })
@@ -114,10 +126,10 @@ describe('POST /api/cli/sync/push result counters', () => {
     const title = '真实标题 / API'
     await push([record('named', 100, { sessionTitle: title })])
     expect(db.recordQueries[0]).toContain('session_title')
-    expect(db.recordParams[0][18]).toBe(title)
+    expect(db.titles.get('named')).toBe(title)
     await push([record('named', 200)])
-    expect(db.recordQueries.at(-1)).toContain("session_title = COALESCE(NULLIF(?, ''), cloud_usage_records.session_title)")
-    expect(db.recordParams.at(-1)?.[13]).toBe('')
+    expect(db.recordQueries.at(-1)).toContain("session_title = COALESCE(NULLIF(EXCLUDED.session_title, ''), cloud_usage_records.session_title)")
+    expect(db.titles.get('named')).toBe(title)
   })
 
   it('rejects a non-text or NUL-containing title before writing it', async () => {
@@ -154,13 +166,12 @@ describe('POST /api/cli/sync/push result counters', () => {
     expect(body).toMatchObject({ inserted: 1, updated: 1, skipped: 3 })
   })
 
-  it('only runs the guarded UPDATE when the INSERT hit an existing row', async () => {
+  it('uses one guarded batch upsert for new and newer records', async () => {
     db.rows.set('existing', 100)
     await push([record('fresh', 100), record('existing', 200)])
-    expect(db.recordQueries).toHaveLength(3)
-    expect(db.recordQueries[0]).toMatch(/DO NOTHING\s+RETURNING id/)
-    expect(db.recordQueries[1]).toMatch(/DO NOTHING\s+RETURNING id/)
-    expect(db.recordQueries[2]).toMatch(/AND updated_at < \?\s+RETURNING id/)
+    expect(db.recordQueries).toHaveLength(1)
+    expect(db.recordQueries[0]).toContain('FROM UNNEST(')
+    expect(db.recordQueries[0]).toContain('WHERE cloud_usage_records.updated_at < EXCLUDED.updated_at')
   })
 
   it('does not rely on PostgreSQL system columns', async () => {

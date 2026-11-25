@@ -1,9 +1,19 @@
 import postgres from 'postgres'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { registerSiteResource } from '../resource-lifecycle.js'
 
 let _sql: ReturnType<typeof postgres> | null = null
 let envLoaded = false
+let unregister: (() => void) | undefined
+
+export async function closeSql(options?: { timeout?: number }): Promise<void> {
+  const client = _sql
+  _sql = null
+  unregister?.()
+  unregister = undefined
+  if (client) await client.end(options ?? { timeout: 10 })
+}
 
 function loadLocalEnv(): void {
   if (envLoaded) return
@@ -41,12 +51,18 @@ function getSql(): ReturnType<typeof postgres> {
       throw new Error('DATABASE_URL environment variable is required')
     }
     _sql = postgres(databaseUrl, {
-      max: 10,
+      max: poolMax(process.env.DATABASE_POOL_MAX),
       idle_timeout: 20,
       connect_timeout: 10
     })
+    unregister = registerSiteResource(closeSql)
   }
   return _sql
+}
+
+export function poolMax(value: string | undefined): number {
+  const max = Number(value)
+  return Number.isSafeInteger(max) && max >= 1 && max <= 1000 ? max : 10
 }
 
 // sql is callable (for tagged template literals) and has properties (like .begin)
@@ -59,6 +75,7 @@ function sql(strings: TemplateStringsArray, ...values: postgres.ParameterOrFragm
 // the client, so it is typed as one (`sql.begin`, `sql.end`, ...).
 const sqlProxy = new Proxy(sql, {
   get(_target, prop) {
+    if (prop === 'end') return closeSql
     const db = getSql()
     return (db as unknown as Record<string | symbol, unknown>)[prop]
   },

@@ -2,6 +2,8 @@ node_modules/
 .git/
 .idea/
 *.tsbuildinfo
+**/*.timestamp-*.mjs
+/docs/
 .DS_Store
 packages/core/dist/
 packages/cli/dist/

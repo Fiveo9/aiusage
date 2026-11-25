@@ -44,10 +44,10 @@
         <p>{$t('support.wechatHint')}</p>
       </div>
     </div>
-    <a class="support-row" href="mailto:hi@jtanx.com">
+    <a class="support-row" href="https://github.com/Fiveo9/aiusage/issues" target="_blank" rel="noopener noreferrer">
       <span>
-        <strong>{$t('support.email')}</strong>
-        <small class="mono">hi@jtanx.com</small>
+        <strong>GitHub Issues</strong>
+        <small class="mono">Fiveo9/aiusage</small>
       </span>
       <span class="open-label">
         <span>{$t('support.open')}</span>

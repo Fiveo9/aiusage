@@ -51,7 +51,9 @@ for (const { file, current, next } of siteVersionFiles) {
 }
 
 function promoteUnreleased(file, marker, summary = '') {
-  const changelog = readFileSync(file, 'utf8')
+  const original = readFileSync(file, 'utf8')
+  const lineEnding = original.includes('\r\n') ? '\r\n' : '\n'
+  const changelog = original.replaceAll('\r\n', '\n')
   const markerIndex = changelog.indexOf(marker)
   if (markerIndex === -1) throw new Error(`${file} is missing ${marker}`)
   if (changelog.includes(`## [${nextVersion}]`)) {
@@ -75,7 +77,7 @@ function promoteUnreleased(file, marker, summary = '') {
     if (firstCompareLink === -1) throw new Error(`${file} has no compare-link section`)
     updated = `${updated.slice(0, firstCompareLink)}${compareLink}\n${updated.slice(firstCompareLink)}`
   }
-  if (!checkOnly) writeFileSync(file, updated)
+  if (!checkOnly) writeFileSync(file, updated.replaceAll('\n', lineEnding))
 }
 
 promoteUnreleased('CHANGELOG.md', '## [Unreleased]', description)

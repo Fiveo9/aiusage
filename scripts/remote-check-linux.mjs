@@ -46,8 +46,9 @@ async function tests(pkg, files) {
   const config = pkg === 'cli' && scope !== 'full' ? ['--config', 'vitest.review.config.ts'] : []
   let failure
   try {
-    await pnpmStep(`${pkg}-tests`, ['--dir', `packages/${pkg}`, 'exec', 'vitest', 'run', ...config, ...files,
-      '--minWorkers=1', '--maxWorkers=2', '--reporter=default', '--reporter=json', `--outputFile=${report}`], 'unit-test')
+    const command = scope === 'full' ? ['run', 'test'] : ['exec', 'vitest', 'run']
+    await pnpmStep(`${pkg}-tests`, ['--dir', `packages/${pkg}`, ...command, ...config, ...files,
+      '--testTimeout=15000', '--minWorkers=1', '--maxWorkers=2', '--reporter=default', '--reporter=json', `--outputFile=${report}`], 'unit-test')
   } catch (error) { failure = error }
   if (!existsSync(report)) throw failure || Error(`Missing ${pkg} test report`)
   const result = JSON.parse(readFileSync(report, 'utf8'))
@@ -140,7 +141,8 @@ try {
       const failedPackages = []
       for (const pkg of ['core', 'cli', 'widget', 'site', 'web']) {
         try {
-          if (pkg === 'site') await pnpmStep('site-sync', ['--dir', 'packages/site', 'exec', 'svelte-kit', 'sync'], 'remote-build')
+          if (['site', 'web'].includes(pkg)) await pnpmStep(`${pkg}-sync`, ['--dir', `packages/${pkg}`, 'exec', 'svelte-kit', 'sync'], 'remote-build')
+          await pnpmStep(`${pkg}-types`, ['--dir', `packages/${pkg}`, 'exec', 'tsc', '--noEmit'], 'type-check')
           await tests(pkg, [])
         } catch (error) { failedPackages.push(pkg); console.error(error.message) }
       }
@@ -154,10 +156,9 @@ try {
     await tests('site', scope === 'full' ? [] : ['tests/initialization.test.ts', 'tests/db/migration-lock.test.ts', 'tests/db/schema-migrations.test.ts', 'tests/db/entry-hidden-migration.pg.test.ts', 'tests/db/migration-atomicity.pg.test.ts'])
     }
   } else {
-    for (const pkg of ['web', 'cli', 'site']) await pnpmStep(`${pkg}-build`, ['--dir', `packages/${pkg}`, 'run', 'build'], 'remote-build')
-    await pnpmStep('widget-renderer', ['--dir', 'packages/widget', 'exec', 'vite', 'build'], 'remote-build')
-    await pnpmStep('widget-types', ['--dir', 'packages/widget', 'exec', 'tsc', '--noEmit'], 'remote-build')
-    summary.widgetNative = 'not_run'; summary.widgetGui = 'not_run'
+    await pnpmStep('workspace-build', ['run', 'build'], 'remote-build')
+    await pnpmStep('site-build', ['run', 'build:site'], 'remote-build')
+    summary.widgetGui = 'not_run'
   }
   summary.status = 'passed'; summary.exitCode = 0
   if (!['postgres', 'docker', 'package'].includes(scope)) summary.category = task === 'test' ? 'unit-test' : 'remote-build'

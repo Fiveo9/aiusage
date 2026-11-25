@@ -370,7 +370,7 @@
           <span class="lang-icon">{$lang === 'en' ? '中' : 'EN'}</span>
         </button>
 
-        <a class="ctrl-btn" href="https://aiusage.jtanx.com" target="_blank" rel="noopener" title="aiusage.jtanx.com" aria-label="Website">
+        <a class="ctrl-btn" href="https://github.com/Fiveo9/aiusage" target="_blank" rel="noopener" title="Fiveo9/aiusage" aria-label="Project website">
           <ExternalLink size={14} strokeWidth={1.8} />
         </a>
 

@@ -21,10 +21,11 @@
  * exotic platform) prints a warning but does not fail `npm install`; any
  * binary shipped in dist/native remains as a last-resort fallback.
  */
-const { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } = require('node:fs')
+const { existsSync, mkdirSync, mkdtempSync, copyFileSync, readFileSync, writeFileSync } = require('node:fs')
 const { dirname, join } = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { tmpdir } = require('node:os')
+const { recycleStage } = require('./recycle-stage.js')
 
 const widgetRoot = join(__dirname, '..')
 
@@ -67,7 +68,7 @@ function main() {
 
   // Run prebuild-install against a disposable copy of better-sqlite3's
   // package.json so the shared install (used by the Node-side CLI) is untouched.
-  const stageDir = join(tmpdir(), `aiusage-widget-native-${process.pid}`)
+  const stageDir = mkdtempSync(join(tmpdir(), 'aiusage-widget-native-'))
   try {
     mkdirSync(stageDir, { recursive: true })
     writeFileSync(join(stageDir, 'package.json'), readFileSync(betterSqlite3Pkg))
@@ -81,7 +82,7 @@ function main() {
         `--arch=${process.arch}`,
         `--platform=${process.platform}`,
       ],
-      { cwd: stageDir, stdio: 'inherit' },
+      { cwd: stageDir, stdio: 'pipe', windowsHide: true },
     )
 
     const built = join(stageDir, 'build', 'Release', 'better_sqlite3.node')
@@ -108,12 +109,12 @@ function main() {
       `[aiusage-widget] installed better-sqlite3 binding for electron ${electronVersion} (${process.platform}-${process.arch}).`,
     )
   } catch (error) {
-    warn(`failed to set up the native binding: ${error && error.message ? error.message : error}`)
+    warn('failed to set up the native binding; retry when the matching prebuild and network are available.')
   } finally {
     try {
-      rmSync(stageDir, { recursive: true, force: true })
+      recycleStage(widgetRoot, stageDir)
     } catch {
-      // ignore cleanup failures
+      warn('temporary native staging retained because safe recycling did not complete.')
     }
   }
 }

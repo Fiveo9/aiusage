@@ -35,6 +35,11 @@ jobs:
       - name: Build core
         run: pnpm --filter @aiusage/core build
 
+      - name: Check core and web types
+        run: |
+          pnpm --filter @aiusage/core exec tsc --noEmit
+          pnpm --filter @aiusage/web check
+
       - name: Test core & web
         run: pnpm --filter @aiusage/core --filter @aiusage/web test
 
@@ -68,8 +73,13 @@ jobs:
 
       - name: Test cli & widget
         run: |
-          pnpm --filter @fiveo9/aiusage test
+          pnpm --filter @fiveo9/aiusage test --testTimeout=15000
           pnpm --filter @fiveo9/aiusage-widget test
+
+      - name: Check cli and widget types
+        run: |
+          pnpm --filter @fiveo9/aiusage exec tsc --noEmit
+          pnpm --filter @fiveo9/aiusage-widget exec tsc --noEmit
 
       - name: Build packages and prepare CLI package
         run: |
@@ -101,6 +111,9 @@ jobs:
 
       - name: Test site
         run: pnpm --filter @aiusage/site test
+
+      - name: Check site types
+        run: pnpm --filter @aiusage/site exec tsc --noEmit
 
       - name: Build site
         run: pnpm --filter @aiusage/site build

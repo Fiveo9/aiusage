@@ -1,4 +1,4 @@
-appId: com.juliantanx.aiusage-widget
+appId: com.fiveo9.aiusage-widget
 productName: AIUsage Widget
 directories:
   output: dist-electron

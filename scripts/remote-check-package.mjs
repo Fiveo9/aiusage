@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 export function allowedSource(path) {
   if (!path || path.includes('\\') || path.startsWith('/') || path.split('/').includes('..')) return false
+  if (path.startsWith('docs/')) return false
   if (/(^|\/)\.env[^/]*(\/|$)/i.test(path)) return false
   if (/(^|\/)(\.env[^/]*|\.git|\.artifacts|\.runtime|backups|node_modules|dist|build|target|bin|obj|\.gradle|\.svelte-kit|\.pnpm-store|aiusage-data)(\/|$)/i.test(path)
       && !/^packages\/widget\/bin\/[^/]+\.js$/.test(path)) return false
@@ -13,7 +14,7 @@ export function allowedSource(path) {
   if (/\.(pem|key|p12|pfx|sqlite|sqlite3|db|tgz|zip|exe|dll|node)$/i.test(path)) return false
   if (/\.timestamp-.*\.mjs$/.test(path)) return false
   return /^(packages\/|scripts\/|docs\/|\.github\/workflows\/)/.test(path)
-    || /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.json|README(?:_zh)?\.md|LICENSE|Dockerfile|\.dockerignore|\.gitignore)$/.test(path)
+    || /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.json|README(?:_zh)?\.md|CHANGELOG(?:\.zh-CN)?\.md|LICENSE|Dockerfile|\.dockerignore|\.gitignore)$/.test(path)
 }
 
 export function packSource(workspace, destination) {

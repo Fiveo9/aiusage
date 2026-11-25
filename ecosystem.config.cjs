@@ -11,7 +11,7 @@ module.exports = {
       autorestart: true,
       watch: false,
     },
-    // Uncomment below if @juliantanx/aiusage-widget is installed globally
+    // Uncomment below if @fiveo9/aiusage-widget is installed globally
     // {
     //   name: 'aiusage-widget',
     //   script: 'aiusage-widget',

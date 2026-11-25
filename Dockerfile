@@ -1,12 +1,6 @@
-FROM node:22-slim
+FROM node:22-slim AS builder
 
 ARG AIUSAGE_CONTAINER_CHECK=0
-
-LABEL org.opencontainers.image.title="aiusage" \
-      org.opencontainers.image.description="Track AI coding assistant usage, token consumption, cost, and tool calls across Claude Code, Codex, OpenCode, and more" \
-      org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
-      org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
-      org.opencontainers.image.licenses="MIT"
 
 RUN if [ "$AIUSAGE_CONTAINER_CHECK" != "1" ]; then apt-get update && apt-get install -y --no-install-recommends python3 make g++; fi
 
@@ -30,9 +24,25 @@ RUN if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then \
 COPY . .
 # Only build server packages (skip Electron widget)
 RUN if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then export AIUSAGE_CHECK_ROOT=/app AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs"; fi; \
-    pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @fiveo9/aiusage build
+    pnpm --filter @aiusage/core build && pnpm --filter @aiusage/web build && pnpm --filter @fiveo9/aiusage build && \
+    pnpm --filter @fiveo9/aiusage deploy --prod /app/.deploy/cli
 
-VOLUME /root/.aiusage
+FROM node:22-slim AS runtime
+ARG BUILD_DATE
+LABEL org.opencontainers.image.title="aiusage" \
+      org.opencontainers.image.description="Track AI coding assistant usage, token consumption, cost, and tool calls" \
+      org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+WORKDIR /app
+COPY --from=builder --chown=node:node /app/.deploy/cli/ ./
+RUN mkdir -p /home/node/.aiusage && chown node:node /home/node/.aiusage
+ENV NODE_ENV=production
+ENV HOME=/home/node
+USER node
+VOLUME /home/node/.aiusage
 EXPOSE 3847
-
-CMD ["node", "packages/cli/dist/index.js", "serve", "--host", "0.0.0.0", "--port", "3847"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3847/api/auth/status').then(r=>{if(!r.ok)throw Error()}).catch(()=>process.exit(1))"
+CMD ["node", "dist/index.js", "serve", "--host", "0.0.0.0", "--port", "3847"]

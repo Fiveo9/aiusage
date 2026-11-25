@@ -16,7 +16,6 @@
     "demo:api": "pnpm --dir packages/cli exec tsx scripts/serve-demo-api.ts",
     "demo:gif": "node scripts/record-demo-gif.mjs",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
     "rebuild:sqlite": "node -e \"const path=require('path'),{execSync}=require('child_process'),dir=path.dirname(require.resolve('better-sqlite3/package.json',{paths:['packages/cli/node_modules','node_modules']}));execSync('npm run install',{cwd:dir,stdio:'inherit'})\"",
     "pm2:start": "node packages/cli/dist/index.js pm2-start",
     "pm2:stop": "pm2 stop ~/.aiusage/ecosystem.config.cjs",

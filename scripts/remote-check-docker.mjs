@@ -4,11 +4,14 @@ import { randomBytes } from 'node:crypto'
 import { createWriteStream, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { siteMigrationVersions } from './migration-expectations.mjs'
 
 const root = process.env.AIUSAGE_CHECK_ROOT, attempt = process.env.AIUSAGE_CHECK_ATTEMPT
 if (!/^\/data\/home\/aiusage-check\/\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(root || '')
   || !/^\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(attempt || '')) throw Error('Isolated reuse run required')
 const source = join(root, 'source'), output = join(root, 'attempts', attempt)
+const expectedVersions = siteMigrationVersions(source)
+const buildDate = new Date().toISOString()
 const suffix = attempt.toLowerCase()
 const cliImage = `aiusage-check-cli:${suffix}`, siteImage = `aiusage-check-site:${suffix}`
 const cli = `aiusage-cli-${suffix}`, site = `aiusage-site-${suffix}`, pg = `aiusage-site-pg-${suffix}`
@@ -21,7 +24,7 @@ function docker(args, seconds = 60) {
 async function build(name, file, tag) {
   console.log(`[docker-build] ${name}`)
   const log = createWriteStream(join(output, `docker-${name}-build.log`))
-  const child = spawn('docker', ['build', '--progress=plain', '--build-arg', 'AIUSAGE_CONTAINER_CHECK=1', '-f', file, '-t', tag, '.'],
+  const child = spawn('docker', ['build', '--progress=plain', '--build-arg', 'AIUSAGE_CONTAINER_CHECK=1', '--build-arg', `BUILD_DATE=${buildDate}`, '-f', file, '-t', tag, '.'],
     { cwd: source, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false })
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve) })
@@ -29,6 +32,9 @@ async function build(name, file, tag) {
   report.builds.push({ name, tag, exitCode: code })
   if (code !== 0) throw Error(`${name} image build failed; see docker-${name}-build.log`)
   report.builds.at(-1).imageId = docker(['image', 'inspect', tag, '--format', '{{.Id}}'])
+  assert.equal(docker(['image', 'inspect', tag, '--format', '{{.Config.User}}']), 'node'); report.assertions++
+  assert.equal(docker(['image', 'inspect', tag, '--format', '{{index .Config.Labels "org.opencontainers.image.created"}}']), buildDate); report.assertions++
+  assert.notEqual(docker(['image', 'inspect', tag, '--format', '{{json .Config.Healthcheck}}']), 'null'); report.assertions++
 }
 async function ready(container, script, label) {
   const deadline = Date.now() + 60000
@@ -48,6 +54,8 @@ try {
   process.env.AIUSAGE_DASHBOARD_PASSWORD = randomBytes(24).toString('hex')
   docker(['run', '-d', '--name', cli, '--network', 'none', '--label', `aiusage.check=${attempt}`, '-e', 'AIUSAGE_DASHBOARD_PASSWORD', cliImage])
   report.containers.push(cli)
+  assert.equal(docker(['exec', cli, 'id', '-u']), '1000'); report.assertions++
+  assert.equal(docker(['exec', cli, 'node', '-e', "const fs=require('node:fs');if(['packages/site','packages/web','/usr/bin/g++','/usr/bin/make'].some(p=>fs.existsSync(p)))process.exit(1);console.log('ok')"]), 'ok'); report.assertions++
   await ready(cli, "fetch('http://127.0.0.1:3847/api/auth/status').then(async r=>{const d=await r.json();if(r.status!==200||!d.enabled||d.authenticated)process.exit(1);console.log('ok')}).catch(()=>process.exit(1))", 'CLI')
   report.assertions++
   const cliCheck = docker(['exec', cli, 'node', '-e', `(async()=>{
@@ -73,7 +81,9 @@ try {
   await ready(site, "fetch('http://127.0.0.1:3000/api/health').then(async r=>{const d=await r.json();if(r.status!==200||d.status!=='ok'||d.db!=='connected')process.exit(1);console.log('ok')}).catch(()=>process.exit(1))", 'Site')
   report.assertions++
   const versions = docker(['exec', pg, 'psql', '-U', 'postgres', '-tAc', 'SELECT count(*) FROM schema_migrations'])
-  assert.equal(versions, '16'); report.assertions++
+  assert.equal(versions, String(expectedVersions.length)); report.assertions++
+  assert.equal(docker(['exec', pg, 'psql', '-U', 'postgres', '-tAc', 'SELECT max(version) FROM schema_migrations']), String(expectedVersions.at(-1))); report.assertions++
+  assert.equal(docker(['exec', site, 'id', '-u']), '1000'); report.assertions++
   for (const name of report.containers) {
     assert.equal(docker(['inspect', name, '--format', '{{json .HostConfig.PortBindings}}']), '{}')
     report.assertions++

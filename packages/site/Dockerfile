@@ -1,6 +1,5 @@
-FROM node:20-slim AS base
+FROM node:22-slim AS base
 
-ARG BUILD_DATE
 ARG AIUSAGE_CONTAINER_CHECK=0
 
 LABEL org.opencontainers.image.title="aiusage-site" \
@@ -10,12 +9,11 @@ LABEL org.opencontainers.image.title="aiusage-site" \
       org.opencontainers.image.documentation="https://github.com/Fiveo9/aiusage/tree/main/packages/site" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="Fiveonine" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.authors="Julian <juliantanx@users.noreply.github.com>"
+      org.opencontainers.image.authors="Fiveonine"
 
 WORKDIR /app
 
-# Pin pnpm to v9 (compatible with Node 20)
+# Use the same pnpm pin as the workspace packageManager.
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 FROM base AS builder
@@ -41,44 +39,29 @@ COPY packages/site/ packages/site/
 
 # Build
 RUN if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then export AIUSAGE_CHECK_ROOT=/app AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs"; fi; \
-    pnpm --filter @aiusage/core build && pnpm --filter @aiusage/site build
+    pnpm --filter @aiusage/core build && pnpm --filter @aiusage/site build && \
+    pnpm --filter @aiusage/site deploy --prod /app/.deploy/site
 
-FROM base AS prod-deps
-
-# Install production dependencies in their own layer. Source changes should not
-# invalidate this expensive step unless dependency manifests change.
-COPY packages/core/package.json packages/core/package.json
-COPY packages/site/package.json packages/site/package.json
-COPY scripts/remote-check-recycle.cjs scripts/
-RUN mkdir -p /deploy/packages/core && \
-    cp /app/packages/core/package.json /deploy/packages/core/package.json && \
-    cat /app/packages/site/package.json | \
-      node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('/dev/stdin','utf8')); delete pkg.devDependencies; delete pkg.scripts; pkg.type='module'; pkg.dependencies=pkg.dependencies||{}; pkg.dependencies['@aiusage/core']='file:./packages/core'; fs.writeFileSync('/deploy/package.json',JSON.stringify(pkg,null,2)+'\n')" && \
-    cd /deploy && \
-    if [ "$AIUSAGE_CONTAINER_CHECK" = "1" ]; then \
-      mkdir -p /deploy/.check-home /deploy/.check-tmp && \
-      HOME=/deploy/.check-home TMPDIR=/deploy/.check-tmp AIUSAGE_CHECK_ROOT=/deploy AIUSAGE_CONTAINER_CHECK=1 NODE_OPTIONS="--require /app/scripts/remote-check-recycle.cjs" npm install --omit=dev --ignore-scripts --no-audit --no-fund; \
-    else npm install --omit=dev --no-audit --no-fund; fi
-
-FROM node:20-slim
+FROM node:22-slim AS runtime
+ARG BUILD_DATE
 
 LABEL org.opencontainers.image.title="aiusage-site" \
       org.opencontainers.image.description="Official website and documentation for AIUsage — track AI coding assistant usage, token consumption, costs, and tool calls across Claude Code, Codex, Cursor, and more" \
       org.opencontainers.image.url="https://github.com/Fiveo9/aiusage" \
       org.opencontainers.image.source="https://github.com/Fiveo9/aiusage" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="Fiveonine"
+      org.opencontainers.image.vendor="Fiveonine" \
+      org.opencontainers.image.created="${BUILD_DATE}"
 
 WORKDIR /app
 
-COPY --from=builder /app/packages/site/build ./build
-COPY --from=prod-deps /deploy/package.json ./
-COPY --from=prod-deps /deploy/node_modules ./node_modules
-COPY --from=prod-deps /deploy/packages/core/package.json ./packages/core/package.json
-COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder --chown=node:node /app/.deploy/site/package.json ./
+COPY --from=builder --chown=node:node /app/.deploy/site/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/packages/site/build ./build
 
 ENV NODE_ENV=production
 ENV PORT=3000
+USER node
 
 EXPOSE 3000
 

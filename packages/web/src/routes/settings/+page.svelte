@@ -48,6 +48,7 @@
   let syncStatusData = null
   let syncRunning = false
   let cloudSyncAvailable = true
+  let cloudAccountUrl = 'https://github.com/Fiveo9/aiusage#aiusage-cloud'
   let syncPollTimer = null
   let syncStatusRequest = null
 
@@ -310,6 +311,7 @@
 
       void loadSyncStatusData()
       if (cfg.siteUrl) {
+        cloudAccountUrl = new URL('/settings#accounts', cfg.siteUrl).href
         fetchCloudSyncStatus(cfg.siteUrl).then(s => { if (!disposed) cloudSyncAvailable = s.enabled })
       }
     } catch (e) {
@@ -865,7 +867,7 @@
                   <span class="cloud-step-num">1</span>
                   <div class="cloud-step-body">
                     <span class="cloud-step-label">
-                      <a href="https://aiusage.jtanx.com/settings#accounts" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep1')}</a>
+                      <a href={cloudAccountUrl} target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep1')}</a>
                     </span>
                   </div>
                 </div>
@@ -873,7 +875,7 @@
                   <span class="cloud-step-num">2</span>
                   <div class="cloud-step-body">
                     <span class="cloud-step-label">
-                      <a href="https://github.com/juliantanx/aiusage" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep2')}</a>
+                      <a href="https://github.com/Fiveo9/aiusage" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep2')}</a>
                     </span>
                   </div>
                 </div>
@@ -1060,10 +1062,10 @@
                     {$t('settings.cloudBanned')}
                   {:else if syncStatusData.lastSyncError.includes('star') || syncStatusData.lastSyncError.includes('Star') || syncStatusData.lastSyncError.includes('STAR_REQUIRED')}
                     {$t('settings.syncStarRequired')}
-                    <a href="https://github.com/juliantanx/aiusage" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep2')}</a>
+                    <a href="https://github.com/Fiveo9/aiusage" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep2')}</a>
                   {:else if syncStatusData.lastSyncError.includes('bind') || syncStatusData.lastSyncError.includes('GitHub') || syncStatusData.lastSyncError.includes('GITHUB_BINDING')}
                     {$t('settings.syncGithubBindingRequired')}
-                    <a href="https://aiusage.jtanx.com/settings#accounts" target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep1')}</a>
+                    <a href={cloudAccountUrl} target="_blank" rel="noopener noreferrer" class="cloud-step-link">{$t('settings.syncCloudStep1')}</a>
                   {:else}
                     {syncStatusData.lastSyncError}
                   {/if}

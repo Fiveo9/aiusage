@@ -4,12 +4,14 @@ import { createRequire } from 'node:module'
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { siteMigrationVersions } from './migration-expectations.mjs'
 
 const root = process.env.AIUSAGE_CHECK_ROOT
 const attempt = process.env.AIUSAGE_CHECK_ATTEMPT
 if (!root || !/^\/data\/home\/aiusage-check\/\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(root)
   || !/^\d{8}T\d{6}Z-[a-f0-9]{8}$/.test(attempt || '')) throw Error('Isolated reuse run required')
 const source = join(root, 'source'), output = join(root, 'attempts', attempt)
+const expectedVersions = siteMigrationVersions(source)
 const site = join(source, 'packages/site')
 const require = createRequire(join(site, 'package.json'))
 const postgres = require('postgres')
@@ -90,7 +92,7 @@ try {
       assert.equal(await retry.done, 0); report.assertions++
     }
     const versions = await control`SELECT version FROM schema_migrations ORDER BY version`
-    assert.deepEqual(versions.map(row => row.version), [1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17]); report.assertions++
+    assert.deepEqual(versions.map(row => row.version), expectedVersions); report.assertions++
     report.scenarios.push({ name, distinctProcesses: true, waiterObserved: true, exits, versions: versions.length, retry: failure ? 'passed' : 'not_needed' })
   }
   report.status = 'passed'

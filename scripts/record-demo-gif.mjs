@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
+import { createRequire } from 'node:module'
+const { recycleTemporary } = createRequire(import.meta.url)('./recycle-output.cjs')
 import { spawn, spawnSync } from 'node:child_process'
 
 const DEFAULT_DB = join(tmpdir(), 'aiusage-demo', 'cache.db')
@@ -12,10 +14,10 @@ const SESSION = 'aiusage-demo-gif'
 const SHOTS = [
   { route: '/', file: '01-home.png', wait: 3200, duration: 1.7 },
   { route: '/tokens', file: '02-tokens-breakdown.png', wait: 1200, duration: 1.35 },
-  { route: '/tokens', file: '03-tokens-total.png', wait: 600, duration: 1.05, click: '.mode-toggle button:nth-child(2)' },
+  { route: '/tokens', file: '03-tokens-total.png', wait: 600, duration: 1.05, click: '.segmented button:nth-child(2)' },
   { route: '/cost', file: '04-cost.png', wait: 1200, duration: 1.35 },
   { route: '/models', file: '05-models-tokens.png', wait: 1200, duration: 1.25 },
-  { route: '/models', file: '06-models-cost.png', wait: 600, duration: 1.05, click: '.mode-toggle button:nth-child(2)' },
+  { route: '/models', file: '06-models-cost.png', wait: 600, duration: 1.05, click: '.segmented button:nth-child(2)' },
   { route: '/sessions', file: '07-sessions.png', wait: 1000, duration: 1.25 },
   { route: '/projects', file: '08-projects.png', wait: 1000, duration: 1.15 },
   { route: '/tool-calls', file: '09-tool-calls.png', wait: 1000, duration: 1.15, click: '.type-tabs button:nth-child(3)' },
@@ -74,10 +76,12 @@ function todayYmd() {
 }
 
 function run(command, args, options = {}) {
+  ;[command, args] = launchCommand(command, args)
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
     stdio: options.stdio ?? 'inherit',
     env: { ...process.env, ...(options.env ?? {}) },
+    windowsHide: true,
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
@@ -87,15 +91,33 @@ function run(command, args, options = {}) {
 }
 
 function commandExists(command) {
-  const result = spawnSync('which', [command], { stdio: 'ignore' })
+  const result = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [command], { stdio: 'ignore', windowsHide: true })
   return result.status === 0
 }
 
+function launchCommand(command, args) {
+  if (process.platform !== 'win32') return [command, args]
+  const found = spawnSync('where.exe', [command], { encoding: 'utf8', windowsHide: true })
+  const executable = found.status === 0 && found.stdout?.split(/\r?\n/).map(file => file.trim())
+    .find(file => /\.(exe|com|cmd|bat)$/i.test(file))
+  if (!executable) throw Error(`Command not found: ${command}`)
+  if (!/\.(cmd|bat)$/i.test(executable)) return [executable, args]
+  // Npm/corepack shims name their JS entry; execute that entry with Node,
+  // keeping arguments out of a string-built cmd.exe command.
+  const text = readFileSync(executable, 'utf8')
+  const entry = /%(?:~dp0|dp0)%?[\\/](node_modules[\\/][^"\r\n]+?\.(?:cjs|mjs|js))/i.exec(text)?.[1]
+  const script = entry && resolve(dirname(executable), entry)
+  if (!script || !script.startsWith(dirname(executable) + '\\') || !existsSync(script)) throw Error(`Unsupported command shim: ${command}`)
+  return [process.execPath, [script, ...args]]
+}
+
 function start(command, args, name, env = {}) {
+  ;[command, args] = launchCommand(command, args)
   const child = spawn(command, args, {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
+    windowsHide: true,
   })
   child.stdout.on('data', chunk => process.stdout.write(`[${name}] ${chunk}`))
   child.stderr.on('data', chunk => process.stderr.write(`[${name}] ${chunk}`))
@@ -193,7 +215,7 @@ async function main() {
     try { agent(['close'], 'ignore') } catch {}
     if (api) api.kill('SIGTERM')
     if (web) web.kill('SIGTERM')
-    if (!options.keepFrames) rmSync(frameDir, { recursive: true, force: true })
+    if (!options.keepFrames) recycleTemporary(process.cwd(), frameDir, 'aiusage-demo-frames-')
     else console.log(`Frames kept at ${frameDir}`)
   }
 

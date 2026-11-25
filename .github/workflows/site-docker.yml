@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    paths:
-      - 'packages/site/**'
-      - 'packages/core/**'
-      - '.github/workflows/site-docker.yml'
-      - 'pnpm-lock.yaml'
   workflow_dispatch:
 
 env:
@@ -43,7 +38,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
             type=sha,prefix=
           labels: |
             org.opencontainers.image.title=aiusage-site
@@ -53,6 +48,10 @@ jobs:
             org.opencontainers.image.documentation=https://github.com/Fiveo9/aiusage/tree/main/packages/site
             org.opencontainers.image.licenses=MIT
             org.opencontainers.image.vendor=Fiveonine
+
+      - name: Determine build date
+        id: build_date
+        run: echo "value=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -65,7 +64,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || steps.build_date.outputs.value }}
 
       - name: Update Docker Hub description
         uses: peter-evans/dockerhub-description@v4

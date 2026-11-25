@@ -3,6 +3,7 @@ node_modules/
 .pnpm-store/
 dist/
 *.tsbuildinfo
+*.timestamp-*.mjs
 .svelte-kit/
 packages/site/build/
 

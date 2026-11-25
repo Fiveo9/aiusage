@@ -846,23 +846,14 @@ describe('Cursor import (#83)', () => {
 
 function makeSnapshotRepo(repoPath: string, tags: Array<{ name: string; ts: number }>): void {
   mkdirSync(repoPath, { recursive: true })
-  const git = (args: string[], ts?: number) => {
-    const env = { ...process.env }
-    if (ts != null) {
-      env.GIT_AUTHOR_DATE = `@${ts} +0000`
-      env.GIT_COMMITTER_DATE = `@${ts} +0000`
-    }
-    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf-8', env })
+  const git = (args: string[], input?: string) => {
+    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf-8', input })
     if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
   }
   git(['init', '-q'])
-  git(['config', 'user.email', 'test@example.com'])
-  git(['config', 'user.name', 'Test'])
-  git(['config', 'commit.gpgsign', 'false'])
-  for (const { name, ts } of tags) {
-    git(['commit', '--allow-empty', '-q', '-m', name], ts)
-    git(['tag', name])
-  }
+  // Preserve real lightweight tags and individual dates without per-tag commit/tag processes.
+  const input = tags.map(({ name, ts }) => `commit refs/tags/${name}\ncommitter Test <test@example.com> ${ts} +0000\ndata ${Buffer.byteLength(name)}\n${name}\n\n`).join('')
+  git(['fast-import', '--quiet'], input)
 }
 
 describe('Trae import (#84)', () => {

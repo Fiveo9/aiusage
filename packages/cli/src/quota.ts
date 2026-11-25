@@ -10,7 +10,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir, platform } from 'node:os'
-import { execSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,18 +89,15 @@ function isExpired(expiresAt: unknown): boolean {
 
 // ── macOS Keychain helper ────────────────────────────────────────────────────
 
-function readFromKeychain(service: string): string | null {
+async function readFromKeychain(service: string): Promise<string | null> {
   if (platform() !== 'darwin') return null
   try {
-    const result = execSync(`security find-generic-password -s "${service}" -w 2>/dev/null`, {
-      timeout: 3000,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
-    return result || null
-  } catch {
-    return null
-  }
+    return await new Promise<string | null>(resolve => {
+      execFile('security', ['find-generic-password', '-s', service, '-w'], {
+        timeout: 3000, encoding: 'utf8', windowsHide: true,
+      }, (error, stdout) => resolve(error ? null : stdout.trim() || null))
+    })
+  } catch { return null }
 }
 
 // ── Claude Code credential reading ──────────────────────────────────────────
@@ -137,9 +134,9 @@ function parseClaudeCredJson(content: string): ClaudeCredResult {
   return { token: accessToken, status: 'valid', message: null }
 }
 
-function readClaudeCredentials(): ClaudeCredResult {
+async function readClaudeCredentials(): Promise<ClaudeCredResult> {
   // Try macOS Keychain first
-  const keychainJson = readFromKeychain('Claude Code-credentials')
+  const keychainJson = await readFromKeychain('Claude Code-credentials')
   if (keychainJson) {
     const keychainResult = parseClaudeCredJson(keychainJson)
     if (keychainResult.status === 'valid' || keychainResult.status === 'expired') {
@@ -209,9 +206,9 @@ function parseCodexCredJson(content: string): CodexCredResult {
   return { token: accessToken, accountId, status: 'valid', message: null }
 }
 
-function readCodexCredentials(): CodexCredResult {
+async function readCodexCredentials(): Promise<CodexCredResult> {
   // Try macOS Keychain first
-  const keychainJson = readFromKeychain('Codex Auth')
+  const keychainJson = await readFromKeychain('Codex Auth')
   if (keychainJson) {
     const keychainResult = parseCodexCredJson(keychainJson)
     if (keychainResult.status === 'valid' || keychainResult.status === 'expired') {
@@ -525,7 +522,7 @@ async function callCopilotQuotaApi(token: string): Promise<QuotaResult> {
 
 /** Query Claude Code official subscription quota */
 export async function queryClaudeCodeQuota(): Promise<QuotaResult> {
-  const cred = readClaudeCredentials()
+  const cred = await readClaudeCredentials()
 
   if (cred.status === 'not_found') return notFound('claude-code')
   if (cred.status === 'parse_error') return parseError('claude-code', cred.message ?? 'Failed to parse credentials')
@@ -544,7 +541,7 @@ export async function queryClaudeCodeQuota(): Promise<QuotaResult> {
 
 /** Query Codex official subscription quota */
 export async function queryCodexQuota(): Promise<QuotaResult> {
-  const cred = readCodexCredentials()
+  const cred = await readCodexCredentials()
 
   if (cred.status === 'not_found') return notFound('codex')
   if (cred.status === 'parse_error') return parseError('codex', cred.message ?? 'Failed to parse credentials')

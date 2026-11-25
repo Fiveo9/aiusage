@@ -1,5 +1,5 @@
 import { Command } from 'commander'
-import { writeFileSync } from 'node:fs'
+import { createWriteStream, writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { parseServePort, serve } from './commands/serve.js'
 import { runInit } from './commands/init.js'
@@ -8,7 +8,7 @@ import { safeGitHubError } from './github/auth.js'
 import { runSync, runSyncRepair, formatRepairReport, formatForgetTargetReport, syncUsageError } from './commands/sync.js'
 import { generateSummary } from './commands/summary.js'
 import { generateStatus } from './commands/status.js'
-import { exportData } from './commands/export.js'
+import { writeExportData } from './commands/export.js'
 import { DateOptionError, resolveDateBounds, type DateBounds, type DateOptions } from './commands/date-options.js'
 import { cleanOldData, cleanAll, getRemoteBackends, cleanReachesBackend, propagateClean } from './commands/clean.js'
 import { recalcPricing } from './commands/recalc.js'
@@ -173,7 +173,7 @@ program
   .option('--from <date>', 'Start date (YYYY-MM-DD)')
   .option('--to <date>', 'End date (YYYY-MM-DD)')
   .option('-o, --output <file>', 'Output file (default: stdout)')
-  .action((options) => {
+  .action(async (options) => {
     const format = options.format as 'csv' | 'json' | 'ndjson'
     if (!['csv', 'json', 'ndjson'].includes(format)) {
       console.error('Invalid format. Use csv, json, or ndjson.')
@@ -190,14 +190,10 @@ program
     }
     const bounds = dateBoundsOrExit({ range, from: options.from, to: options.to })
     const db = createDatabase(DB_PATH)
-    const data = exportData(db, format, bounds)
-    if (options.output) {
-      writeFileSync(options.output, data, 'utf-8')
-      console.log(`Exported to ${options.output}`)
-    } else {
-      console.log(data)
-    }
-    db.close()
+    try {
+      await writeExportData(db, format, options.output ? createWriteStream(options.output) : process.stdout, bounds, !options.output)
+      if (options.output) console.log(`Exported to ${options.output}`)
+    } finally { db.close() }
   })
 
 // parse command

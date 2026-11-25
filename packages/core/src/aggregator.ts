@@ -1,4 +1,5 @@
-import type { Tool, ParseContext, ParseResult, RecordIdBuilder } from './types.js'
+import type { Tool, ParseContext, ParseResult, RecordIdBuilder, ParserSnapshot } from './types.js'
+import { isStateObject } from './parser-state.js'
 import type { Parser } from './parsers/index.js'
 import { ClaudeCodeParser } from './parsers/claude-code.js'
 import { CodexParser } from './parsers/codex.js'
@@ -75,5 +76,20 @@ export class Aggregator {
       }
     }
     return results
+  }
+
+  hasState(tool: Tool): boolean {
+    return typeof this.parsers.get(tool)?.restoreState === 'function'
+  }
+
+  getState(tool: Tool): ParserSnapshot | undefined {
+    const parser = this.parsers.get(tool)
+    return parser?.getState ? { version: 1, tool, data: parser.getState() } : undefined
+  }
+
+  restoreState(tool: Tool, snapshot: unknown, context: ParseContext): boolean {
+    if (!isStateObject(snapshot) || snapshot.version !== 1 || snapshot.tool !== tool || context.tool !== tool) return false
+    try { return this.parsers.get(tool)?.restoreState?.(snapshot.data, context) === true }
+    catch { return false }
   }
 }

@@ -5,6 +5,7 @@ import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { normalizeQoderModel } from '../qoder-model.js'
 import { parseTimestamp } from '../timestamp.js'
+import { isStateObject, readPendingCalls } from '../parser-state.js'
 
 interface PendingToolCall {
   name: string
@@ -26,6 +27,23 @@ function toTimestamp(value: unknown, fallback: number): number {
 export class QoderParser implements Parser {
   readonly tool: Tool = 'qoder'
   private pendingToolCallsByLoopId = new Map<string, PendingToolCall[]>()
+
+  getState(): unknown {
+    return { pendingByLoop: [...this.pendingToolCallsByLoopId].map(([loop, calls]) => [loop, calls.map(call => ({ ...call }))]) }
+  }
+
+  restoreState(state: unknown, context: ParseContext): boolean {
+    if (!isStateObject(state) || !Array.isArray(state.pendingByLoop)) return false
+    const pending = new Map<string, PendingToolCall[]>()
+    for (const pair of state.pendingByLoop) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== 'string') return false
+      const calls = readPendingCalls(pair[1], context.replayCutoff ?? 0)
+      if (!calls) return false
+      pending.set(pair[0], calls)
+    }
+    this.pendingToolCallsByLoopId = pending
+    return true
+  }
 
   parseLine(line: string, context: ParseContext): ParseResult | null {
     let parsed: any

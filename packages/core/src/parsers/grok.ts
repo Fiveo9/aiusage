@@ -3,6 +3,7 @@ import { recordIdFor } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { parseTimestamp } from '../timestamp.js'
+import { isOffset, isStateObject } from '../parser-state.js'
 
 const UNKNOWN_MODEL = 'grok-unknown'
 
@@ -53,6 +54,41 @@ export class GrokParser implements Parser {
   private lastTotal: number | null = null
   private activeTurn: ActiveTurn | null = null
   private fallback: ActiveTurn | null = null
+
+  getState(): unknown {
+    const serialize = (turn: ActiveTurn | null) => {
+      if (!turn) return null
+      const { context, ...fields } = turn
+      return { ...fields, contextOffset: context.lineOffset }
+    }
+    return { currentModel: this.currentModel, lastTotal: this.lastTotal,
+      activeTurn: serialize(this.activeTurn), fallback: serialize(this.fallback) }
+  }
+
+  restoreState(state: unknown, context: ParseContext): boolean {
+    if (!isStateObject(state) || typeof state.currentModel !== 'string'
+      || (state.lastTotal !== null && !isOffset(state.lastTotal))) return false
+    const hydrate = (value: unknown): ActiveTurn | null | undefined => {
+      if (value === null) return null
+      if (!isStateObject(value) || !isOffset(value.baselineTotal) || !isOffset(value.maxTotal)
+        || value.maxTotal < value.baselineTotal || !isOffset(value.lineOffset) || !isOffset(value.contextOffset)
+        || value.contextOffset < value.lineOffset || value.contextOffset >= (context.replayCutoff ?? 0)
+        || typeof value.timestamp !== 'number' || !Number.isFinite(value.timestamp)
+        || typeof value.model !== 'string' || typeof value.sessionId !== 'string') return undefined
+      return { baselineTotal: value.baselineTotal, maxTotal: value.maxTotal, lineOffset: value.lineOffset,
+        timestamp: value.timestamp, model: value.model, sessionId: value.sessionId,
+        context: { ...context, lineOffset: value.contextOffset } }
+    }
+    const activeTurn = hydrate(state.activeTurn)
+    const fallback = hydrate(state.fallback)
+    if (activeTurn === undefined || fallback === undefined) return false
+    if ((activeTurn && fallback) || [activeTurn, fallback].some(turn => turn && (state.lastTotal === null || turn.maxTotal > (state.lastTotal as number)))) return false
+    this.currentModel = state.currentModel
+    this.lastTotal = state.lastTotal
+    this.activeTurn = activeTurn
+    this.fallback = fallback
+    return true
+  }
 
   parseLine(line: string, context: ParseContext): ParseResult | null {
     let parsed: any

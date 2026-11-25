@@ -4,7 +4,8 @@ import {
   CURATED_PRICES,
   setRuntimePriceTable,
   setPriceOverride,
-  resolveModelPriceMatch,
+  compileModelPriceMatcher,
+  type ModelPriceMatcher,
   planLitellmPricing,
   type LitellmEntry,
   type PriceEntry,
@@ -644,10 +645,20 @@ interface RegistryMatch {
 }
 
 interface RegistryMatchTables {
+  rows: ModelPriceRow[]
+  aliasRows: AliasRow[]
   exact: Record<string, RegistryMatch>
   prefix: Record<string, RegistryMatch>
   aliases: Map<string, AliasRow>
 }
+
+interface PricingSnapshot {
+  tables: RegistryMatchTables
+  matcher: ModelPriceMatcher<RegistryMatch>
+  localBindings?: PricingLocalModelBinding[]
+}
+
+const binaryCompare = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b))
 
 /** Same two tables as runtime: aliases are exact unless explicitly prefix. */
 function loadRegistryMatchTables(db: Database.Database): RegistryMatchTables {
@@ -661,7 +672,8 @@ function loadRegistryMatchTables(db: Database.Database): RegistryMatchTables {
   const byKey = new Map(rows.map(row => [row.model_key, row]))
   for (const row of rows) exact[row.model_key] = prefix[row.model_key] = { row, price: rowToPrice(row) }
   const aliases = new Map<string, AliasRow>()
-  for (const alias of loadAliasRows(db)) {
+  const aliasRows = loadAliasRows(db)
+  for (const alias of aliasRows) {
     const row = byKey.get(alias.model_key)
     if (!row) continue
     aliases.set(alias.alias, alias)
@@ -672,7 +684,7 @@ function loadRegistryMatchTables(db: Database.Database): RegistryMatchTables {
     exact[alias.alias] = entry
     if (alias.match_type === 'prefix') prefix[alias.alias] = entry
   }
-  return { exact, prefix, aliases }
+  return { rows, aliasRows, exact, prefix, aliases }
 }
 
 export function resolvePriceFromRegistry(db: Database.Database, model: string): PriceEntry | undefined {
@@ -717,6 +729,7 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
   const userPrices = new Map<string, PriceEntry | null>()
   const prices = new Map<string, PriceEntry | null>()
   let tables: RegistryMatchTables | undefined
+  let matcher: ModelPriceMatcher<RegistryMatch> | undefined
 
   const userPrice = (model: string): PriceEntry | null => {
     let entry = userPrices.get(model)
@@ -734,7 +747,8 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
     const alias = exactAlias.get(model) as PriceColumns | undefined
     if (alias) return rowToPrice(alias)
     tables ??= loadRegistryMatchTables(db)
-    return resolveModelPriceMatch(model, tables.exact, tables.prefix)?.entry.price
+    matcher ??= compileModelPriceMatcher(tables.exact, tables.prefix)
+    return matcher(model)?.entry.price
   }
 
   return {
@@ -750,24 +764,26 @@ export function createRegistryPriceLookup(db: Database.Database): RegistryPriceL
   }
 }
 
-function findMatch(db: Database.Database, model: string): { price: PriceEntry; row: ModelPriceRow; matchedBy: string | null } | null {
-  const tables = loadRegistryMatchTables(db)
-  const match = resolveModelPriceMatch(model, tables.exact, tables.prefix)
+function findMatch(db: Database.Database, model: string, matcher?: ModelPriceMatcher<RegistryMatch>): { price: PriceEntry; row: ModelPriceRow; matchedBy: string | null } | null {
+  if (!matcher) { const tables = loadRegistryMatchTables(db); matcher = compileModelPriceMatcher(tables.exact, tables.prefix) }
+  const match = matcher(model)
   if (!match) return null
   const { price, row, alias } = match.entry
   const matchedBy = match.key === model ? (alias && row.model_key !== model ? row.model_key : null) : match.key
   return { price, row, matchedBy }
 }
 
-export function listPricingModels(db: Database.Database): PricingModelView[] {
+export function listPricingModels(db: Database.Database, snapshot?: PricingSnapshot): PricingModelView[] {
   const dbModels = db.prepare("SELECT model, COUNT(*) as usage_count FROM records WHERE model != 'unknown' GROUP BY model ORDER BY usage_count DESC, model ASC").all() as Array<{ model: string; usage_count: number }>
   const knownModels = new Set(dbModels.map(row => row.model))
-  const userRows = loadUserRows(db)
+  const userRows = snapshot ? snapshot.tables.rows.filter(row => row.origin === 'user') : loadUserRows(db)
   for (const row of userRows) knownModels.add(row.model_key)
   const syncedBaselines = new Set(loadSyncedBaselineRows(db).map(row => row.model_key))
+  const tables = snapshot?.tables ?? loadRegistryMatchTables(db)
+  const matcher = snapshot?.matcher ?? compileModelPriceMatcher(tables.exact, tables.prefix)
 
   return [...knownModels].map((model) => {
-    const match = findMatch(db, model)
+    const match = findMatch(db, model, matcher)
     if (!match) {
       return {
         model,
@@ -803,8 +819,15 @@ export function listPricingModels(db: Database.Database): PricingModelView[] {
   })
 }
 
-export function getPricingRegistrySummary(db: Database.Database): PricingRegistrySummary {
-  const priceCounts = db.prepare(`
+export function getPricingRegistrySummary(db: Database.Database, snapshot?: PricingSnapshot): PricingRegistrySummary {
+  const snapshotRows = snapshot?.tables.rows
+  const priceCounts = snapshotRows ? {
+    totalPrices: snapshotRows.length,
+    builtinPrices: snapshotRows.filter(row => row.origin === 'builtin').length,
+    userPrices: snapshotRows.filter(row => row.origin === 'user').length,
+    lastSyncedAt: snapshotRows.reduce<number | null>((max, row) => row.last_synced_at == null ? max
+      : max === null ? row.last_synced_at : Math.max(max, row.last_synced_at), null),
+  } : db.prepare(`
     SELECT
       COUNT(*) AS totalPrices,
       SUM(CASE WHEN origin = 'builtin' THEN 1 ELSE 0 END) AS builtinPrices,
@@ -814,13 +837,15 @@ export function getPricingRegistrySummary(db: Database.Database): PricingRegistr
     WHERE status = 'active'
   `).get() as { totalPrices: number; builtinPrices: number | null; userPrices: number | null; lastSyncedAt: number | null }
 
-  const aliasCounts = db.prepare(`
+  const aliasCounts = snapshot ? { activeAliases: snapshot.tables.aliasRows.length } : db.prepare(`
     SELECT COUNT(*) AS activeAliases
     FROM model_price_aliases
     WHERE enabled = 1
   `).get() as { activeAliases: number }
 
-  const dryRun = dryRunLocalModels(db)
+  const bindings = snapshot ? listLocalModelBindings(db, snapshot) : undefined
+  const dryRun = bindings ? { totalModels: bindings.length, matched: bindings.filter(binding => binding.hasPrice).length,
+    unresolved: bindings.filter(binding => !binding.hasPrice).map(binding => binding.model).slice(0, 50) } : dryRunLocalModels(db)
   return {
     totalPrices: Number(priceCounts.totalPrices ?? 0),
     builtinPrices: Number(priceCounts.builtinPrices ?? 0),
@@ -833,8 +858,9 @@ export function getPricingRegistrySummary(db: Database.Database): PricingRegistr
   }
 }
 
-export function listPricingAliasTargets(db: Database.Database): PricingAliasTarget[] {
-  const rows = db.prepare(`
+export function listPricingAliasTargets(db: Database.Database, snapshot?: PricingSnapshot): PricingAliasTarget[] {
+  const rows = snapshot ? [...snapshot.tables.rows].sort((a, b) => -binaryCompare(a.origin, b.origin)
+    || binaryCompare(a.provider, b.provider) || binaryCompare(a.model_key, b.model_key)) : db.prepare(`
     SELECT model_key, provider, origin, source, source_model_id, currency
     FROM model_prices
     WHERE status = 'active'
@@ -851,11 +877,13 @@ export function listPricingAliasTargets(db: Database.Database): PricingAliasTarg
   }))
 }
 
-export function listLocalModelBindings(db: Database.Database): PricingLocalModelBinding[] {
+export function listLocalModelBindings(db: Database.Database, snapshot?: PricingSnapshot): PricingLocalModelBinding[] {
+  if (snapshot?.localBindings) return snapshot.localBindings
   const rows = db.prepare("SELECT DISTINCT model FROM records WHERE model != 'unknown' ORDER BY model ASC").all() as Array<{ model: string }>
-  const tables = loadRegistryMatchTables(db)
-  return rows.map(({ model }): PricingLocalModelBinding => {
-    const match = resolveModelPriceMatch(model, tables.exact, tables.prefix)
+  const tables = snapshot?.tables ?? loadRegistryMatchTables(db)
+  const matcher = snapshot?.matcher ?? compileModelPriceMatcher(tables.exact, tables.prefix)
+  const bindings = rows.map(({ model }): PricingLocalModelBinding => {
+    const match = matcher(model)
     if (!match) return { model, modelKey: null, origin: null, priceOrigin: null, source: null, matchType: null, bindingType: 'none', hasManualBinding: false, hasPrice: false }
     const { row, alias } = match.entry
     const configuredAlias = alias ?? (match.matchType === 'exact' ? tables.aliases.get(match.key) : undefined)
@@ -872,6 +900,8 @@ export function listLocalModelBindings(db: Database.Database): PricingLocalModel
       hasPrice: true,
     }
   })
+  if (snapshot) snapshot.localBindings = bindings
+  return bindings
 }
 
 export function dryRunLocalModels(db: Database.Database): PricingSyncSummary['dryRun'] {
@@ -886,13 +916,26 @@ export function dryRunLocalModels(db: Database.Database): PricingSyncSummary['dr
   return { totalModels: models.length, matched, unresolved: unresolved.slice(0, 50) }
 }
 
-export function getUserAliasBindings(db: Database.Database): PricingAliasBinding[] {
+export function getUserAliasBindings(db: Database.Database, snapshot?: PricingSnapshot): PricingAliasBinding[] {
+  if (snapshot) return snapshot.tables.aliasRows.filter(row => row.origin === 'user').sort((a, b) => binaryCompare(a.alias, b.alias))
+    .map(row => ({ alias: row.alias, modelKey: row.model_key, origin: row.origin, source: row.source }))
   return db.prepare(`
     SELECT alias, model_key AS modelKey, origin, source
     FROM model_price_aliases
     WHERE origin = 'user' AND enabled = 1
     ORDER BY alias ASC
   `).all() as PricingAliasBinding[]
+}
+
+/** All pricing GET fields share the same two table loads and compiled matcher. */
+export function getPricingView(db: Database.Database) {
+  const tables = loadRegistryMatchTables(db)
+  const snapshot: PricingSnapshot = { tables, matcher: compileModelPriceMatcher(tables.exact, tables.prefix) }
+  return {
+    models: listPricingModels(db, snapshot), registry: getPricingRegistrySummary(db, snapshot),
+    targets: listPricingAliasTargets(db, snapshot), aliasBindings: getUserAliasBindings(db, snapshot),
+    localBindings: listLocalModelBindings(db, snapshot),
+  }
 }
 
 function buildDrySummary(db: Database.Database, source: 'litellm'): PricingSyncSummary {

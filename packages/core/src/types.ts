@@ -152,4 +152,14 @@ export interface Parser {
   tool: Tool
   parseLine(line: string, context: ParseContext): ParseResult | null
   finalize?(replayCutoff?: number): ParseResult[] // Historical input updates state but must not be emitted again.
+  /** Capture before finalize; never include source text, prompts or arguments. */
+  getState?(): unknown
+  /** False means the caller must replay the complete file once. */
+  restoreState?(state: unknown, context: ParseContext): boolean
+}
+
+export interface ParserSnapshot {
+  version: 1
+  tool: Tool
+  data: unknown
 }

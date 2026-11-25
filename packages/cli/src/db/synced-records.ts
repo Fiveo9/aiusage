@@ -3,6 +3,8 @@ import type { SyncRecord } from '@aiusage/core'
 import { UNKNOWN_DEVICE_INSTANCE_ID } from './records.js'
 import { getNamespaceVerdicts, hasClaim, nextSyncTick, recordNamespaceVerdict, releaseClaim, UNKNOWN_NAMESPACE_VERDICT } from './sync-claims.js'
 
+const syncedRecordInsertStatements = new WeakMap<Database.Database, Database.Statement>()
+
 /**
  * Upsert a pulled record. A new row starts *unresolved* (`unclaimed_since =
  * tick`, the sync clock tick of the pull, see `nextSyncTick`): no target
@@ -16,7 +18,7 @@ import { getNamespaceVerdicts, hasClaim, nextSyncTick, recordNamespaceVerdict, r
 export function insertSyncedRecord(db: Database.Database, record: SyncRecord, tick: number = nextSyncTick(db)): boolean {
   // Only replace if the incoming record is newer than what we already have.
   // Without this check, a stale remote record could silently overwrite a newer one.
-  const result = db.prepare(`
+  const statement = syncedRecordInsertStatements.get(db) ?? db.prepare(`
     INSERT INTO synced_records (
       id, ts, tool, model, provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, thinking_tokens,
@@ -49,7 +51,9 @@ export function insertSyncedRecord(db: Database.Database, record: SyncRecord, ti
       cwd = excluded.cwd,
       session_title = CASE WHEN excluded.session_title != '' THEN excluded.session_title ELSE synced_records.session_title END
     WHERE excluded.updated_at > synced_records.updated_at
-  `).run({
+  `)
+  syncedRecordInsertStatements.set(db, statement)
+  const result = statement.run({
     id: record.id,
     ts: record.ts,
     tool: record.tool,

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, lstatSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { StatsRecord, ToolCallRecord } from '@aiusage/core'
@@ -50,6 +50,30 @@ interface SessionTag {
   toolCalls: number
 }
 
+const tagCache = new Map<string, { signature: string; session: SessionTag | null }>()
+
+/** Only tag refs are examined; nested loose tags and packed refs both invalidate the cache. */
+function tagSignature(repoPath: string): string | undefined {
+  const fields: string[] = []
+  function visit(path: string): void {
+    let stat
+    try { stat = lstatSync(path) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { fields.push(`${path}:missing`); return }; throw error }
+    if (stat.isSymbolicLink()) throw new Error('Linked tag refs cannot be cached')
+    fields.push(`${path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`)
+    if (stat.isDirectory()) for (const name of readdirSync(path).sort()) visit(join(path, name))
+  }
+  try {
+    const gitPath = join(repoPath, '.git')
+    const stat = lstatSync(gitPath)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return undefined
+    fields.push(`${stat.dev}:${stat.ino}`)
+    visit(join(gitPath, 'packed-refs'))
+    visit(join(gitPath, 'refs', 'tags'))
+    return fields.join('|')
+  } catch { return undefined }
+}
+
 /**
  * Parse git tags in a Trae snapshot directory to extract session metadata.
  * Tags follow patterns like:
@@ -62,6 +86,9 @@ function parseSessionTags(repoPath: string): SessionTag | null {
   try {
     const sessionId = basename(basename(repoPath) === 'v2' ? join(repoPath, '..') : repoPath)
     if (!/^[0-9a-f]{24,}$/.test(sessionId)) return null
+    const signature = tagSignature(repoPath)
+    const cached = tagCache.get(repoPath)
+    if (signature !== undefined && cached?.signature === signature) return cached.session
 
     // Read every tag name together with its commit/creator timestamp in a single
     // git invocation. The previous implementation spawned one `git log` per tag
@@ -75,14 +102,14 @@ function parseSessionTags(repoPath: string): SessionTag | null {
       ['for-each-ref', '--format=%(refname:short)%09%(creatordate:unix)', 'refs/tags'],
       { cwd: repoPath, encoding: 'utf-8', timeout: 10000 },
     )
-    if (result.status !== 0 || !result.stdout?.trim()) return null
+    if (result.status !== 0) return null // A failed query is retried, never cached.
 
     let chatTurns = 0
     let toolCalls = 0
     let startTs = 0
     let earliest = Infinity
 
-    for (const line of result.stdout.trim().split('\n')) {
+    for (const line of (result.stdout ?? '').trim().split('\n')) {
       const tab = line.indexOf('\t')
       if (tab < 0) continue
       const name = line.slice(0, tab).trim()
@@ -105,10 +132,12 @@ function parseSessionTags(repoPath: string): SessionTag | null {
     // Fallback: if no chain-start tag, use the earliest tag timestamp
     if (startTs === 0 && earliest < Infinity) startTs = earliest
 
-    if (chatTurns === 0 && toolCalls === 0) return null
-    if (startTs === 0) return null
-
-    return { sessionId, startTs, chatTurns, toolCalls }
+    const session = (chatTurns === 0 && toolCalls === 0) || startTs === 0 ? null : { sessionId, startTs, chatTurns, toolCalls }
+    if (signature !== undefined && tagSignature(repoPath) === signature) {
+      if (tagCache.size >= 1024 && !tagCache.has(repoPath)) tagCache.delete(tagCache.keys().next().value!)
+      tagCache.set(repoPath, { signature, session })
+    }
+    return session
   } catch {
     return null
   }

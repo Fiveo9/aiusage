@@ -1,9 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { runParseTrae } from '../../src/commands/parse-trae.js'
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>()
+  return { ...original, spawnSync: vi.fn(original.spawnSync) }
+})
 
 /**
  * Create a git snapshot repo at `repoPath` with the given lightweight tags.
@@ -12,23 +17,15 @@ import { runParseTrae } from '../../src/commands/parse-trae.js'
  */
 function makeSnapshotRepo(repoPath: string, tags: Array<{ name: string; ts: number }>): void {
   mkdirSync(repoPath, { recursive: true })
-  const git = (args: string[], ts?: number) => {
-    const env = { ...process.env }
-    if (ts != null) {
-      env.GIT_AUTHOR_DATE = `@${ts} +0000`
-      env.GIT_COMMITTER_DATE = `@${ts} +0000`
-    }
-    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf-8', env })
+  const git = (args: string[], input?: string) => {
+    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf-8', input })
     if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
   }
   git(['init', '-q'])
-  git(['config', 'user.email', 'test@example.com'])
-  git(['config', 'user.name', 'Test'])
-  git(['config', 'commit.gpgsign', 'false'])
-  for (const { name, ts } of tags) {
-    git(['commit', '--allow-empty', '-q', '-m', name], ts)
-    git(['tag', name])
-  }
+  // Real lightweight refs and individual commit dates, in one batch. No checkout,
+  // reset, clean or pruning command is used in this synthetic fixture.
+  const input = tags.map(({ name, ts }) => `commit refs/tags/${name}\ncommitter Test <test@example.com> ${ts} +0000\ndata ${Buffer.byteLength(name)}\n${name}\n\n`).join('')
+  git(['fast-import', '--quiet'], input)
 }
 
 describe('parse-trae', () => {
@@ -39,6 +36,7 @@ describe('parse-trae', () => {
   const sessionId = 'a1b2c3d4e5f6a1b2c3d4e5f6'
 
   beforeEach(() => {
+    vi.clearAllMocks()
     root = mkdtempSync(join(tmpdir(), 'trae-test-'))
     // Mimic the Trae layout the parser expects.
     const globalStorage = join(root, 'User', 'globalStorage')
@@ -134,5 +132,39 @@ describe('parse-trae', () => {
 
     expect(result.records).toHaveLength(0)
     expect(result.errors).toContain('Trae ModularData not found')
+  })
+
+  const tagQueries = () => vi.mocked(spawnSync).mock.calls.filter(([, args]) => Array.isArray(args) && args[0] === 'for-each-ref').length
+
+  it('reuses unchanged tag metadata while emitting the same stable records', () => {
+    makeSnapshotRepo(join(snapshotDir, sessionId, 'v2'), [{ name: 'before-chat-turn-1', ts: 1_700_000_000 }])
+    const options = { dbPath, device: 'test', deviceInstanceId: 'test-instance', now: 1_700_001_000_000 }
+    const first = runParseTrae(options)
+    const calls = tagQueries()
+    expect(runParseTrae(options).records).toEqual(first.records)
+    expect(tagQueries()).toBe(calls)
+  })
+
+  it('invalidates metadata when an old session gains loose tags or packed refs change', () => {
+    const repo = join(snapshotDir, sessionId, 'v2')
+    makeSnapshotRepo(repo, [{ name: 'before-chat-turn-1', ts: 1_700_000_000 }])
+    const options = { dbPath, device: 'test', deviceInstanceId: 'test-instance', now: 1_700_001_000_000 }
+    runParseTrae(options)
+    makeSnapshotRepo(repo, [{ name: 'before-chat-turn-2', ts: 1_700_000_010 }])
+    expect(runParseTrae(options).records[0].inputTokens).toBe(400)
+    const calls = tagQueries()
+    const packed = spawnSync('git', ['pack-refs', '--all', '--no-prune'], { cwd: repo, encoding: 'utf8' })
+    expect(packed.status).toBe(0)
+    expect(runParseTrae(options).records[0].inputTokens).toBe(400)
+    expect(tagQueries()).toBe(calls + 1)
+  })
+
+  it('retries a failed metadata query even when refs did not change', () => {
+    makeSnapshotRepo(join(snapshotDir, sessionId, 'v2'), [{ name: 'before-chat-turn-1', ts: 1_700_000_000 }])
+    const options = { dbPath, device: 'test', deviceInstanceId: 'test-instance', now: 1_700_001_000_000 }
+    vi.mocked(spawnSync).mockImplementationOnce(() => ({ status: 1, stdout: '', stderr: 'synthetic failure' }) as ReturnType<typeof spawnSync>)
+    expect(runParseTrae(options).records).toEqual([])
+    expect(runParseTrae(options).records).toHaveLength(1)
+    expect(tagQueries()).toBe(2)
   })
 })

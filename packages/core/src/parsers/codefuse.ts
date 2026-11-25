@@ -5,6 +5,7 @@ import { inferProvider } from '../provider.js'
 import { calculateCost, resolvePrice } from '../pricing.js'
 import { normalizeCodeFuseModel } from '../codefuse-model.js'
 import { parseTimestamp } from '../timestamp.js'
+import { isStateObject, readPendingCalls } from '../parser-state.js'
 
 interface PendingToolCall {
   name: string
@@ -116,6 +117,19 @@ export class CodeFuseParser implements Parser {
   readonly tool = 'codefuse' as const
   private pendingToolCalls: PendingToolCall[] = []
   private currentModel: string | null = null
+
+  getState(): unknown {
+    return { currentModel: this.currentModel, pendingToolCalls: this.pendingToolCalls.map(call => ({ ...call })) }
+  }
+
+  restoreState(state: unknown, context: ParseContext): boolean {
+    if (!isStateObject(state) || (state.currentModel !== null && typeof state.currentModel !== 'string')) return false
+    const pending = readPendingCalls(state.pendingToolCalls, context.replayCutoff ?? 0)
+    if (!pending) return false
+    this.currentModel = state.currentModel
+    this.pendingToolCalls = pending
+    return true
+  }
 
   parseLine(line: string, context: ParseContext): ParseResult | null {
     let parsed: any

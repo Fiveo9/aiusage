@@ -54,6 +54,8 @@ const RECORD_CHANGED = [
   ...KEPT_WHEN_EMPTY_COLUMNS.map(c => `(excluded.${c} != '' AND records.${c} IS NOT excluded.${c})`),
 ].join('\n        OR ')
 
+const recordInsertStatements = new WeakMap<Database.Database, Database.Statement>()
+
 /**
  * Write a parsed record, updating the row in place when its id already exists.
  *
@@ -70,7 +72,7 @@ const RECORD_CHANGED = [
  * below those values, whatever the caller's clock says.
  */
 export function insertRecord(db: Database.Database, record: StatsRecord): void {
-  db.prepare(`
+  const statement = recordInsertStatements.get(db) ?? db.prepare(`
     INSERT INTO records (
       id, ts, ingested_at, synced_at, updated_at, line_offset,
       tool, model, provider, input_tokens, output_tokens,
@@ -95,7 +97,9 @@ export function insertRecord(db: Database.Database, record: StatsRecord): void {
         )
         ELSE records.updated_at
       END
-  `).run({
+  `)
+  recordInsertStatements.set(db, statement)
+  statement.run({
     id: record.id,
     ts: record.ts,
     ingestedAt: record.ingestedAt,

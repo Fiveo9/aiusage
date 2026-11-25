@@ -2,6 +2,7 @@ import type { Parser, ParseResult, ParseContext, StatsRecord, Tool } from '../ty
 import { recordIdFor } from '../record-id.js'
 import { inferProvider } from '../provider.js'
 import { calculateCost } from '../pricing.js'
+import { isOffset, isStateObject } from '../parser-state.js'
 
 /**
  * Parser for GitHub Copilot OTEL JSONL files.
@@ -26,7 +27,9 @@ interface Candidate {
   type: RecordType
   traceId: string | null
   responseId: string | null
-  result: ParseResult
+  id: string
+  lineOffset: number
+  result: ParseResult | null // Restored historical candidates need only their retirement identity.
 }
 
 interface TraceCtx { model?: string; sessionId?: string }
@@ -38,6 +41,43 @@ export class CopilotParser implements Parser {
   private coveredTraces = new Set<string>()
   private coveredResponses = new Set<string>()
   private fallback: Candidate[] = []
+
+  getState(): unknown {
+    return {
+      traceCtxs: [...this.traceCtxs].map(([id, ctx]) => [id, { ...ctx }]),
+      coveredTraces: [...this.coveredTraces], coveredResponses: [...this.coveredResponses],
+      fallback: this.fallback.map(({ type, traceId, responseId, id, lineOffset }) => ({ type, traceId, responseId, id, lineOffset })),
+    }
+  }
+
+  restoreState(state: unknown, context: ParseContext): boolean {
+    if (!isStateObject(state) || !Array.isArray(state.traceCtxs) || !Array.isArray(state.fallback)
+      || !Array.isArray(state.coveredTraces) || !Array.isArray(state.coveredResponses)
+      || !state.coveredTraces.every(id => typeof id === 'string')
+      || !state.coveredResponses.every(id => typeof id === 'string')) return false
+    const traces = new Map<string, TraceCtx>()
+    for (const pair of state.traceCtxs) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== 'string' || !isStateObject(pair[1])) return false
+      const { model, sessionId } = pair[1]
+      if ((model !== undefined && typeof model !== 'string') || (sessionId !== undefined && typeof sessionId !== 'string')) return false
+      traces.set(pair[0], { model, sessionId })
+    }
+    const fallback: Candidate[] = []
+    for (const candidate of state.fallback) {
+      if (!isStateObject(candidate) || !isOffset(candidate.type) || candidate.type < RecordType.InferenceLog
+        || candidate.type > RecordType.AgentSummarySpan || !isOffset(candidate.lineOffset)
+        || candidate.lineOffset >= (context.replayCutoff ?? 0) || typeof candidate.id !== 'string' || !candidate.id
+        || (candidate.traceId !== null && typeof candidate.traceId !== 'string')
+        || (candidate.responseId !== null && typeof candidate.responseId !== 'string')) return false
+      fallback.push({ type: candidate.type, traceId: candidate.traceId, responseId: candidate.responseId,
+        id: candidate.id, lineOffset: candidate.lineOffset, result: null })
+    }
+    this.traceCtxs = traces
+    this.coveredTraces = new Set(state.coveredTraces)
+    this.coveredResponses = new Set(state.coveredResponses)
+    this.fallback = fallback
+    return true
+  }
 
   parseLine(line: string, context: ParseContext): ParseResult | null {
     let rec: any
@@ -112,7 +152,7 @@ export class CopilotParser implements Parser {
     }
 
     // Others → buffer for dedup in finalize
-    this.fallback.push({ type, traceId, responseId, result: parseResult })
+    this.fallback.push({ type, traceId, responseId, id: recordId, lineOffset: context.lineOffset, result: parseResult })
     return null
   }
 
@@ -137,9 +177,9 @@ export class CopilotParser implements Parser {
     const replacedRecordIds: string[] = []
     for (const c of this.fallback) {
       if (shouldEmit(c, this.coveredTraces, this.coveredResponses, inferTraces, inferResponses, turnTraces, turnResponses)) {
-        if (c.result.record!.lineOffset >= replayCutoff) results.push(c.result)
-      } else if (c.result.record!.lineOffset < replayCutoff) {
-        replacedRecordIds.push(c.result.record!.id)
+        if (c.lineOffset >= replayCutoff && c.result) results.push(c.result)
+      } else if (c.lineOffset < replayCutoff) {
+        replacedRecordIds.push(c.id)
       }
     }
     if (replacedRecordIds.length) results.push({ record: null, toolCalls: [], replacedRecordIds })

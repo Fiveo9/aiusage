@@ -2,11 +2,15 @@ import type Database from 'better-sqlite3'
 import type { ToolCallRecord } from '@aiusage/core'
 import { generateBlockToolCallId, generateToolCallId } from '@aiusage/core'
 
+const toolCallInsertStatements = new WeakMap<Database.Database, Database.Statement>()
+
 export function insertToolCall(db: Database.Database, tc: ToolCallRecord): void {
-  db.prepare(`
+  const statement = toolCallInsertStatements.get(db) ?? db.prepare(`
     INSERT OR REPLACE INTO tool_calls (id, record_id, tool, name, ts, call_index)
     VALUES (@id, @recordId, @tool, @name, @ts, @callIndex)
-  `).run({
+  `)
+  toolCallInsertStatements.set(db, statement)
+  statement.run({
     id: tc.id,
     recordId: tc.recordId ?? null,
     tool: tc.recordId ? null : tc.tool ?? null,

@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs'
-import type { Tool } from '@aiusage/core'
+import type { Tool, ParserSnapshot } from '@aiusage/core'
 import { writeFileAtomic } from './json-file.js'
 
 const CURRENT_GROK_PARSER_VERSION = 2
@@ -56,8 +56,10 @@ export interface WatermarkEntry {
   offset: number
   size: number
   mtime: number
+  ctime?: number
   fileIdentity?: { dev?: number; ino?: number; volumeSerial?: string; fileIndex?: string }
   headFingerprint?: string
+  parserState?: ParserSnapshot
 }
 
 export interface HermesCursor {
@@ -114,6 +116,7 @@ export type FileWatermarkData = Record<Tool, Record<string, WatermarkEntry>>
 
 export interface WatermarkState {
   files: FileWatermarkData
+  sourceSignatures?: Record<string, string>
   grokParserVersion?: number
   codebuddyParserVersion?: number
   zcodeParserVersion?: number
@@ -122,6 +125,7 @@ export interface WatermarkState {
   claudeCodeParserVersion?: number
   importerDedupVersion?: number
   toolCallBackfillVersion?: number
+  toolCallBackfillByTool?: Record<string, number>
   opencode?: OpenCodeCursor | null
   opencodeByPath?: Record<string, OpenCodeCursor>
   hermes?: HermesCursor | null
@@ -202,6 +206,8 @@ export const CURRENT_IMPORTER_DEDUP_VERSION = 1
 export class WatermarkManager {
   private data: WatermarkState
   private path: string
+  private batchDepth = 0
+  private savePending = false
 
   constructor(path: string) {
     this.path = path
@@ -222,6 +228,7 @@ export class WatermarkManager {
       } else {
         state = {
           files: { ...defaultFileData(), ...(parsed.files ?? {}) },
+          sourceSignatures: parsed.sourceSignatures ?? {},
           grokParserVersion: parsed.grokParserVersion,
           codebuddyParserVersion: parsed.codebuddyParserVersion,
           zcodeParserVersion: parsed.zcodeParserVersion,
@@ -230,6 +237,7 @@ export class WatermarkManager {
           claudeCodeParserVersion: parsed.claudeCodeParserVersion,
           importerDedupVersion: parsed.importerDedupVersion,
           toolCallBackfillVersion: parsed.toolCallBackfillVersion,
+          toolCallBackfillByTool: parsed.toolCallBackfillByTool ?? {},
           opencode: parsed.opencode ?? null,
           opencodeByPath: parsed.opencodeByPath ?? {},
           hermes: parsed.hermes ?? null,
@@ -303,7 +311,28 @@ export class WatermarkManager {
   }
 
   save(): void {
+    if (this.batchDepth > 0) { this.savePending = true; return }
     writeFileAtomic(this.path, JSON.stringify(this.data, null, 2))
+    this.savePending = false
+  }
+
+  beginBatch(): void {
+    this.batchDepth++
+  }
+
+  endBatch(): void {
+    if (this.batchDepth === 0) return
+    this.batchDepth--
+    if (this.batchDepth === 0 && this.savePending) this.save()
+  }
+
+  getSourceSignature(key: string): string | undefined {
+    return this.data.sourceSignatures?.[key]
+  }
+
+  setSourceSignature(key: string, signature: string): void {
+    this.data.sourceSignatures ??= {}
+    this.data.sourceSignatures[key] = signature
   }
 
   getEntry(tool: Tool, filePath: string): WatermarkEntry | null {
@@ -430,11 +459,13 @@ export class WatermarkManager {
     this.data.codebuddyIde = ts
   }
 
-  getToolCallBackfillVersion(): number {
+  getToolCallBackfillVersion(tool?: string): number {
+    if (tool) return this.data.toolCallBackfillByTool?.[tool] ?? this.data.toolCallBackfillVersion ?? 0
     return this.data.toolCallBackfillVersion ?? 0
   }
 
-  setToolCallBackfillVersion(version: number): void {
+  setToolCallBackfillVersion(version: number, tool?: string): void {
+    if (tool) { this.data.toolCallBackfillByTool ??= {}; this.data.toolCallBackfillByTool[tool] = version; return }
     this.data.toolCallBackfillVersion = version
   }
 

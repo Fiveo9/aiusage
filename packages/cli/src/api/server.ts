@@ -36,7 +36,7 @@ import { isKelivoSourceFile, runParseKelivo } from '../commands/parse-kelivo.js'
 import { recalcPricing } from '../commands/recalc.js'
 import { insertChangedRecords, LOCAL_RECORDS_WHERE, recordIdsForReread } from '../db/records.js'
 import { AsyncTaskQueue, type AsyncTaskQueueStatus } from '../db/write-queue.js'
-import { applyLitellmPricing, fetchLitellmPricing, getPricingRegistrySummary, getUserAliasBindings, listLocalModelBindings, listPricingAliasTargets, listPricingModels, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias } from '../pricing-registry.js'
+import { applyLitellmPricing, fetchLitellmPricing, getPricingView, getUserAliasBindings, loadPricingRuntime, removeUserPricingAlias, resetUserPriceToSynced, setUserPrice, setUserPricingAlias } from '../pricing-registry.js'
 import type { DetectedTool } from '../discovery.js'
 import { BodyTooLargeError, readJsonBody, readBodyBuffer } from './request-body.js'
 
@@ -1478,7 +1478,7 @@ export function createApiServer(db: Database.Database, options?: ApiServerOption
       if (url.pathname === '/api/pricing') {
         // GET: list all prices from the local pricing registry plus models from DB.
         if (req.method === 'GET') {
-          json(res, { models: listPricingModels(db), registry: getPricingRegistrySummary(db), targets: listPricingAliasTargets(db), aliasBindings: getUserAliasBindings(db), localBindings: listLocalModelBindings(db) })
+          json(res, getPricingView(db))
           return
         }
         // PUT: set price override

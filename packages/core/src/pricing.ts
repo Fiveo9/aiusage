@@ -165,6 +165,71 @@ export function resolveModelPriceMatch<T>(
   exactTable: Readonly<Record<string, T>>,
   prefixTable: Readonly<Record<string, T>> = exactTable,
 ): { key: string; entry: T; matchType: 'exact' | 'prefix' } | undefined {
+  // Compatibility calls accept mutable tables/getters. Only the chosen value
+  // is read, and no object-identity cache changes their existing semantics.
+  const candidates = priceCandidates(model)
+  for (const key of candidates) if (Object.hasOwn(exactTable, key)) return { key, entry: exactTable[key], matchType: 'exact' }
+  const exactKeys = Object.keys(exactTable).sort()
+  for (const candidate of candidates) {
+    const key = exactKeys.find(key => key.toLowerCase() === candidate.toLowerCase())
+    if (key !== undefined) return { key, entry: exactTable[key], matchType: 'exact' }
+  }
+  let best: string | undefined
+  for (const key of Object.keys(prefixTable).sort()) {
+    if (candidates.some(candidate => candidate.toLowerCase().startsWith(key.toLowerCase()))
+      && (best === undefined || key.length > best.length)) best = key
+  }
+  return best === undefined ? undefined : { key: best, entry: prefixTable[best], matchType: 'prefix' }
+}
+
+export type ModelPriceMatcher<T> = (model: string) => { key: string; entry: T; matchType: 'exact' | 'prefix' } | undefined
+
+/** Compile one request's immutable snapshot. Prefix lookup is O(model length), not O(price count). */
+export function compileModelPriceMatcher<T>(
+  exactTable: Readonly<Record<string, T>>,
+  prefixTable: Readonly<Record<string, T>> = exactTable,
+): ModelPriceMatcher<T> {
+  const exactKeys = Object.keys(exactTable).sort()
+  const exact = new Map(Object.getOwnPropertyNames(exactTable).map(key => [key, exactTable[key]]))
+  const folded = new Map<string, string>()
+  for (const key of exactKeys) if (!folded.has(key.toLowerCase())) folded.set(key.toLowerCase(), key)
+  interface Node { children: Map<string, Node>; match?: { key: string; entry: T } }
+  const root: Node = { children: new Map() }
+  const prefixKeys = prefixTable === exactTable ? exactKeys : Object.keys(prefixTable).sort()
+  for (const key of prefixKeys) {
+    let node = root
+    for (const character of key.toLowerCase()) {
+      let child = node.children.get(character)
+      if (!child) { child = { children: new Map() }; node.children.set(character, child) }
+      node = child
+    }
+    if (!node.match || key.length > node.match.key.length) node.match = { key, entry: prefixTable[key] }
+  }
+  return (model) => {
+    const candidates = priceCandidates(model)
+    for (const key of candidates) if (exact.has(key)) return { key, entry: exact.get(key)!, matchType: 'exact' }
+    for (const candidate of candidates) {
+      const key = folded.get(candidate.toLowerCase())
+      if (key !== undefined) return { key, entry: exact.get(key)!, matchType: 'exact' }
+    }
+    let best: { key: string; entry: T } | undefined
+    const choose = (match: typeof best) => {
+      if (match && (!best || match.key.length > best.key.length || (match.key.length === best.key.length && match.key < best.key))) best = match
+    }
+    for (const candidate of candidates) {
+      let node: Node | undefined = root
+      choose(node.match)
+      for (const character of candidate.toLowerCase()) {
+        node = node.children.get(character)
+        if (!node) break
+        choose(node.match)
+      }
+    }
+    return best ? { ...best, matchType: 'prefix' } : undefined
+  }
+}
+
+function priceCandidates(model: string): string[] {
   let stripped = model
   for (const prefix of PROVIDER_PREFIXES) {
     if (stripped.toLowerCase().startsWith(prefix)) {
@@ -172,27 +237,7 @@ export function resolveModelPriceMatch<T>(
       break
     }
   }
-  const candidates = [...new Set([model, model.toLowerCase(), stripped, stripped.toLowerCase()])]
-  for (const key of candidates) {
-    if (Object.hasOwn(exactTable, key)) return { key, entry: exactTable[key], matchType: 'exact' }
-  }
-  // Stable tie order makes runtime and DB snapshots agree even if their
-  // rows were loaded in a different order. Exact spelling still wins above.
-  const exactKeys = Object.keys(exactTable).sort()
-  for (const candidate of candidates) {
-    const key = exactKeys.find(key => key.toLowerCase() === candidate.toLowerCase())
-    if (key !== undefined) return { key, entry: exactTable[key], matchType: 'exact' }
-  }
-
-  let best: string | undefined
-  for (const key of Object.keys(prefixTable).sort()) {
-    for (const candidate of candidates) {
-      if (candidate.toLowerCase().startsWith(key.toLowerCase()) && (best === undefined || key.length > best.length)) {
-        best = key
-      }
-    }
-  }
-  return best === undefined ? undefined : { key: best, entry: prefixTable[best], matchType: 'prefix' }
+  return [...new Set([model, model.toLowerCase(), stripped, stripped.toLowerCase()])]
 }
 
 function resolvePriceFromTable(

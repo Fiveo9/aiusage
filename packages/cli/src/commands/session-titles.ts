@@ -4,7 +4,8 @@ import { dirname, basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { NEXT_UPDATED_AT } from '../db/record-version.js'
 
-type Titles = Record<string, string>
+export type Titles = Record<string, string>
+export interface TitleSnapshot { signature: string; titles: Titles }
 type Source = { tool: string; source_file: string; session_id: string }
 
 export function normalizeSessionTitle(value: unknown): string | undefined {
@@ -76,9 +77,24 @@ function readDatabaseTitles(file: string, table: 'session' | 'sessions'): Titles
   }
 }
 
-function signature(file: string): string {
+export function sessionTitleSignature(file: string): string {
   const stat = statSync(file)
   return `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+}
+
+export function cachedSessionTitles(db: Database.Database, file: string, stamps: string[]): Titles | undefined {
+  const saved = db.prepare('SELECT signature, titles_json FROM session_title_sources WHERE source_file = ?').get(file) as { signature: string; titles_json: string } | undefined
+  if (!saved || !stamps.includes(saved.signature)) return undefined
+  try {
+    const parsed = JSON.parse(saved.titles_json)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    const titles: Titles = Object.create(null)
+    for (const [id, value] of Object.entries(parsed)) {
+      const title = normalizeSessionTitle(value)
+      if (title) titles[id] = title
+    }
+    return titles
+  } catch { return undefined }
 }
 
 /** Refresh titles even when the usage watermark is at EOF (renames add no usage). */
@@ -86,6 +102,7 @@ export async function backfillSessionTitles(
   db: Database.Database,
   deviceInstanceId: string,
   filterTool?: string,
+  preloaded: ReadonlyMap<string, TitleSnapshot> = new Map(),
 ): Promise<number> {
   const sources = db.prepare(`
     SELECT DISTINCT tool, source_file, session_id FROM records
@@ -94,26 +111,26 @@ export async function backfillSessionTitles(
       ${filterTool ? 'AND tool = ?' : ''}
   `).all(...(filterTool ? [deviceInstanceId, filterTool] : [deviceInstanceId])) as Source[]
   const loaded = new Map<string, Promise<Titles>>()
+  const cacheUpdates: Array<[string, string, string]> = []
 
   function cached(file: string, read: () => Promise<Titles> | Titles, sqlite = false): Promise<Titles> {
     if (!loaded.has(file)) {
       loaded.set(file, (async () => {
         try {
-          let stamp = signature(file)
+          let stamp = sessionTitleSignature(file)
           if (sqlite) {
-            try { stamp += `:${signature(`${file}-wal`)}` } catch { stamp += ':no-wal' }
+            try { stamp += `:${sessionTitleSignature(`${file}-wal`)}` } catch { stamp += ':no-wal' }
           }
           const saved = db.prepare('SELECT signature, titles_json FROM session_title_sources WHERE source_file = ?').get(file) as { signature: string; titles_json: string } | undefined
           if (saved?.signature === stamp) return JSON.parse(saved.titles_json) as Titles
-          const titles = await read()
-          let after = signature(file)
+          const shared = preloaded.get(file)
+          const titles = shared?.signature === stamp ? shared.titles : await read()
+          let after = sessionTitleSignature(file)
           if (sqlite) {
-            try { after += `:${signature(`${file}-wal`)}` } catch { after += ':no-wal' }
+            try { after += `:${sessionTitleSignature(`${file}-wal`)}` } catch { after += ':no-wal' }
           }
           if (after === stamp) {
-            db.prepare(`INSERT INTO session_title_sources (source_file, signature, titles_json) VALUES (?, ?, ?)
-              ON CONFLICT(source_file) DO UPDATE SET signature = excluded.signature, titles_json = excluded.titles_json
-            `).run(file, stamp, JSON.stringify(titles))
+            cacheUpdates.push([file, stamp, JSON.stringify(titles)])
           }
           return titles
         } catch {
@@ -129,7 +146,7 @@ export async function backfillSessionTitles(
   const update = db.prepare(`UPDATE records SET session_title = ?, updated_at = ${NEXT_UPDATED_AT}
     WHERE origin = 'local' AND device_instance_id = ? AND tool = ?
       AND source_file = ? AND session_id = ? AND session_title != ?`)
-  let changed = 0
+  const titleUpdates: Array<[string, number, string, string, string, string, string]> = []
   for (const row of sources) {
     let title: string | undefined
     if (row.tool === 'codex') {
@@ -151,7 +168,15 @@ export async function backfillSessionTitles(
       title = (await cached(file, () => readDatabaseTitles(file, row.tool === 'hermes' ? 'sessions' : 'session'), true))[row.session_id]
     }
     title = normalizeSessionTitle(title)
-    if (title) changed += update.run(title, Date.now(), deviceInstanceId, row.tool, row.source_file, row.session_id, title).changes
+    if (title) titleUpdates.push([title, Date.now(), deviceInstanceId, row.tool, row.source_file, row.session_id, title])
   }
-  return changed
+  if (cacheUpdates.length === 0 && titleUpdates.length === 0) return 0
+  const cache = db.prepare(`INSERT INTO session_title_sources (source_file, signature, titles_json) VALUES (?, ?, ?)
+    ON CONFLICT(source_file) DO UPDATE SET signature = excluded.signature, titles_json = excluded.titles_json`)
+  return db.transaction(() => {
+    for (const entry of cacheUpdates) cache.run(...entry)
+    let changed = 0
+    for (const entry of titleUpdates) changed += update.run(...entry).changes
+    return changed
+  }).immediate()
 }

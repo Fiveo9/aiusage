@@ -35,8 +35,15 @@ class ExitCalled extends Error {
 /** Run the CLI once, from a fresh module: commander keeps option values between parses. */
 async function run(...args: string[]): Promise<{ out: string; err: string; exitCode: number }> {
   const out: string[] = []
+  const streamed: string[] = []
   const err: string[] = []
   const log = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')) })
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array, encoding?: unknown, callback?: () => void) => {
+    streamed.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    if (typeof encoding === 'function') encoding()
+    else callback?.()
+    return true
+  }) as never)
   const error = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')) })
   const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new ExitCalled(code) }) as never)
   let exitCode = 0
@@ -49,10 +56,11 @@ async function run(...args: string[]): Promise<{ out: string; err: string; exitC
     exitCode = e.code ?? 0
   } finally {
     log.mockRestore()
+    stdout.mockRestore()
     error.mockRestore()
     exit.mockRestore()
   }
-  return { out: out.join('\n'), err: err.join('\n'), exitCode }
+  return { out: streamed.length ? streamed.join('').replace(/\n$/, '') : out.join('\n'), err: err.join('\n'), exitCode }
 }
 
 function totalTokens(out: string): number {

@@ -5,6 +5,13 @@ export interface Translations {
   lastNDays: (n: number) => string
   tokenBreakdown: string
   tokenBreakdownToday: string
+  tokenInput: string
+  tokenOutput: string
+  tokenCacheRead: string
+  tokenCacheWrite: string
+  tokenThinking: string
+  noTokenData: string
+  dataUnavailable: string
   trend: string
   topModel: string
   topTool: string
@@ -49,6 +56,13 @@ const en: Translations = {
   lastNDays: (n) => `Last ${n} days`,
   tokenBreakdown: 'Token breakdown',
   tokenBreakdownToday: 'Token breakdown (Today)',
+  tokenInput: 'Input',
+  tokenOutput: 'Output',
+  tokenCacheRead: 'Cache R',
+  tokenCacheWrite: 'Cache W',
+  tokenThinking: 'Think',
+  noTokenData: 'No token data',
+  dataUnavailable: 'Usage data unavailable. Try refreshing.',
   trend: 'Trend',
   topModel: 'Top Model',
   topTool: 'Top Tool',
@@ -93,6 +107,13 @@ const zh: Translations = {
   lastNDays: (n) => `近 ${n} 天`,
   tokenBreakdown: 'Token 分布',
   tokenBreakdownToday: 'Token 分布 (今日)',
+  tokenInput: '输入',
+  tokenOutput: '输出',
+  tokenCacheRead: '缓存读取',
+  tokenCacheWrite: '缓存写入',
+  tokenThinking: '推理',
+  noTokenData: '暂无 Token 数据',
+  dataUnavailable: '用量数据暂不可用，请尝试刷新。',
   trend: '趋势',
   topModel: '常用模型',
   topTool: '常用工具',

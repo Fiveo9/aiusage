@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../i18n'
+  export let locale: 'en' | 'zh' = 'en'
   export let input: number = 0
   export let output: number = 0
   export let cacheRead: number = 0
@@ -12,12 +14,13 @@
   }
 
   $: total = input + output + cacheRead + cacheWrite + thinking
+  $: i18n = t(locale)
   $: segments = [
-    { label: 'Input', value: input, color: 'var(--chart-input)' },
-    { label: 'Output', value: output, color: 'var(--chart-output)' },
-    { label: 'Cache R', value: cacheRead, color: 'var(--chart-cache-read)' },
-    { label: 'Cache W', value: cacheWrite, color: 'var(--chart-cache-write)' },
-    { label: 'Think', value: thinking, color: 'var(--chart-thinking)' },
+    { label: i18n.tokenInput, value: input, color: 'var(--chart-input)' },
+    { label: i18n.tokenOutput, value: output, color: 'var(--chart-output)' },
+    { label: i18n.tokenCacheRead, value: cacheRead, color: 'var(--chart-cache-read)' },
+    { label: i18n.tokenCacheWrite, value: cacheWrite, color: 'var(--chart-cache-write)' },
+    { label: i18n.tokenThinking, value: thinking, color: 'var(--chart-thinking)' },
   ].filter(s => s.value > 0)
 </script>
 
@@ -42,7 +45,7 @@
       {/each}
     </div>
   {:else}
-    <div class="empty">No token data</div>
+    <div class="empty">{i18n.noTokenData}</div>
   {/if}
 </div>
 

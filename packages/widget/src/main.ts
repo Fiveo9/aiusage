@@ -7,7 +7,7 @@ import { EXCHANGE_RATE_SOURCE, fetchUsdCnyRate } from './currency'
 import type { ExchangeRateState } from './currency'
 import { queryWidgetData } from './data'
 import { t } from './i18n'
-import { loadSettings, saveSettings } from './settings'
+import { loadSettings, saveSettings, normalizeSettings } from './settings'
 import type { WidgetSettings } from './settings'
 import { CLI_HELP, resolveCliEntry } from './cli'
 import {
@@ -40,6 +40,53 @@ let positionRetryTimers: Array<ReturnType<typeof setTimeout>> = []
 let settings: WidgetSettings = loadSettings()
 let exchangeRate: ExchangeRateState = loadExchangeRateCache()
 let exchangeRatePromise: Promise<ExchangeRateState> | null = null
+let quitting = false
+let databaseError: string | null = null
+let dashboardPromise: Promise<void> | null = null
+const lifetime = new AbortController()
+const timeoutTasks = new Map<ReturnType<typeof setTimeout>, () => void>()
+const isDevelopment = !app.isPackaged && process.argv.includes('--dev')
+const hasInstanceLock = app.requestSingleInstanceLock()
+if (!hasInstanceLock) app.quit()
+
+function scheduleTimeout(callback: () => void, ms: number, onCancel = () => {}): ReturnType<typeof setTimeout> {
+  const timer = setTimeout(() => { timeoutTasks.delete(timer); if (!quitting) callback() }, ms)
+  timeoutTasks.set(timer, onCancel)
+  return timer
+}
+
+function cancelTimeout(timer: ReturnType<typeof setTimeout>): void {
+  clearTimeout(timer)
+  timeoutTasks.delete(timer)
+}
+
+function openDatabase(): void {
+  try {
+    db = new Database(DB_PATH, { readonly: true, timeout: 30000, nativeBinding: getWidgetNativeBindingPath(__dirname) })
+    databaseError = null
+  } catch {
+    db = null
+    databaseError = 'Usage database unavailable'
+  }
+}
+
+function currentDeviceInstanceId(): string | undefined {
+  try {
+    const file = join(homedir(), '.aiusage', 'state.json')
+    if (!existsSync(file)) return undefined
+    const value = JSON.parse(readFileSync(file, 'utf8'))?.deviceInstanceId
+    return typeof value === 'string' && value ? value : undefined
+  } catch { return undefined }
+}
+
+function writeOwnedPid(): void {
+  if (!hasInstanceLock || quitting || !Number.isInteger(process.pid)) return
+  try {
+    const dir = join(homedir(), '.aiusage')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'widget.pid'), String(process.pid), { encoding: 'utf-8' })
+  } catch { /* PID metadata is best-effort, not a reason to abort startup. */ }
+}
 
 app.setName('AIUsage Widget')
 
@@ -49,13 +96,12 @@ if (process.platform === 'darwin' && app.dock) {
 }
 
 app.whenReady().then(async () => {
+  if (!hasInstanceLock || quitting) return
+  writeOwnedPid()
   const dbExists = existsSync(DB_PATH)
 
   if (dbExists) {
-    db = new Database(DB_PATH, {
-      readonly: true,
-      nativeBinding: getWidgetNativeBindingPath(__dirname),
-    })
+    openDatabase()
   }
 
   applyTheme(settings.theme)
@@ -66,9 +112,15 @@ app.whenReady().then(async () => {
 
   if (!dbExists) {
     await autoSetup()
-  } else if (shouldShowWindowOnLaunch(app.isPackaged)) {
+  } else if (shouldShowWindowOnLaunch(!isDevelopment)) {
     showWindowWhenTrayReady()
   }
+}).catch(() => { notifyRenderer('setup:status', { phase: 'failed', error: 'Widget startup failed' }) })
+
+app.on('second-instance', () => {
+  if (quitting) return
+  writeOwnedPid()
+  showWindowWhenTrayReady()
 })
 
 app.on('window-all-closed', () => {
@@ -76,7 +128,16 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  db?.close()
+  quitting = true
+  lifetime.abort()
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+  for (const [timer, onCancel] of timeoutTasks) { clearTimeout(timer); onCancel() }
+  timeoutTasks.clear()
+  positionRetryTimers = []
+  try { db?.close() } catch {}
+  db = null
+  tray?.destroy()
+  tray = null
 })
 
 function applyTheme(theme: WidgetSettings['theme']): void {
@@ -97,7 +158,7 @@ function createTray(): void {
       { label: i18n.openDashboard, click: () => openDashboardAction() },
       { label: i18n.refresh, click: () => pushDataUpdate() },
       { type: 'separator' },
-      { label: i18n.quit, click: () => { app.exit(0) } },
+      { label: i18n.quit, click: () => { app.quit() } },
     ])
     tray!.popUpContextMenu(menu)
   })
@@ -119,17 +180,28 @@ function createWindow(): void {
       nodeIntegration: false,
     },
   })
+  const window = win
 
   const rendererPath = join(__dirname, 'renderer', 'index.html')
-  win.loadFile(rendererPath)
+  void window.loadFile(rendererPath).catch(() => {})
 
-  if (shouldHideWindowOnBlur(app.isPackaged)) {
-    win.on('blur', () => win?.hide())
+  window.on('close', event => {
+    if (!quitting && shouldHideWindowOnClose(!isDevelopment)) {
+      event.preventDefault()
+      if (!window.isDestroyed()) window.hide()
+    }
+  })
+  window.on('closed', () => { if (win === window) win = null })
+
+  if (shouldHideWindowOnBlur(!isDevelopment)) {
+    window.on('blur', () => { if (!window.isDestroyed()) window.hide() })
   }
 }
 
 function showWindow(): void {
-  if (!win) return
+  if (quitting) return
+  if (!win || win.isDestroyed()) createWindow()
+  if (!win || win.isDestroyed()) return
 
   positionWindowNearTray()
   win.show()
@@ -139,7 +211,7 @@ function showWindow(): void {
 }
 
 function showWindowWhenTrayReady(attempt = 0): void {
-  if (!tray) return
+  if (quitting || !tray) return
 
   const trayBounds = tray.getBounds()
   if (hasUsableTrayBounds({
@@ -151,11 +223,11 @@ function showWindowWhenTrayReady(attempt = 0): void {
     return
   }
 
-  setTimeout(() => showWindowWhenTrayReady(attempt + 1), 80)
+  scheduleTimeout(() => showWindowWhenTrayReady(attempt + 1), 80)
 }
 
 function positionWindowNearTray(): boolean {
-  if (!win || !tray) return false
+  if (quitting || !win || win.isDestroyed() || !tray) return false
 
   const trayBounds = tray!.getBounds()
   const displayBounds = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y }).workArea
@@ -172,19 +244,19 @@ function positionWindowNearTray(): boolean {
 }
 
 function schedulePositionRetries(): void {
-  for (const timer of positionRetryTimers) clearTimeout(timer)
-  positionRetryTimers = [80, 200, 500, 1000].map((delay) => setTimeout(() => {
-    if (!win?.isVisible()) return
+  for (const timer of positionRetryTimers) cancelTimeout(timer)
+  positionRetryTimers = [80, 200, 500, 1000].map((delay) => scheduleTimeout(() => {
+    if (!win || win.isDestroyed() || !win.isVisible()) return
     const positionedWithRealTrayBounds = positionWindowNearTray()
     if (positionedWithRealTrayBounds) {
-      for (const timer of positionRetryTimers) clearTimeout(timer)
+      for (const timer of positionRetryTimers) cancelTimeout(timer)
       positionRetryTimers = []
     }
   }, delay))
 }
 
 function toggleWindow(): void {
-  if (win?.isVisible()) {
+  if (win && !win.isDestroyed() && win.isVisible()) {
     win.hide()
   } else {
     showWindow()
@@ -192,41 +264,45 @@ function toggleWindow(): void {
 }
 
 function pushDataUpdate(): void {
-  if (!win || !db) return
+  if (quitting || !win || win.isDestroyed() || !db) return
   try {
-    const data = queryWidgetData(db, settings.rangeDays)
+    const data = queryWidgetData(db, settings.rangeDays, currentDeviceInstanceId())
     win.webContents.send('widget:data-update', data)
-  } catch {
-    // DB may not be initialized yet; silently skip
-  }
+  } catch { notifyRenderer('widget:data-error', { error: 'Usage database unavailable' }) }
 }
 
 function startAutoRefresh(): void {
   if (refreshTimer) clearInterval(refreshTimer)
+  if (quitting) return
   refreshTimer = setInterval(() => pushDataUpdate(), settings.refreshIntervalSec * 1000)
 }
 
 async function openDashboardAction(): Promise<void> {
-  const port = getDashboardPort()
-  const reachable = await isDashboardReachable(port)
-  if (!reachable) {
-    showWindow()
-    notifyRenderer('install:status', { phase: 'launching' })
-    const result = await launchDashboard()
-    if (result.success) {
+  if (quitting) return
+  if (dashboardPromise) return dashboardPromise
+  dashboardPromise = (async () => {
+    const reachable = await isDashboardReachable(getDashboardPort())
+    if (quitting) return
+    if (!reachable) {
+      showWindow()
+      notifyRenderer('install:status', { phase: 'launching' })
+      const result = await launchDashboard()
+      if (quitting) return
+      if (!result.success) {
+        notifyRenderer('install:status', { phase: 'failed', error: result.error })
+        dialog.showErrorBox('Launch Failed', `${result.error ?? 'Dashboard failed to start'}\n\n${CLI_HELP}`)
+        return
+      }
       notifyRenderer('install:status', { phase: 'done' })
     }
-    if (!result.success) {
-      notifyRenderer('install:status', { phase: 'failed', error: result.error })
-      dialog.showErrorBox('Launch Failed', `${result.error ?? 'Dashboard failed to start'}\n\n${CLI_HELP}`)
-      return
-    }
-  }
-  shell.openExternal(`http://localhost:${getDashboardPort()}`)
+    await shell.openExternal(`http://127.0.0.1:${getDashboardPort()}`)
+  })()
+  try { await dashboardPromise }
+  finally { dashboardPromise = null }
 }
 
 function notifyRenderer(channel: string, payload: Record<string, unknown>): void {
-  if (win && !win.isDestroyed()) {
+  if (!quitting && win && !win.isDestroyed()) {
     win.webContents.send(channel, payload)
   }
 }
@@ -235,7 +311,8 @@ function loadExchangeRateCache(): ExchangeRateState {
   try {
     if (existsSync(FX_CACHE_FILE)) {
       const raw = JSON.parse(readFileSync(FX_CACHE_FILE, 'utf-8')) as ExchangeRateState
-      if (raw.base === 'USD' && raw.target === 'CNY' && typeof raw.rate === 'number') {
+      if (raw.base === 'USD' && raw.target === 'CNY' && typeof raw.rate === 'number' && Number.isFinite(raw.rate) && raw.rate > 0
+        && typeof raw.fetchedAt === 'number' && Number.isFinite(raw.fetchedAt)) {
         return raw
       }
     }
@@ -261,8 +338,10 @@ function saveExchangeRateCache(rate: ExchangeRateState): void {
 }
 
 async function refreshExchangeRate(force = false): Promise<ExchangeRateState> {
+  if (quitting) return exchangeRate
   const hasFreshRate = exchangeRate.rate !== null &&
     exchangeRate.fetchedAt !== null &&
+    exchangeRate.fetchedAt <= Date.now() &&
     Date.now() - exchangeRate.fetchedAt < FX_CACHE_TTL_MS
 
   if (!force && hasFreshRate) return exchangeRate
@@ -270,7 +349,8 @@ async function refreshExchangeRate(force = false): Promise<ExchangeRateState> {
 
   exchangeRatePromise = (async () => {
     try {
-      const { rate, date, source } = await fetchUsdCnyRate()
+      const { rate, date, source } = await fetchUsdCnyRate(undefined, lifetime.signal)
+      if (quitting) return exchangeRate
 
       exchangeRate = {
         base: 'USD',
@@ -282,6 +362,7 @@ async function refreshExchangeRate(force = false): Promise<ExchangeRateState> {
       }
       saveExchangeRateCache(exchangeRate)
     } catch (error) {
+      if (quitting) return exchangeRate
       exchangeRate = {
         ...exchangeRate,
         error: error instanceof Error ? error.message : 'Failed to fetch exchange rate',
@@ -320,6 +401,7 @@ async function autoSetup(): Promise<void> {
   // Run first parse
   notifyRenderer('setup:status', { phase: 'parsing' })
   const result = await runFirstParse()
+  if (quitting) return
   if (!result.success) {
     notifyRenderer('setup:status', { phase: 'failed', error: result.error })
     return
@@ -327,10 +409,12 @@ async function autoSetup(): Promise<void> {
 
   // Open database if it now exists
   if (existsSync(DB_PATH)) {
-    db = new Database(DB_PATH, {
-      readonly: true,
-      nativeBinding: getWidgetNativeBindingPath(__dirname),
-    })
+    openDatabase()
+  }
+
+  if (databaseError) {
+    notifyRenderer('setup:status', { phase: 'failed', error: databaseError })
+    return
   }
 
   notifyRenderer('setup:status', { phase: 'done' })
@@ -339,8 +423,10 @@ async function autoSetup(): Promise<void> {
 
 // IPC handlers
 ipcMain.handle('widget:get-data', () => {
+  if (databaseError) throw new Error(databaseError)
   if (!db) return null
-  return queryWidgetData(db, settings.rangeDays)
+  try { return queryWidgetData(db, settings.rangeDays, currentDeviceInstanceId()) }
+  catch { throw new Error('Usage database unavailable') }
 })
 
 ipcMain.handle('widget:open-dashboard', async () => {
@@ -355,20 +441,21 @@ ipcMain.handle('widget:get-exchange-rate', async () => {
   return refreshExchangeRate()
 })
 
-ipcMain.handle('widget:save-settings', (_event, newSettings: WidgetSettings) => {
-  settings = newSettings
-  saveSettings(settings)
+ipcMain.handle('widget:save-settings', (_event, newSettings: unknown) => {
+  const next = normalizeSettings(newSettings, settings)
+  saveSettings(next)
+  settings = next
   applyTheme(settings.theme)
   startAutoRefresh()
   return settings
 })
 
 ipcMain.on('widget:hide-window', () => {
-  win?.hide()
+  if (win && !win.isDestroyed()) win.hide()
 })
 
 ipcMain.on('widget:resize-window', (_event, height: number) => {
-  if (!win || !Number.isFinite(height)) return
+  if (!win || win.isDestroyed() || !Number.isFinite(height)) return
 
   const bounds = win.getBounds()
   const displayBounds = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y }).workArea
@@ -388,17 +475,19 @@ ipcMain.on('widget:resize-window', (_event, height: number) => {
 function getDashboardPort(): number {
   try {
     if (existsSync(PORT_FILE)) {
-      const port = parseInt(readFileSync(PORT_FILE, 'utf-8').trim(), 10)
-      if (!isNaN(port) && port > 0) return port
+      const text = readFileSync(PORT_FILE, 'utf-8').trim()
+      const port = /^\d+$/.test(text) ? Number(text) : NaN
+      if (Number.isInteger(port) && port >= 1 && port <= 65535) return port
     }
   } catch {}
   return DASHBOARD_PORT
 }
 
 async function isDashboardReachable(port: number): Promise<boolean> {
+  if (quitting || !Number.isInteger(port) || port < 1 || port > 65535) return false
   return new Promise((resolve) => {
     const http = nodeRequire('http') as typeof import('http')
-    const req = http.get(`http://localhost:${port}`, (res) => {
+    const req = http.get(`http://127.0.0.1:${port}`, (res) => {
       res.destroy()
       resolve(res.statusCode !== undefined && res.statusCode < 500)
     })
@@ -431,11 +520,14 @@ async function launchDashboard(): Promise<{ success: boolean; error?: string }> 
 
     let attempts = 0
     const check = async () => {
+      if (quitting) { resolve({ success: false, error: 'Widget is quitting' }); return }
       if (failed) {
         resolve({ success: false, error: 'aiusage command not found' })
         return
       }
-      if (await isDashboardReachable(getDashboardPort())) {
+      const reachable = await isDashboardReachable(getDashboardPort())
+      if (quitting) { resolve({ success: false, error: 'Widget is quitting' }); return }
+      if (reachable) {
         resolve({ success: true })
         return
       }
@@ -444,7 +536,7 @@ async function launchDashboard(): Promise<{ success: boolean; error?: string }> 
         resolve({ success: false, error: 'Server failed to start within 5 seconds' })
         return
       }
-      setTimeout(check, 200)
+      scheduleTimeout(check, 200, () => resolve({ success: false, error: 'Widget is quitting' }))
     }
     check()
   })

@@ -27,10 +27,13 @@ export interface UsdCnyRate {
   source: string
 }
 
-export async function fetchUsdCnyRate(fetchFn: typeof fetch = fetch): Promise<UsdCnyRate> {
+export async function fetchUsdCnyRate(fetchFn: typeof fetch = fetch, signal?: AbortSignal): Promise<UsdCnyRate> {
   let lastError: unknown = new Error('USD/CNY rate missing')
   for (const source of EXCHANGE_RATE_SOURCES) {
+    if (signal?.aborted) throw signal.reason ?? new Error('Exchange rate request cancelled')
     const controller = new AbortController()
+    const onAbort = () => controller.abort(signal?.reason)
+    signal?.addEventListener('abort', onAbort, { once: true })
     const timeout = setTimeout(() => {
       controller.abort(new Error('Exchange rate request timed out'))
     }, EXCHANGE_RATE_TIMEOUT_MS)
@@ -50,6 +53,7 @@ export async function fetchUsdCnyRate(fetchFn: typeof fetch = fetch): Promise<Us
     } finally {
       // Keep the timeout active until the response body has also been read.
       clearTimeout(timeout)
+      signal?.removeEventListener('abort', onAbort)
     }
   }
   throw lastError
@@ -65,8 +69,12 @@ export function convertUsdCost(
   currency: CurrencyCode,
   exchangeRate: ExchangeRateState | null
 ): number | null {
+  if (!Number.isFinite(value)) return null
   if (currency === 'USD') return value
-  if (exchangeRate?.rate && Number.isFinite(exchangeRate.rate)) return value * exchangeRate.rate
+  if (exchangeRate?.rate && Number.isFinite(exchangeRate.rate) && exchangeRate.rate > 0) {
+    const converted = value * exchangeRate.rate
+    return Number.isFinite(converted) ? converted : null
+  }
   return null
 }
 

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 
 export const CLI_PACKAGE = '@fiveo9/aiusage'
 export const CLI_HELP = `Start from this checkout with pnpm dev:widget, or install the CLI explicitly: npm install -g ${CLI_PACKAGE}`
@@ -19,6 +19,22 @@ export function resolveCliEntry(
       if (exists(entry)) return entry
     }
   } catch {}
+  // pnpm's widget lives below .pnpm, while the explicitly installed global CLI
+  // is linked from an outer node_modules. Probe only its exact package path.
+  for (let ancestor = widgetDir, depth = 0; depth < 12; depth++) {
+    if (basename(ancestor) === 'node_modules') {
+      const manifest = join(ancestor, CLI_PACKAGE, 'package.json')
+      try {
+        if (JSON.parse(read(manifest)).name === CLI_PACKAGE) {
+          const entry = join(dirname(manifest), 'dist', 'index.js')
+          if (exists(entry)) return entry
+        }
+      } catch {}
+    }
+    const parent = dirname(ancestor)
+    if (parent === ancestor) break
+    ancestor = parent
+  }
   try {
     const manifest = resolveModule(`${CLI_PACKAGE}/package.json`)
     if (JSON.parse(read(manifest)).name !== CLI_PACKAGE) return null

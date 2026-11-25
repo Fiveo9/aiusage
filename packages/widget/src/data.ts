@@ -48,13 +48,24 @@ export interface WidgetData {
   lastUpdated: number
 }
 
-export function queryWidgetData(db: Database.Database, rangeDays: number = 30): WidgetData {
+export function queryWidgetData(db: Database.Database, rangeDays: number = 30, currentDeviceInstanceId?: string): WidgetData {
   const now = new Date()
   const todayStart = getLocalDayStart(now)
   const tomorrow = getLocalDayStart(now, 1)
   const rangeStart = getLocalDayStart(now, -(rangeDays - 1))
+  const columns = 'ts, tool, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, thinking_tokens, cost, session_id'
+  const useUnion = Boolean(currentDeviceInstanceId)
+  // Match CLI's all-device branch: exclude merged mirrors and this device's
+  // own synced copy. No identity means the same legacy records-only fallback.
+  const recordsCTE = `WITH widget_records AS (
+    SELECT ${columns} FROM records ${useUnion ? "WHERE origin = 'local'" : ''}
+    ${useUnion ? `UNION ALL SELECT ${columns.replace('session_id', 'session_key AS session_id')}
+      FROM synced_records WHERE device_instance_id != ?` : ''}
+  )`
+  const sourceParams = useUnion ? [currentDeviceInstanceId!] : []
 
   const todayRow = db.prepare(`
+    ${recordsCTE}
     SELECT
       COALESCE(SUM(input_tokens), 0) AS input,
       COALESCE(SUM(output_tokens), 0) AS output,
@@ -62,30 +73,32 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
       COALESCE(SUM(cache_write_tokens), 0) AS cacheWrite,
       COALESCE(SUM(thinking_tokens), 0) AS thinking,
       COALESCE(SUM(cost), 0) AS cost
-    FROM records
+    FROM widget_records
     WHERE ts >= ? AND ts < ?
-  `).get(todayStart, tomorrow) as {
+  `).get(...sourceParams, todayStart, tomorrow) as {
     input: number; output: number; cacheRead: number
     cacheWrite: number; thinking: number; cost: number
   }
 
   const rangeRow = db.prepare(`
+    ${recordsCTE}
     SELECT
       COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens), 0) AS total,
       COALESCE(SUM(cost), 0) AS cost
-    FROM records
+    FROM widget_records
     WHERE ts >= ? AND ts < ?
-  `).get(rangeStart, tomorrow) as { total: number; cost: number }
+  `).get(...sourceParams, rangeStart, tomorrow) as { total: number; cost: number }
 
   const modelRows = db.prepare(`
+    ${recordsCTE}
     SELECT
       model,
       SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens
-    FROM records
+    FROM widget_records
     WHERE ts >= ? AND ts < ?
     GROUP BY model
     ORDER BY tokens DESC
-  `).all(todayStart, tomorrow) as Array<{ model: string; tokens: number }>
+  `).all(...sourceParams, todayStart, tomorrow) as Array<{ model: string; tokens: number }>
 
   let topModel: TopModel | null = null
   if (modelRows.length > 0) {
@@ -98,14 +111,15 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
   }
 
   const toolRows = db.prepare(`
+    ${recordsCTE}
     SELECT
       tool,
       SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens
-    FROM records
+    FROM widget_records
     WHERE ts >= ? AND ts < ?
     GROUP BY tool
     ORDER BY tokens DESC
-  `).all(todayStart, tomorrow) as Array<{ tool: string; tokens: number }>
+  `).all(...sourceParams, todayStart, tomorrow) as Array<{ tool: string; tokens: number }>
 
   let topTool: TopTool | null = null
   if (toolRows.length > 0) {
@@ -123,7 +137,7 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
     end: getLocalDayStart(now, i - rangeDays + 2),
   }))
   const dailyRows = db.prepare(`
-    WITH days AS (
+    ${recordsCTE}, days AS (
       SELECT CAST(key AS INTEGER) AS dayIndex,
         json_extract(value, '$.start') AS start,
         json_extract(value, '$.end') AS end
@@ -133,10 +147,10 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
       days.dayIndex,
       SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + thinking_tokens) AS tokens,
       SUM(cost) AS cost
-    FROM days LEFT JOIN records ON records.ts >= days.start AND records.ts < days.end
+    FROM days LEFT JOIN widget_records ON widget_records.ts >= days.start AND widget_records.ts < days.end
     GROUP BY days.dayIndex
     ORDER BY days.dayIndex
-  `).all(JSON.stringify(days)) as Array<{ dayIndex: number; tokens: number | null; cost: number | null }>
+  `).all(...sourceParams, JSON.stringify(days)) as Array<{ dayIndex: number; tokens: number | null; cost: number | null }>
 
   const dailyHistory: DailyEntry[] = []
   const dailyMap = new Map(dailyRows.map(r => [r.dayIndex, r]))
@@ -152,10 +166,11 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
 
   // Session count today
   const sessionRow = db.prepare(`
+    ${recordsCTE}
     SELECT COUNT(DISTINCT session_id) AS cnt
-    FROM records
+    FROM widget_records
     WHERE ts >= ? AND ts < ? AND session_id IS NOT NULL AND session_id != ''
-  `).get(todayStart, tomorrow) as { cnt: number }
+  `).get(...sourceParams, todayStart, tomorrow) as { cnt: number }
 
   return {
     todayTokens: {
@@ -181,8 +196,7 @@ export function queryWidgetData(db: Database.Database, rangeDays: number = 30): 
 }
 
 export function getLocalDayStart(date = new Date(), dayOffset = 0): number {
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  start.setDate(start.getDate() + dayOffset)
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() + dayOffset)
   return start.getTime()
 }
 

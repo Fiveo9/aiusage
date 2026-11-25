@@ -14,9 +14,11 @@ if (foreground) {
   const child = spawn(
     String(electron),
     [path.join(__dirname, '..', 'dist', 'main.js')],
-    { stdio: 'inherit' }
+    { stdio: 'inherit', windowsHide: true }
   )
-  child.on('exit', (code) => process.exit(code ?? 0))
+  savePid(child.pid)
+  child.on('error', () => process.exit(1))
+  child.on('exit', (code, signal) => process.exit(code ?? ({ SIGINT: 130, SIGTERM: 143 }[signal] ?? (signal ? 1 : 0))))
   process.on('SIGINT', () => child.kill('SIGINT'))
   process.on('SIGTERM', () => child.kill('SIGTERM'))
 } else {
@@ -24,17 +26,20 @@ if (foreground) {
   const child = spawn(
     String(electron),
     [path.join(__dirname, '..', 'dist', 'main.js')],
-    { detached: true, stdio: 'ignore' }
+    { detached: true, stdio: 'ignore', windowsHide: true }
   )
+  savePid(child.pid)
+  child.on('error', () => process.exit(1))
+  child.unref()
+}
 
-  if (child.pid) {
+function savePid(pid) {
+  if (pid) {
     try {
       mkdirSync(aiusageDir, { recursive: true })
-      writeFileSync(pidPath, String(child.pid), { encoding: 'utf-8' })
+      writeFileSync(pidPath, String(pid), { encoding: 'utf-8' })
     } catch {
       // Non-fatal: widget still starts, deduplication just won't work
     }
   }
-
-  child.unref()
 }

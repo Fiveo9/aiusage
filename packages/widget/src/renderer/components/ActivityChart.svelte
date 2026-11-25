@@ -27,13 +27,15 @@
   let mounted = false
 
   onMount(() => {
-    requestAnimationFrame(() => { mounted = true })
+    const frame = requestAnimationFrame(() => { mounted = true })
+    return () => cancelAnimationFrame(frame)
   })
 
   $: tokenValues = data.map(d => d.tokens)
-  $: costValues = data.map(d => convertUsdCost(d.cost, currency, exchangeRate) ?? 0)
+  $: costValues = data.map(d => convertUsdCost(d.cost, currency, exchangeRate))
+  $: costAvailable = costValues.every(value => value !== null)
   $: maxTokens = niceCeil(Math.max(...tokenValues, 1))
-  $: maxCost = niceCeil(Math.max(...costValues, 1))
+  $: maxCost = niceCeil(Math.max(...costValues.map(value => value ?? 0), 1))
 
   $: chartW = W - PAD_LEFT - PAD_RIGHT
   $: chartH = H - PAD_TOP - PAD_BOTTOM
@@ -107,7 +109,7 @@
   }
 
   $: tokenLinePath = buildSplinePath(tokenValues, yTokenAt)
-  $: costLinePath = showCost ? buildSplinePath(costValues, yCostAt) : ''
+  $: costLinePath = showCost && costAvailable ? buildSplinePath(costValues as number[], yCostAt) : ''
   $: areaPath = tokenLinePath
     ? `${tokenLinePath}L${xAt(tokenValues.length - 1).toFixed(1)},${(PAD_TOP + chartH).toFixed(1)}L${xAt(0).toFixed(1)},${(PAD_TOP + chartH).toFixed(1)}Z`
     : ''
@@ -188,8 +190,10 @@
   }
 
   function handleMouseMove(e: MouseEvent) {
+    if (!data.length) { hoveredIndex = null; return }
     const svg = (e.currentTarget as SVGSVGElement)
     const rect = svg.getBoundingClientRect()
+    if (rect.width <= 0) { hoveredIndex = null; return }
     const mouseX = ((e.clientX - rect.left) / rect.width) * W
     let minDist = Infinity
     let nearest = 0
@@ -206,6 +210,7 @@
   function handleMouseLeave() {
     hoveredIndex = null
   }
+  $: hoveredEntry = hoveredIndex !== null ? data[hoveredIndex] : null
 
   // X-axis tick labels
   $: tickIndices = data.length <= 5
@@ -256,7 +261,7 @@
       </text>
     {/each}
 
-    {#if showCost}
+    {#if showCost && costAvailable}
       {#each costGridLines as gv}
         <text
           x={PAD_LEFT + chartW + 7}
@@ -307,7 +312,7 @@
     {/if}
 
     <!-- Hover vertical line -->
-    {#if hoveredIndex !== null}
+    {#if hoveredEntry}
       <line
         x1={xAt(hoveredIndex)}
         y1={PAD_TOP}
@@ -320,7 +325,7 @@
     {/if}
 
     <!-- Data point on hover -->
-    {#if hoveredIndex !== null}
+    {#if hoveredEntry}
       <circle
         cx={xAt(hoveredIndex)}
         cy={yTokenAt(tokenValues[hoveredIndex])}
@@ -329,10 +334,10 @@
         stroke="var(--accent)"
         stroke-width="2"
       />
-      {#if showCost}
+      {#if showCost && costAvailable}
         <circle
           cx={xAt(hoveredIndex)}
-          cy={yCostAt(costValues[hoveredIndex])}
+          cy={yCostAt(costValues[hoveredIndex] ?? 0)}
           r="3"
           fill="var(--bg)"
           stroke="var(--chart-cache-read)"
@@ -342,7 +347,7 @@
     {/if}
 
     <!-- Tooltip rendered inside SVG as foreignObject -->
-    {#if hoveredIndex !== null && data[hoveredIndex]}
+    {#if hoveredEntry}
       {@const entry = data[hoveredIndex]}
       {@const tipWidth = tooltipWidth()}
       {@const tipX = tooltipBoxX(hoveredIndex)}
@@ -390,14 +395,13 @@
     overflow: visible;
   }
   .chart-svg .line {
-    stroke-dasharray: 2000;
-    stroke-dashoffset: 2000;
-    transition: stroke-dashoffset 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity: 0;
+    transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .chart-svg.mounted .line {
-    stroke-dashoffset: 0;
+    opacity: 1;
   }
-  .chart-svg .cost-line {
+  .chart-svg.mounted .cost-line {
     opacity: 0.75;
   }
   .chart-svg .area {
@@ -501,8 +505,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .chart-svg .line {
-      stroke-dasharray: none;
-      stroke-dashoffset: 0;
+      opacity: 1;
       transition: none;
     }
     .chart-svg .area {

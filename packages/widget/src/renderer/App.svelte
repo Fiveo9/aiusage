@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { afterUpdate, onMount, tick } from 'svelte'
+  import { afterUpdate, onMount, onDestroy, tick } from 'svelte'
   import Header from './components/Header.svelte'
   import StatRow from './components/StatRow.svelte'
   import TokenBreakdown from './components/TokenBreakdown.svelte'
@@ -53,6 +53,13 @@
   let installPhase: string | null = null
   let installError: string | null = null
   let isSetup = false
+  let disposed = false
+  let refreshEpoch = 0
+  let settingsEpoch = 0
+  let dataError = false
+  let ratePromise: Promise<void> | null = null
+  const statusTimers = new Set<ReturnType<typeof setTimeout>>()
+  const subscriptions: Array<() => void> = []
 
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -64,21 +71,27 @@
   $: i18n = t(locale)
   $: currency = settings?.currency ?? 'USD'
 
-  function rangeLabel(days: number): string {
-    return i18n.lastNDays(days)
+  function rangeLabel(days: number, translate: ReturnType<typeof t>): string {
+    return translate.lastNDays(days)
   }
 
-  function formatSyncTime(ts: number): string {
+  function formatSyncTime(ts: number, translate: ReturnType<typeof t>): string {
     const d = new Date(ts)
     const hh = String(d.getHours()).padStart(2, '0')
     const mm = String(d.getMinutes()).padStart(2, '0')
-    return i18n.syncedAt(`${hh}:${mm}`)
+    return translate.syncedAt(`${hh}:${mm}`)
   }
 
   async function refresh() {
+    if (disposed) return
+    const epoch = ++refreshEpoch
     loading = true
-    data = await (window as any).widget.getData()
-    loading = false
+    try {
+      const value = await (window as any).widget.getData()
+      if (!disposed && epoch === refreshEpoch) { data = value; dataError = false }
+    } catch {
+      if (!disposed && epoch === refreshEpoch) { data = null; dataError = true }
+    } finally { if (!disposed && epoch === refreshEpoch) loading = false }
   }
 
   function close() {
@@ -86,21 +99,49 @@
   }
 
   async function doLoadSettings() {
-    settings = await (window as any).widget.getSettings()
+    const epoch = ++settingsEpoch
+    try {
+      const value = await (window as any).widget.getSettings()
+      if (disposed || epoch !== settingsEpoch) return
+      settings = value
+      await ensureCurrencyRate()
+    } catch {}
   }
 
   async function loadExchangeRate() {
-    exchangeRate = await (window as any).widget.getExchangeRate()
+    if (disposed) return
+    if (ratePromise) return ratePromise
+    ratePromise = (async () => {
+      try {
+        const value = await (window as any).widget.getExchangeRate()
+        if (!disposed) exchangeRate = value
+      } catch {}
+    })()
+    try { await ratePromise }
+    finally { ratePromise = null }
+  }
+
+  async function ensureCurrencyRate() {
+    if (disposed || settings?.currency !== 'CNY') return
+    if (!exchangeRate || !Number.isFinite(exchangeRate.rate) || (exchangeRate.rate ?? 0) <= 0
+      || exchangeRate.fetchedAt == null || exchangeRate.fetchedAt > Date.now()
+      || Date.now() - exchangeRate.fetchedAt >= 6 * 3600000) await loadExchangeRate()
   }
 
   async function saveSettings(e: CustomEvent<WidgetSettings>) {
-    settings = await (window as any).widget.saveSettings(e.detail)
-    // Re-fetch data since rangeDays may have changed
-    refresh()
+    if (disposed) return
+    const epoch = ++settingsEpoch
+    try {
+      const value = await (window as any).widget.saveSettings(e.detail)
+      if (disposed || epoch !== settingsEpoch) return
+      settings = value
+      void refresh()
+      await ensureCurrencyRate()
+    } catch {}
   }
 
   function reportWindowHeight() {
-    if (!panelEl) return
+    if (disposed || !panelEl) return
 
     const height = Math.ceil(panelEl.getBoundingClientRect().height)
     if (height <= 0 || Math.abs(height - lastReportedHeight) < 2) return
@@ -113,31 +154,65 @@
     refresh()
     doLoadSettings()
     loadExchangeRate()
-    ;(window as any).widget.onDataUpdate((d: WidgetData) => {
+    const api = (window as any).widget
+    subscriptions.push(api.onDataUpdate((d: WidgetData) => {
+      if (disposed) return
+      refreshEpoch += 1
       data = d
+      dataError = false
       loading = false
+    }))
+    const dataErrorCleanup = api.onDataError?.(() => {
+      if (disposed) return
+      refreshEpoch += 1; dataError = true; loading = false
     })
-    ;(window as any).widget.onInstallStatus((status: { phase: string; error?: string }) => {
+    if (typeof dataErrorCleanup === 'function') subscriptions.push(dataErrorCleanup)
+    subscriptions.push(api.onInstallStatus((status: { phase: string; error?: string }) => {
+      if (disposed) return
+      clearStatusTimers()
+      isSetup = false
       installPhase = status.phase
       installError = status.error ?? null
       if (status.phase === 'done' || status.phase === 'failed') {
-        setTimeout(() => { installPhase = null; installError = null }, 3000)
+        scheduleStatusClear()
       }
-    })
-    ;(window as any).widget.onSetupStatus((status: { phase: string; error?: string }) => {
+    }))
+    subscriptions.push(api.onSetupStatus((status: { phase: string; error?: string }) => {
+      if (disposed) return
+      clearStatusTimers()
       isSetup = true
       installPhase = status.phase
       installError = status.error ?? null
       if (status.phase === 'done' || status.phase === 'failed') {
-        setTimeout(() => { installPhase = null; installError = null; isSetup = false }, 3000)
+        scheduleStatusClear()
       }
-    })
+    }))
 
     const resizeObserver = new ResizeObserver(() => reportWindowHeight())
     resizeObserver.observe(panelEl)
     void tick().then(reportWindowHeight)
 
     return () => resizeObserver.disconnect()
+  })
+
+  function clearStatusTimers() {
+    for (const timer of statusTimers) clearTimeout(timer)
+    statusTimers.clear()
+  }
+
+  function scheduleStatusClear() {
+    if (disposed) return
+    const timer = setTimeout(() => {
+      statusTimers.delete(timer)
+      if (!disposed) { installPhase = null; installError = null; isSetup = false }
+    }, 3000)
+    statusTimers.add(timer)
+  }
+
+  onDestroy(() => {
+    disposed = true; refreshEpoch += 1; settingsEpoch += 1
+    clearStatusTimers()
+    for (const unsubscribe of subscriptions.splice(0)) { if (typeof unsubscribe === 'function') unsubscribe() }
   })
 
   afterUpdate(() => {
@@ -148,13 +223,13 @@
   $: rangeStr = data ? formatTokens(data.rangeTokens.total) : '--'
   $: todayCostStr = data ? formatUsdCost(data.todayCost, currency, locale, exchangeRate) : '--'
   $: rangeCostStr = data ? formatUsdCost(data.rangeCost, currency, locale, exchangeRate) : '--'
-  $: rangeLabelStr = data ? rangeLabel(data.rangeDays) : i18n.lastNDays(30)
+  $: rangeLabelStr = data ? rangeLabel(data.rangeDays, i18n) : i18n.lastNDays(30)
   $: modelStr = data?.topModel ? data.topModel.name : '--'
   $: modelSubStr = data?.topModel ? `${data.topModel.share}%` : ''
   $: toolStr = data?.topTool?.name ?? '--'
   $: toolSubStr = data?.topTool ? `${data.topTool.share}%` : ''
   $: sessionStr = data ? String(data.sessionCountToday) : '--'
-  $: updatedStr = data ? formatSyncTime(data.lastUpdated) : ''
+  $: updatedStr = data ? formatSyncTime(data.lastUpdated, i18n) : ''
   $: installMessage = installPhase === 'checking' ? i18n.setupChecking
     : installPhase === 'parsing' ? i18n.setupParsing
     : installPhase === 'installing' ? i18n.installInstalling
@@ -186,6 +261,7 @@
     closeLabel={i18n.close}
     statusText={updatedStr}
   />
+  {#if dataError}<div class="section" role="alert">{i18n.dataUnavailable}</div>{/if}
 
   {#if showSettings && settings}
     <SettingsPanel
@@ -226,6 +302,7 @@
             cacheRead={data.todayTokens.cacheRead}
             cacheWrite={data.todayTokens.cacheWrite}
             thinking={data.todayTokens.thinking}
+            {locale}
           />
         </div>
       {/if}

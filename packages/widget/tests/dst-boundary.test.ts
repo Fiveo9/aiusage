@@ -24,6 +24,15 @@ it('keeps range starts aligned to local dates', () => {
   expect(new Date(start).getHours()).toBe(0)
 })
 
+it('constructs the target midnight directly when a source midnight is skipped', () => {
+  vi.stubEnv('TZ', 'America/Havana')
+  try {
+    const start = getLocalDayStart(new Date('2026-03-08T12:00:00-04:00'), 1)
+    expect(new Date(start).getDate()).toBe(9)
+    expect(new Date(start).getHours()).toBe(0)
+  } finally { vi.stubEnv('TZ', 'America/New_York') }
+})
+
 it.each([
   ['2026-03-08', '2026-03-09', '-04:00'],
   ['2026-11-01', '2026-11-02', '-05:00'],

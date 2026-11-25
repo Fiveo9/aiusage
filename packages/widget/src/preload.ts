@@ -9,13 +9,14 @@ export interface InstallStatus {
 }
 
 export interface WidgetAPI {
-  getData: () => Promise<WidgetData>
+  getData: () => Promise<WidgetData | null>
   openDashboard: () => Promise<void>
   hideWindow: () => void
   resizeWindow: (height: number) => void
-  onDataUpdate: (callback: (data: WidgetData) => void) => void
-  onInstallStatus: (callback: (status: InstallStatus) => void) => void
-  onSetupStatus: (callback: (status: InstallStatus) => void) => void
+  onDataUpdate: (callback: (data: WidgetData) => void) => () => void
+  onDataError: (callback: () => void) => () => void
+  onInstallStatus: (callback: (status: InstallStatus) => void) => () => void
+  onSetupStatus: (callback: (status: InstallStatus) => void) => () => void
   getSettings: () => Promise<WidgetSettings>
   saveSettings: (settings: WidgetSettings) => Promise<WidgetSettings>
   getExchangeRate: () => Promise<ExchangeRateState>
@@ -27,16 +28,24 @@ contextBridge.exposeInMainWorld('widget', {
   hideWindow: () => ipcRenderer.send('widget:hide-window'),
   resizeWindow: (height: number) => ipcRenderer.send('widget:resize-window', height),
   onDataUpdate: (callback: (data: WidgetData) => void) => {
-    ipcRenderer.removeAllListeners('widget:data-update')
-    ipcRenderer.on('widget:data-update', (_event, data) => callback(data))
+    const listener = (_event: Electron.IpcRendererEvent, data: WidgetData) => callback(data)
+    ipcRenderer.on('widget:data-update', listener)
+    return () => { ipcRenderer.removeListener('widget:data-update', listener) }
+  },
+  onDataError: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('widget:data-error', listener)
+    return () => { ipcRenderer.removeListener('widget:data-error', listener) }
   },
   onInstallStatus: (callback: (status: InstallStatus) => void) => {
-    ipcRenderer.removeAllListeners('install:status')
-    ipcRenderer.on('install:status', (_event, status) => callback(status))
+    const listener = (_event: Electron.IpcRendererEvent, status: InstallStatus) => callback(status)
+    ipcRenderer.on('install:status', listener)
+    return () => { ipcRenderer.removeListener('install:status', listener) }
   },
   onSetupStatus: (callback: (status: InstallStatus) => void) => {
-    ipcRenderer.removeAllListeners('setup:status')
-    ipcRenderer.on('setup:status', (_event, status) => callback(status))
+    const listener = (_event: Electron.IpcRendererEvent, status: InstallStatus) => callback(status)
+    ipcRenderer.on('setup:status', listener)
+    return () => { ipcRenderer.removeListener('setup:status', listener) }
   },
   getSettings: () => ipcRenderer.invoke('widget:get-settings'),
   saveSettings: (settings: WidgetSettings) => ipcRenderer.invoke('widget:save-settings', settings),

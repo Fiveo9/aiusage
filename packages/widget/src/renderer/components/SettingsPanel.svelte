@@ -22,6 +22,11 @@
   const dispatch = createEventDispatcher<{ save: WidgetSettings; close: void }>()
 
   let local = { ...settings }
+  let confirmedSettings = settings
+  $: if (settings !== confirmedSettings) {
+    local = { ...settings }
+    confirmedSettings = settings
+  }
 
   $: i18n = t(local.locale ?? 'en')
 
@@ -29,17 +34,17 @@
     dispatch('save', local)
   }
 
-  function formatRate(): string {
-    if (!exchangeRate?.rate) return i18n.exchangeRateUnavailable
-    return `1 USD = ${exchangeRate.rate.toFixed(4)} CNY`
+  function formatRate(rate: ExchangeRateState | null, translate: ReturnType<typeof t>): string {
+    if (!rate?.rate) return translate.exchangeRateUnavailable
+    return `1 USD = ${rate.rate.toFixed(4)} CNY`
   }
 
-  function formatRateUpdated(): string {
-    if (!exchangeRate?.fetchedAt) return ''
-    const d = new Date(exchangeRate.fetchedAt)
+  function formatRateUpdated(rate: ExchangeRateState | null, translate: ReturnType<typeof t>): string {
+    if (!rate?.fetchedAt) return ''
+    const d = new Date(rate.fetchedAt)
     const hh = String(d.getHours()).padStart(2, '0')
     const mm = String(d.getMinutes()).padStart(2, '0')
-    return i18n.exchangeRateUpdated(`${hh}:${mm}`)
+    return translate.exchangeRateUpdated(`${hh}:${mm}`)
   }
 
   function toggle(key: keyof WidgetSettings) {
@@ -117,9 +122,9 @@
     {#if local.currency === 'CNY'}
       <div class="rate-info" class:error={!exchangeRate?.rate}>
         <span>{i18n.exchangeRate}</span>
-        <strong>{formatRate()}</strong>
-        {#if formatRateUpdated()}
-          <small>{formatRateUpdated()}</small>
+        <strong>{formatRate(exchangeRate, i18n)}</strong>
+        {#if formatRateUpdated(exchangeRate, i18n)}
+          <small>{formatRateUpdated(exchangeRate, i18n)}</small>
         {/if}
         {#if exchangeRate?.error}
           <small>{exchangeRate.error}</small>

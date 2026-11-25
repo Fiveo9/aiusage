@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = process.env.AIUSAGE_CHECK_ROOT
@@ -15,7 +15,8 @@ if (!['test', 'build'].includes(task) || !['review', 'full', 'postgres', 'docker
 mkdirSync(results, { recursive: true })
 const summary = { task, scope, status: 'running', category: 'source-integrity', exitCode: null, steps: [], tests: { passed: 0, failed: 0, skipped: 0, total: 0 }, node: process.version }
 const save = () => writeFileSync(join(results, 'summary.json'), JSON.stringify(summary, null, 2))
-const baseEnv = { ...process.env, CI: '1', PNPM_HOME: join(root, 'tools'), npm_config_cache: join(root, 'npm-cache'),
+const commandBin = join(root, 'tools/bin')
+const baseEnv = { ...process.env, PATH: `${commandBin}:${process.env.PATH}`, CI: '1', PNPM_HOME: join(root, 'tools'), npm_config_cache: join(root, 'npm-cache'),
   npm_config_store_dir: join(root, 'pnpm-store'), NODE_OPTIONS: `--require ${join(source, 'scripts/remote-check-recycle.cjs')}` }
 const pnpm = join(root, 'tools/pnpm/package/bin/pnpm.cjs')
 
@@ -110,6 +111,14 @@ try {
   copyFileSync(join(nativeRoot, 'build/Release/better_sqlite3.node'), join(sqliteRoot, 'build/Release/better_sqlite3.node'))
   writeFileSync(readyFile, JSON.stringify({ lockHash, node: process.version }))
   }
+  mkdirSync(commandBin, { recursive: true })
+  if (lstatSync(commandBin).isSymbolicLink()) throw Error('Linked command directory requires review')
+  const pnpmCommand = join(commandBin, 'pnpm')
+  const pnpmLauncher = `#!/usr/bin/env node\nrequire(${JSON.stringify(pnpm)})\n`
+  if (existsSync(pnpmCommand)) {
+    const stat = lstatSync(pnpmCommand)
+    if (!stat.isFile() || stat.nlink !== 1 || readFileSync(pnpmCommand, 'utf8') !== pnpmLauncher) throw Error('Unexpected existing pnpm launcher')
+  } else writeFileSync(pnpmCommand, pnpmLauncher, { flag: 'wx', mode: 0o755 })
   await pnpmStep('core-build', ['--dir', 'packages/core', 'run', 'build'], 'remote-build')
   if (scope === 'package') {
     for (const pkg of ['web', 'cli']) await pnpmStep(`${pkg}-build`, ['--dir', `packages/${pkg}`, 'run', 'build'], 'remote-build')

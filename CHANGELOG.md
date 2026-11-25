@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Windows-to-Linux verification runner** — Normalize the Bash bootstrap to LF, expose the pinned pnpm executable to nested build scripts, and audit links contained within a test fixture before recoverable cleanup. External and chained links remain blocked; five regression tests cover the cleanup boundary.
 - **Sessions stuck on direct entry** — Initialize from the current URL when the page mounts after the authentication check, even if it missed the router's initial notification. Keep navigation updates and deduplicate initial requests. Production-web Chromium checks cover direct entry, reload, search, back navigation and login.
 - **Titles hidden by legacy synced copies** — Refresh nonempty titles on merged synced records even when their usage version is equal or ahead, without rewriting tokens, cost or versions. Missing source titles still require diagnosis; this does not manufacture names for untitled sessions.
 

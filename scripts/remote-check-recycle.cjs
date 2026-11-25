@@ -53,7 +53,19 @@ function recycle(input) {
   let stat
   try { stat = fs.lstatSync(source) } catch (error) { if (error.code === 'ENOENT') return; throw error }
   function inspect(file, info) {
-    if (info.isSymbolicLink()) throw Error('Linked cleanup target requires review')
+    if (info.isSymbolicLink()) {
+      const target = path.resolve(path.dirname(file), fs.readlinkSync(file))
+      // A whole fixture can be restored with its internal links. Never follow
+      // links outside it, chained links, or a link selected for cleanup alone.
+      if (!stat.isDirectory() || !target.startsWith(source + '/')
+          || fs.realpathSync(target) !== target) throw Error('Linked cleanup target requires review')
+      const targetInfo = fs.lstatSync(target)
+      if (!targetInfo.isFile() && !targetInfo.isDirectory()) throw Error('Linked cleanup target requires review')
+      fs.appendFileSync(path.join(root, 'recycle.jsonl'), JSON.stringify({
+        symbolic: path.relative(root, file), target: path.relative(root, target),
+      }) + '\n')
+      return
+    }
     if (info.isFile() && info.nlink > 1) {
       const created = fs.existsSync(linkAudit) && fs.readFileSync(linkAudit, 'utf8').trim().split('\n').some(line => {
         try { const entry = JSON.parse(line); return entry.dev === info.dev && entry.ino === info.ino } catch { return false }

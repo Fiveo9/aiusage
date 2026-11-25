@@ -175,6 +175,7 @@ mkdir -p "$root/home" "$root/tmp" "$root/results"
 cd "$root/source"
 exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$root/home" TMPDIR="$root/tmp" AIUSAGE_CHECK_ROOT="$root" AIUSAGE_CHECK_ATTEMPT="$attempt" AIUSAGE_CHECK_REUSE="$reuse" node scripts/remote-check-linux.mjs "$task" "$scope"
 '@
+        $bootstrap = $bootstrap.Replace("`r`n", "`n").Replace("`r", "`n")
         $attemptId = if ($ReuseRunId) { $runId } else { '' }
         $reuseFlag = if ($ReuseRunId) { '1' } else { '0' }
         $submitted = Invoke-Instabox @('exec', '--background', $Machine, '--json', '--', 'bash', '-c', $bootstrap, 'remote-check', $remoteRoot, $package.sha256, $Task, $Scope, $archiveName, $attemptId, $reuseFlag)

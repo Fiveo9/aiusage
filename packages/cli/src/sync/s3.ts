@@ -14,22 +14,74 @@ export interface S3Config {
   region?: string
 }
 
+export const S3_CONNECTION_TIMEOUT_MS = 15_000
+export const S3_SOCKET_TIMEOUT_MS = 30_000
+export const S3_REQUEST_TIMEOUT_MS = 30_000
+
+function supportsAgentProxyEnv(nodeVersion: string): boolean {
+  const [major, minor] = nodeVersion.split('.').map(Number)
+  return major >= 25 || (major === 24 && minor >= 5) || (major === 22 && minor >= 21)
+}
+
+function parseHttpProxyUrl(raw: string | undefined): string | null {
+  if (!raw?.trim()) return null
+  const proxy = raw.trim()
+  if (/[\r\n]/.test(raw) || !/^https?:\/\//i.test(proxy) || !URL.canParse(proxy)) return null
+  return new URL(proxy).href
+}
+
+function readEnvProxy(env: NodeJS.ProcessEnv, upper: string, lower: string): string | undefined {
+  return env[upper]?.trim() ? env[upper] : env[lower]
+}
+
+/**
+ * Resolve Node HTTP(S) agent `proxyEnv` for S3 requests.
+ * Explicit `AIUSAGE_S3_PROXY` is validated strictly; otherwise fall back to
+ * standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` env vars
+ * when the Node runtime supports `Agent({ proxyEnv })`.
+ */
+export function resolveS3ProxyEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  nodeVersion: string = process.versions.node,
+): Record<string, string> | undefined {
+  const explicit = env.AIUSAGE_S3_PROXY
+  if (explicit?.trim()) {
+    const normalizedProxy = parseHttpProxyUrl(explicit)
+    if (!normalizedProxy) {
+      throw new Error('AIUSAGE_S3_PROXY must be an HTTP or HTTPS proxy URL.')
+    }
+    if (!supportsAgentProxyEnv(nodeVersion)) {
+      throw new Error('AIUSAGE_S3_PROXY requires Node.js 22.21+, 24.5+, or 25+ (not Node.js 23).')
+    }
+    return { HTTP_PROXY: normalizedProxy, HTTPS_PROXY: normalizedProxy }
+  }
+
+  if (!supportsAgentProxyEnv(nodeVersion)) return undefined
+
+  const allProxy = parseHttpProxyUrl(readEnvProxy(env, 'ALL_PROXY', 'all_proxy'))
+  const httpProxy = parseHttpProxyUrl(readEnvProxy(env, 'HTTP_PROXY', 'http_proxy')) ?? allProxy
+  const httpsProxy = parseHttpProxyUrl(readEnvProxy(env, 'HTTPS_PROXY', 'https_proxy')) ?? allProxy
+  if (!httpProxy && !httpsProxy) return undefined
+
+  const proxyEnv: Record<string, string> = {}
+  if (httpProxy) proxyEnv.HTTP_PROXY = httpProxy
+  if (httpsProxy) proxyEnv.HTTPS_PROXY = httpsProxy
+  const noProxy = readEnvProxy(env, 'NO_PROXY', 'no_proxy')
+  if (noProxy?.trim() && !/[\r\n]/.test(noProxy)) {
+    proxyEnv.NO_PROXY = noProxy.trim()
+  }
+  return proxyEnv
+}
+
 function s3ProxyHandler() {
-  const timeouts = { connectionTimeout: 5_000, socketTimeout: 30_000, requestTimeout: 30_000 }
-  const configuredProxy = process.env.AIUSAGE_S3_PROXY
-  if (!configuredProxy?.trim()) return timeouts
-
-  const proxy = configuredProxy.trim()
-  if (/[\r\n]/.test(configuredProxy) || !/^https?:\/\//i.test(proxy) || !URL.canParse(proxy)) {
-    throw new Error('AIUSAGE_S3_PROXY must be an HTTP or HTTPS proxy URL.')
+  const timeouts = {
+    connectionTimeout: S3_CONNECTION_TIMEOUT_MS,
+    socketTimeout: S3_SOCKET_TIMEOUT_MS,
+    requestTimeout: S3_REQUEST_TIMEOUT_MS,
   }
-  const [major, minor] = process.versions.node.split('.').map(Number)
-  if (!(major >= 25 || (major === 24 && minor >= 5) || (major === 22 && minor >= 21))) {
-    throw new Error('AIUSAGE_S3_PROXY requires Node.js 22.21+, 24.5+, or 25+ (not Node.js 23).')
-  }
+  const proxyEnv = resolveS3ProxyEnv()
+  if (!proxyEnv) return timeouts
 
-  const normalizedProxy = new URL(proxy).href
-  const proxyEnv = { HTTP_PROXY: normalizedProxy, HTTPS_PROXY: normalizedProxy }
   const agentOptions = { keepAlive: true, maxSockets: 50, proxyEnv }
   return {
     ...timeouts,

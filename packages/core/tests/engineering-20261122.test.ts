@@ -2,7 +2,6 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { siteMigrationVersions } from '../../../scripts/migration-expectations.mjs'
@@ -12,7 +11,8 @@ const require = createRequire(import.meta.url)
 const { recycleOutput, pruneRecycle } = require('../../../scripts/recycle-output.cjs')
 const temporaryRoots: string[] = []
 function temporary(prefix: string) {
-  const root = mkdtempSync(join(tmpdir(), prefix))
+  // Keep fixtures on the workspace volume so cleanup can rename them on Windows CI.
+  const root = mkdtempSync(join(repo, prefix))
   temporaryRoots.push(root)
   return root
 }

@@ -73,7 +73,7 @@ jobs:
 
       - name: Test cli & widget
         run: |
-          pnpm --filter @fiveo9/aiusage test --testTimeout=15000
+          pnpm --filter @fiveo9/aiusage run test --testTimeout=15000
           pnpm --filter @fiveo9/aiusage-widget test
 
       - name: Check cli and widget types

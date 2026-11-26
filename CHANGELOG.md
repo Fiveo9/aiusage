@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Dashboard logo contrast** — Give the SVG background the accent color so its three white bars remain visible in the sidebar, mobile header and authentication views.
 - **Independent PostgreSQL instance conflicts** — Recognize postgres.js `constraint_name` as well as the test adapter's `constraint`, returning HTTP 409 for an already-bound independent device instance without merging its data. Real PostgreSQL 16.16 acceptance passes all 40 batch/synchronization/pricing tests and 12 migration concurrency assertions.
 - **Rendered session costs and narrow-screen filters** — Subscribe session cost cells to the reactive currency formatter instead of calling the store as a function. Keep the date-range buttons scrollable inside narrow screens. Production Chromium checks cover session entry/search/history/login, delayed cost responses, real USD/CNY settings saves, authentication retry, and viewport overflow with retained screenshots.
 - **Windows-to-Linux verification runner** — Normalize the Bash bootstrap to LF, expose the pinned pnpm executable to nested build scripts, and audit links contained within a test fixture before recoverable cleanup. External and chained links remain blocked; five regression tests cover the cleanup boundary.

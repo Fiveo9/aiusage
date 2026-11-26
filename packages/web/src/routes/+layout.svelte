@@ -728,7 +728,7 @@
 
   .brand-logo {
     display: block;
-    color: currentColor;
+    color: var(--accent);
   }
 
   .brand-name {

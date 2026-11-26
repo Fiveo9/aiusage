@@ -167,6 +167,8 @@
 <style>
   .date-range {
     display: flex;
+    max-width: 100%;
+    min-width: 0;
     align-items: center;
     gap: 0.375rem;
     flex-wrap: wrap;
@@ -255,6 +257,10 @@
   }
 
   @media (max-width: 640px) {
+    .segmented {
+      max-width: 100%;
+      overflow-x: auto;
+    }
     .custom-popover {
       left: auto;
       right: 0;

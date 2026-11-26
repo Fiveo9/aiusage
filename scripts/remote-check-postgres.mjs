@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { siteMigrationVersions } from './migration-expectations.mjs'
@@ -16,7 +16,7 @@ const site = join(source, 'packages/site')
 const require = createRequire(join(site, 'package.json'))
 const postgres = require('postgres')
 const container = `aiusage-pg-${attempt.toLowerCase()}`
-const report = { status: 'running', assertions: 0, container, stopped: false, scenarios: [] }
+const report = { status: 'running', assertions: 0, container, stopped: false, scenarios: [], business: [], evidenceFiles: [] }
 let admin
 const children = new Set()
 const clients = new Set()
@@ -42,6 +42,32 @@ function worker(url) {
 function connect(url) {
   const client = postgres(url, { max: 1, connect_timeout: 5, onnotice: () => {} })
   clients.add(client); return client
+}
+async function businessTests(url, file, index) {
+  const name = `postgres-business-${index}`
+  const jsonPath = join(output, `${name}.json`)
+  const log = createWriteStream(join(output, `${name}.log`), { flags: 'wx' })
+  report.evidenceFiles.push(`${name}.log`)
+  const child = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.postgres.config.ts', file,
+    '--reporter=default', '--reporter=json', `--outputFile=${jsonPath}`], {
+    cwd: site, env: { ...process.env, AIUSAGE_PG_TEST_URL: url }, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  children.add(child)
+  child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false })
+  const timer = setTimeout(() => child.kill('SIGTERM'), 180000)
+  let code
+  try {
+    code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve) })
+  } finally {
+    clearTimeout(timer); children.delete(child)
+    await new Promise(resolve => log.end(resolve))
+  }
+  if (!existsSync(jsonPath)) throw Error(`Independent business test report missing: ${index}`)
+  report.evidenceFiles.push(`${name}.json`)
+  const result = JSON.parse(readFileSync(jsonPath, 'utf8'))
+  report.business.push({ file, exitCode: code, passed: result.numPassedTests, failed: result.numFailedTests,
+    skipped: result.numPendingTests, total: result.numTotalTests, success: result.success })
+  return code === 0 && result.success && result.numTotalTests > 0 && result.numFailedTests === 0
 }
 try {
   docker(['pull', 'postgres:16-bookworm'])
@@ -95,6 +121,14 @@ try {
     assert.deepEqual(versions.map(row => row.version), expectedVersions); report.assertions++
     report.scenarios.push({ name, distinctProcesses: true, waiterObserved: true, exits, versions: versions.length, retry: failure ? 'passed' : 'not_needed' })
   }
+  const businessFiles = ['tests/cloud/performance-20261122.pg.test.ts', 'tests/cloud/sync-consistency.pg.test.ts', 'tests/pricing/litellm-sync.pg.test.ts']
+  let allBusinessPassed = true
+  for (const [index, file] of businessFiles.entries()) {
+    const name = `check_business_${index}`
+    await admin.unsafe(`CREATE DATABASE ${name}`)
+    if (!await businessTests(`${base}/${name}`, file, index)) allBusinessPassed = false
+  }
+  if (!allBusinessPassed) throw Error('Independent business tests failed; see per-file reports')
   report.status = 'passed'
 } catch (error) {
   report.status = 'failed'; report.error = error instanceof assert.AssertionError ? 'PostgreSQL concurrency assertion failed' : error.message

@@ -229,7 +229,7 @@
                 <td class="mono activity-number">{formatNumber(session.toolCallCount ?? 0)}</td>
                 <td class="mono green activity-number">{formatTokens(session.inputTokens)}</td>
                 <td class="mono blue activity-number">{formatTokens(session.outputTokens)}</td>
-                <td class="mono accent activity-number">{formatCost(session.cost)}</td>
+                <td class="mono accent activity-number">{$formatCost(session.cost)}</td>
               </tr>
             {/each}
           </tbody>

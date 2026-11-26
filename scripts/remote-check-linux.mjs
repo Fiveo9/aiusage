@@ -131,7 +131,19 @@ try {
     summary.integrationAssertions = packaged.assertions
   } else if (scope === 'postgres') {
     summary.evidenceFiles = ['postgres-result.json']; save()
-    await step('postgres-concurrency', process.execPath, ['scripts/remote-check-postgres.mjs'], 'postgres-integration')
+    try {
+      await step('postgres-concurrency', process.execPath, ['scripts/remote-check-postgres.mjs'], 'postgres-integration')
+    } finally {
+      if (existsSync(join(results, 'postgres-result.json'))) {
+        const result = JSON.parse(readFileSync(join(results, 'postgres-result.json'), 'utf8'))
+        summary.evidenceFiles.push(...(result.evidenceFiles || []))
+        for (const entry of result.business || []) {
+          summary.tests.passed += entry.passed; summary.tests.failed += entry.failed
+          summary.tests.skipped += entry.skipped; summary.tests.total += entry.total
+        }
+        save()
+      }
+    }
     const pgResult = JSON.parse(readFileSync(join(results, 'postgres-result.json'), 'utf8'))
     if (pgResult.status !== 'passed' || !pgResult.stopped) throw Error('PostgreSQL acceptance incomplete')
     summary.integrationAssertions = pgResult.assertions

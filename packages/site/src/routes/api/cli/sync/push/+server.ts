@@ -315,8 +315,9 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   } catch (err) {
     if (isHttpError(err)) return json({ error: err.body.message, error_code: err.body.message }, { status: err.status })
-    if ((err as { code?: string; constraint?: string }).code === '23505'
-      && (err as { constraint?: string }).constraint?.startsWith('cloud_device_instances_')) {
+    const databaseError = err as { code?: string; constraint_name?: string; constraint?: string }
+    const constraint = databaseError.constraint_name ?? databaseError.constraint
+    if (databaseError.code === '23505' && constraint?.startsWith('cloud_device_instances_')) {
       return json({ error: 'Device instance is already bound.', error_code: 'device_instance_conflict' }, { status: 409 })
     }
     // Record failed batch

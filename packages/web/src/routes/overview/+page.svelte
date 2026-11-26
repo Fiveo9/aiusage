@@ -290,23 +290,26 @@
   .token-breakdown-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.75rem;
+    gap: 0.625rem;
     margin-top: 0.875rem;
-    padding-top: 0.875rem;
-    border-top: 1px solid var(--border-subtle);
   }
 
   .token-cell {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.35rem;
     min-width: 0;
+    padding: 0.625rem 0.75rem;
+    background: var(--raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
   }
 
   .token-cell-head {
     display: flex;
     align-items: center;
     gap: 0.375rem;
+    min-width: 0;
   }
 
   .swatch {
@@ -326,14 +329,18 @@
 
   .token-pct {
     margin-left: auto;
+    flex-shrink: 0;
     font-size: var(--text-2xs);
+    font-weight: 500;
     color: var(--text-muted);
   }
 
   .token-value {
     font-size: var(--text-base);
     font-weight: 600;
+    line-height: 1.25;
     color: var(--text);
+    text-align: left;
   }
 
   /* ── 2-Column Grid ──────────────────────────────────────────────────────── */
